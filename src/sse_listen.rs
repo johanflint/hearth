@@ -6,16 +6,15 @@ use tokio::time::timeout;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 
-pub async fn listen(url: &str) -> Result<(), Box<dyn Error>> {
-    let client = Client::builder().danger_accept_invalid_certs(true).build()?;
+pub async fn listen(client: &Client, url: impl AsRef<str>) -> Result<(), Box<dyn Error>> {
     let strategy = ExponentialBackoff::from_millis(500)
         .factor(2)
         .max_delay(Duration::from_secs(30))
         .map(jitter);
 
-    println!("Connecting to SSE stream {}...", url);
+    println!("Connecting to SSE stream {}...", url.as_ref());
     Retry::spawn(strategy, || async {
-        match connect_sse_stream(&client, url).await {
+        match connect_sse_stream(&client, url.as_ref()).await {
             Ok(_) => {
                 println!("✅ SSE stream ended gracefully. Restarting...");
                 Err("Stream ended") // Triggers retry
@@ -31,11 +30,16 @@ pub async fn listen(url: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn connect_sse_stream(client: &Client, url: &str) -> Result<(), Box<dyn Error>> {
-    let response = client.get(url).header("Accept", "text/event-stream").send().await?.error_for_status()?;
+async fn connect_sse_stream(client: &Client, url: impl AsRef<str>) -> Result<(), Box<dyn Error>> {
+    let response = client
+        .get(url.as_ref())
+        .header("Accept", "text/event-stream")
+        .send()
+        .await?
+        .error_for_status()?;
 
     if response.status() == StatusCode::OK {
-        println!("Connecting to SSE stream {}... OK", url);
+        println!("Connecting to SSE stream {}... OK", url.as_ref());
     }
 
     let mut stream = response.bytes_stream();
