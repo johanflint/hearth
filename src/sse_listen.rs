@@ -5,22 +5,24 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
+use tracing::{error, info, instrument, warn};
 
+#[instrument(skip(client), fields(url = %url.as_ref()))]
 pub async fn listen(client: &Client, url: impl AsRef<str>) -> Result<(), Box<dyn Error>> {
     let strategy = ExponentialBackoff::from_millis(500)
         .factor(2)
         .max_delay(Duration::from_secs(30))
         .map(jitter);
 
-    println!("Connecting to SSE stream {}...", url.as_ref());
+    info!("Connecting to SSE stream {}...", url.as_ref());
     Retry::spawn(strategy, || async {
         match connect_sse_stream(&client, url.as_ref()).await {
             Ok(_) => {
-                println!("✅ SSE stream ended gracefully. Restarting...");
+                info!("✅ SSE stream ended gracefully. Restarting...");
                 Err("Stream ended") // Triggers retry
             }
             Err(e) => {
-                println!("⚠️ SSE error: {}. Retrying...", e);
+                warn!("⚠️ SSE error: {}. Retrying...", e);
                 Err("SSE failed") // Triggers retry
             }
         }
@@ -30,6 +32,7 @@ pub async fn listen(client: &Client, url: impl AsRef<str>) -> Result<(), Box<dyn
     Ok(())
 }
 
+#[instrument(skip(client, url))]
 async fn connect_sse_stream(client: &Client, url: impl AsRef<str>) -> Result<(), Box<dyn Error>> {
     let response = client
         .get(url.as_ref())
@@ -39,7 +42,7 @@ async fn connect_sse_stream(client: &Client, url: impl AsRef<str>) -> Result<(),
         .error_for_status()?;
 
     if response.status() == StatusCode::OK {
-        println!("Connecting to SSE stream {}... OK", url.as_ref());
+        info!(status = %response.status(), "Connecting to SSE stream {}... OK", url.as_ref());
     }
 
     let mut stream = response.bytes_stream();
@@ -53,21 +56,21 @@ async fn connect_sse_stream(client: &Client, url: impl AsRef<str>) -> Result<(),
                     for line in text.lines() {
                         if line.starts_with("data:") {
                             let event_data = line.trim_start_matches("data:").trim();
-                            println!("🔹 Received event: {:?}", event_data);
+                            info!(event = %event_data, "🔹 Received event: {:?}", event_data);
                         }
                     }
                 }
             }
             Ok(Some(Err(e))) => {
-                println!("❌ SSE stream error: {}", e);
+                error!("❌ SSE stream error: {}", e);
                 return Err(Box::new(e));
             }
             Ok(None) => {
-                println!("🔴 SSE stream ended");
+                warn!("🔴 SSE stream ended");
                 return Err("Stream closed".into());
             }
             Err(_) => {
-                println!("⏳ No data for {} seconds. Reconnecting...", timeout_duration.as_secs());
+                warn!("⏳ No data for {} seconds. Reconnecting...", timeout_duration.as_secs());
                 return Err("Timeout".into());
             }
         }

@@ -5,6 +5,8 @@ mod sse_listen;
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
+
     let client = Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
