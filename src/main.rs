@@ -4,6 +4,8 @@ use reqwest::Client;
 use tracing::info;
 
 mod app_config;
+mod domain;
+mod hue;
 mod sse_listen;
 
 #[tokio::main]
@@ -17,6 +19,9 @@ async fn main() {
         .danger_accept_invalid_certs(true)
         .build()
         .expect("Failed to build client");
+
+    let hue_devices = hue::observer::observe(&client, &config).await.expect("Could not observe Hue");
+    info!("Observed Hue devices: {:?}", &hue_devices);
 
     listen(&client, &config).await.expect("Could not listen to SSE stream");
 }
