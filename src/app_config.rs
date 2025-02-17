@@ -4,7 +4,7 @@ use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
-    hue: Hue,
+    pub hue: Hue,
 }
 
 impl AppConfig {
@@ -25,10 +25,10 @@ impl AppConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct Hue {
-    url: String,
-    retry_ms: u64,
-    max_delay_ms: u64,
-    application_key: String,
+    pub url: String,
+    pub retry_ms: u64,
+    pub max_delay_ms: u64,
+    pub application_key: String,
 }
 
 impl Hue {
