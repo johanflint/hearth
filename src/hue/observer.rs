@@ -45,7 +45,7 @@ pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_config::Hue;
+    use crate::app_config::{Core, Hue};
 
     #[tokio::test]
     async fn observe_returns_mapped_devices() -> Result<(), ObserverError> {
@@ -63,6 +63,7 @@ mod tests {
         let client = Client::new();
 
         let app_config = AppConfig {
+            core: Core { store_buffer_size: 1 },
             hue: Hue {
                 url: server.url(),
                 retry_ms: 100,
@@ -102,6 +103,7 @@ mod tests {
         let client = Client::new();
 
         let app_config = AppConfig {
+            core: Core { store_buffer_size: 1 },
             hue: Hue {
                 url: server.url(),
                 retry_ms: 100,

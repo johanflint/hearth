@@ -4,6 +4,7 @@ use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
+    pub core: Core,
     pub hue: Hue,
 }
 
@@ -18,8 +19,22 @@ impl AppConfig {
             .unwrap()
     }
 
+    pub fn core(&self) -> &Core {
+        &self.core
+    }
     pub fn hue(&self) -> &Hue {
         &self.hue
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Core {
+    pub store_buffer_size: usize,
+}
+
+impl Core {
+    pub fn store_buffer_size(&self) -> usize {
+        self.store_buffer_size
     }
 }
 

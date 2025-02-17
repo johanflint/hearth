@@ -1,4 +1,7 @@
 {
+  "core": {
+    "store_buffer_size": 100,
+  },
   "hue": {
     url: "https://192.168.1.150",
     retry_ms: 500,
