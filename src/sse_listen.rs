@@ -1,9 +1,7 @@
 use crate::app_config::AppConfig;
-use config::Config;
 use futures::StreamExt;
 use reqwest::{Client, StatusCode};
 use std::error::Error;
-use std::time::Duration;
 use tokio::time::timeout;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
