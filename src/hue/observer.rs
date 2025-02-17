@@ -2,13 +2,13 @@ use crate::app_config::AppConfig;
 use crate::domain::device::{Device, DeviceType};
 use crate::hue::device_get::DeviceGet;
 use crate::hue::hue_response::HueResponse;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
-use std::error::Error;
+use thiserror::Error;
 use tracing::{info, instrument};
 
 #[instrument(skip(client, config))]
-pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>, Box<dyn Error>> {
+pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>, ObserverError> {
     info!("Retrieving Hue devices...");
 
     let hue_url = config.hue().url();
@@ -17,7 +17,8 @@ pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>,
         .header("hue-application-key", config.hue().application_key())
         .send()
         .await?
-        .error_for_status()?;
+        .error_for_status()
+        .map_err(|e| ObserverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
 
     let hue_response = response.json::<HueResponse<DeviceGet>>().await?;
     info!("Retrieving Hue devices... OK, {} found", hue_response.data.len());
@@ -47,7 +48,7 @@ mod tests {
     use crate::app_config::Hue;
 
     #[tokio::test]
-    async fn observe_returns_mapped_devices() -> Result<(), Box<dyn Error>> {
+    async fn observe_returns_mapped_devices() -> Result<(), ObserverError> {
         let mut server = mockito::Server::new_async().await;
 
         let mock = server
@@ -91,4 +92,43 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn observe_returns_an_error_for_an_unexpected_response() -> Result<(), ObserverError> {
+        let mut server = mockito::Server::new_async().await;
+
+        let mock = server.mock("GET", "/clip/v2/resource/device").with_status(400).create_async().await;
+
+        let client = Client::new();
+
+        let app_config = AppConfig {
+            hue: Hue {
+                url: server.url(),
+                retry_ms: 100,
+                max_delay_ms: 200,
+                application_key: "key".to_string(),
+            },
+        };
+
+        let response = observe(&client, &app_config).await;
+        assert!(response.is_err());
+
+        match response {
+            Err(ObserverError::UnexpectedResponse(StatusCode::BAD_REQUEST, url)) => {
+                assert_eq!(url, format!("{}/clip/v2/resource/device", server.url()))
+            }
+            _ => panic!("unexpected response"),
+        }
+
+        mock.assert();
+        Ok(())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum ObserverError {
+    #[error("client error: {0}")]
+    ClientError(#[from] reqwest::Error),
+    #[error("unexpected status code {0} when calling {1}")]
+    UnexpectedResponse(StatusCode, String),
 }

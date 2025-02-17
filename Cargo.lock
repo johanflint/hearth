@@ -534,6 +534,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json5",
+ "thiserror",
  "tokio",
  "tokio-retry",
  "tracing",
