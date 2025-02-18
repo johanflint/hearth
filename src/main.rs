@@ -2,6 +2,7 @@ use crate::app_config::AppConfig;
 use crate::domain::events::Event;
 use crate::sse_listen::listen;
 use crate::store::Store;
+use crate::store_listener::store_listener;
 use tokio::sync::mpsc;
 use tokio::task;
 use tracing::{info, trace};
@@ -11,6 +12,7 @@ mod domain;
 mod hue;
 mod sse_listen;
 mod store;
+mod store_listener;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -24,8 +26,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hue_client = hue::client::new_client(&config)?;
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
+    let mut store = Store::new(rx);
+    let notifier_rx = store.notifier();
+
     task::spawn(async move {
-        let mut store = Store::new(rx);
+        store_listener(notifier_rx).await;
+    });
+    info!("✅  Initialized store listener");
+
+    task::spawn(async move {
         store.listen().await;
     });
     info!("✅  Initialized store");
