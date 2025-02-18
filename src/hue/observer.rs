@@ -14,7 +14,6 @@ pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>,
     let hue_url = config.hue().url();
     let response = client
         .get(format!("{}/clip/v2/resource/device", hue_url))
-        .header("hue-application-key", config.hue().application_key())
         .send()
         .await?
         .error_for_status()
@@ -46,6 +45,7 @@ pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>,
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
+    use crate::hue::client::new_client;
 
     #[tokio::test]
     async fn observe_returns_mapped_devices() -> Result<(), ObserverError> {
@@ -60,9 +60,8 @@ mod tests {
             .create_async()
             .await;
 
-        let client = Client::new();
-
         let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
+        let client = new_client(&app_config).unwrap();
 
         let response = observe(&client, &app_config).await?;
 

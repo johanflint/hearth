@@ -2,7 +2,6 @@ use crate::app_config::AppConfig;
 use crate::domain::events::Event;
 use crate::sse_listen::listen;
 use crate::store::Store;
-use reqwest::Client;
 use tokio::sync::mpsc;
 use tokio::task;
 use tracing::{info, trace};
@@ -14,7 +13,7 @@ mod sse_listen;
 mod store;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
 
     info!("🪵 Starting {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
@@ -22,10 +21,7 @@ async fn main() {
     let config = AppConfig::load();
     info!("✅  Loaded configuration");
 
-    let client = Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .expect("Failed to build client");
+    let hue_client = hue::client::new_client(&config)?;
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
     task::spawn(async move {
@@ -34,7 +30,7 @@ async fn main() {
     });
     info!("✅  Initialized store");
 
-    let hue_devices = hue::observer::observe(&client, &config).await.expect("Could not observe Hue");
+    let hue_devices = hue::observer::observe(&hue_client, &config).await.expect("Could not observe Hue");
     trace!("Observed Hue devices: {:?}", &hue_devices);
     tx.send(Event::DiscoveredDevices(hue_devices))
         .await
@@ -43,5 +39,7 @@ async fn main() {
     info!("✅  Discovered all devices");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
 
-    listen(&client, &config).await.expect("Could not listen to SSE stream");
+    listen(&hue_client, &config).await.expect("Could not listen to SSE stream");
+
+    Ok(())
 }
