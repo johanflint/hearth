@@ -4,6 +4,7 @@ use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
+    core: Core,
     hue: Hue,
 }
 
@@ -18,8 +19,22 @@ impl AppConfig {
             .unwrap()
     }
 
+    pub fn core(&self) -> &Core {
+        &self.core
+    }
     pub fn hue(&self) -> &Hue {
         &self.hue
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Core {
+    store_buffer_size: usize,
+}
+
+impl Core {
+    pub fn store_buffer_size(&self) -> usize {
+        self.store_buffer_size
     }
 }
 
@@ -46,5 +61,36 @@ impl Hue {
 
     pub fn application_key(&self) -> &str {
         &self.application_key
+    }
+}
+
+#[cfg(test)]
+pub struct AppConfigBuilder {
+    config: AppConfig,
+}
+
+#[cfg(test)]
+impl AppConfigBuilder {
+    pub fn new() -> Self {
+        AppConfigBuilder {
+            config: AppConfig {
+                core: Core { store_buffer_size: 1 },
+                hue: Hue {
+                    url: "https://hue.url/".to_string(),
+                    retry_ms: 100,
+                    max_delay_ms: 200,
+                    application_key: "key".to_string(),
+                },
+            },
+        }
+    }
+
+    pub fn hue_url(mut self, url: String) -> Self {
+        self.config.hue.url = url;
+        self
+    }
+
+    pub fn build(self) -> AppConfig {
+        self.config
     }
 }

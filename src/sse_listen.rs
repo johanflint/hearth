@@ -1,9 +1,7 @@
 use crate::app_config::AppConfig;
-use config::Config;
 use futures::StreamExt;
 use reqwest::{Client, StatusCode};
 use std::error::Error;
-use std::time::Duration;
 use tokio::time::timeout;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
@@ -37,13 +35,7 @@ pub async fn listen(client: &Client, config: &AppConfig) -> Result<(), Box<dyn E
 #[instrument(skip(client, config))]
 async fn connect_sse_stream(client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>> {
     let url = format!("{}/eventstream/clip/v2", config.hue().url());
-    let response = client
-        .get(&url)
-        .header("Accept", "text/event-stream")
-        .header("hue-application-key", config.hue().application_key())
-        .send()
-        .await?
-        .error_for_status()?;
+    let response = client.get(&url).header("Accept", "text/event-stream").send().await?.error_for_status()?;
 
     if response.status() == StatusCode::OK {
         info!(status = %response.status(), "Connecting to SSE stream {}... OK", config.hue().url());
