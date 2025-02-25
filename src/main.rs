@@ -10,6 +10,7 @@ use tracing::{info, trace};
 mod app_config;
 mod domain;
 mod flow_engine;
+mod flow_loader;
 mod hue;
 mod sse_listen;
 mod store;
