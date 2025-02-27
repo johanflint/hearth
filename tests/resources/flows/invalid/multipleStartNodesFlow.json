@@ -1,0 +1,19 @@
+{
+  "name": "flow",
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "endNode"
+    },
+    {
+      "id": "startNode2",
+      "type": "startNode",
+      "outgoingNode": "endNode"
+    },
+    {
+      "id": "endNode",
+      "type": "endNode"
+    }
+  ]
+}

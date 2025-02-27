@@ -9,6 +9,7 @@ use tracing::{info, trace};
 
 mod app_config;
 mod domain;
+mod extensions;
 mod flow_engine;
 mod flow_loader;
 mod hue;

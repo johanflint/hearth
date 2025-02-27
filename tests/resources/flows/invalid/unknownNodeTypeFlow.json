@@ -1,0 +1,9 @@
+{
+  "name": "emptyFlow",
+  "nodes": [
+    {
+      "id": "endNode",
+      "type": "unknownNode"
+    }
+  ]
+}
