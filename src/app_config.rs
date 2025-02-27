@@ -5,6 +5,7 @@ use std::time::Duration;
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
     core: Core,
+    flows: Flows,
     hue: Hue,
 }
 
@@ -22,6 +23,11 @@ impl AppConfig {
     pub fn core(&self) -> &Core {
         &self.core
     }
+
+    pub fn flows(&self) -> &Flows {
+        &self.flows
+    }
+
     pub fn hue(&self) -> &Hue {
         &self.hue
     }
@@ -35,6 +41,17 @@ pub struct Core {
 impl Core {
     pub fn store_buffer_size(&self) -> usize {
         self.store_buffer_size
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Flows {
+    directory: String,
+}
+
+impl Flows {
+    pub fn directory(&self) -> &str {
+        &self.directory
     }
 }
 
@@ -75,6 +92,9 @@ impl AppConfigBuilder {
         AppConfigBuilder {
             config: AppConfig {
                 core: Core { store_buffer_size: 1 },
+                flows: Flows {
+                    directory: "flows".to_string(),
+                },
                 hue: Hue {
                     url: "https://hue.url/".to_string(),
                     retry_ms: 100,

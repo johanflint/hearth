@@ -26,6 +26,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::load();
     info!("✅  Loaded configuration");
 
+    let flows = flow_loader::load_flows_from(config.flows().directory(), "json").await?;
+    info!("✅  Loaded flows");
+
     let hue_client = hue::client::new_client(&config)?;
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
