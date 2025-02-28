@@ -60,6 +60,7 @@ pub struct Hue {
     url: String,
     retry_ms: u64,
     retry_max_delay_ms: u64,
+    stale_connection_timeout_ms: u64,
     application_key: String,
 }
 
@@ -74,6 +75,10 @@ impl Hue {
 
     pub fn retry_max_delay_ms(&self) -> Duration {
         Duration::from_millis(self.retry_max_delay_ms)
+    }
+
+    pub fn stale_connection_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.stale_connection_timeout_ms)
     }
 
     pub fn application_key(&self) -> &str {
@@ -99,6 +104,7 @@ impl AppConfigBuilder {
                     url: "https://hue.url/".to_string(),
                     retry_ms: 100,
                     retry_max_delay_ms: 200,
+                    stale_connection_timeout_ms: 30_000,
                     application_key: "key".to_string(),
                 },
             },

@@ -43,7 +43,7 @@ async fn connect_sse_stream(client: &Client, config: &AppConfig) -> Result<(), B
 
     let mut stream = response.bytes_stream();
     loop {
-        let event = timeout(config.hue().retry_max_delay_ms(), stream.next()).await;
+        let event = timeout(config.hue().stale_connection_timeout_ms(), stream.next()).await;
         match event {
             Ok(Some(Ok(chunk))) => {
                 if let Ok(text) = String::from_utf8(chunk.to_vec()) {
@@ -64,7 +64,10 @@ async fn connect_sse_stream(client: &Client, config: &AppConfig) -> Result<(), B
                 return Err("Stream closed".into());
             }
             Err(_) => {
-                warn!("⏳ No data for {} seconds. Reconnecting...", config.hue().retry_max_delay_ms().as_secs());
+                warn!(
+                    "⏳ No data for {} seconds. Reconnecting...",
+                    config.hue().stale_connection_timeout_ms().as_secs()
+                );
                 return Err("Timeout".into());
             }
         }
