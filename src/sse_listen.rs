@@ -11,7 +11,7 @@ use tracing::{error, info, instrument, warn};
 pub async fn listen(client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>> {
     let strategy = ExponentialBackoff::from_millis(config.hue().retry_ms())
         .factor(2)
-        .max_delay(config.hue().max_delay_ms())
+        .max_delay(config.hue().retry_max_delay_ms())
         .map(jitter);
 
     info!("Connecting to SSE stream {}...", config.hue().url());
@@ -43,7 +43,7 @@ async fn connect_sse_stream(client: &Client, config: &AppConfig) -> Result<(), B
 
     let mut stream = response.bytes_stream();
     loop {
-        let event = timeout(config.hue().max_delay_ms(), stream.next()).await;
+        let event = timeout(config.hue().stale_connection_timeout_ms(), stream.next()).await;
         match event {
             Ok(Some(Ok(chunk))) => {
                 if let Ok(text) = String::from_utf8(chunk.to_vec()) {
@@ -64,7 +64,10 @@ async fn connect_sse_stream(client: &Client, config: &AppConfig) -> Result<(), B
                 return Err("Stream closed".into());
             }
             Err(_) => {
-                warn!("⏳ No data for {} seconds. Reconnecting...", config.hue().max_delay_ms().as_secs());
+                warn!(
+                    "⏳ No data for {} seconds. Reconnecting...",
+                    config.hue().stale_connection_timeout_ms().as_secs()
+                );
                 return Err("Timeout".into());
             }
         }

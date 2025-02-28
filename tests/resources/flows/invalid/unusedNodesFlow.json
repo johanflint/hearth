@@ -1,0 +1,23 @@
+{
+  "name": "emptyFlow",
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "endNode"
+    },
+    {
+      "id": "endNode",
+      "type": "endNode"
+    },
+    {
+      "id": "unusedEndNode",
+      "type": "actionNode",
+      "outgoingNode": "",
+      "action": {
+        "type": "log",
+        "message": ""
+      }
+    }
+  ]
+}

@@ -5,6 +5,7 @@ use std::time::Duration;
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
     core: Core,
+    flows: Flows,
     hue: Hue,
 }
 
@@ -22,6 +23,11 @@ impl AppConfig {
     pub fn core(&self) -> &Core {
         &self.core
     }
+
+    pub fn flows(&self) -> &Flows {
+        &self.flows
+    }
+
     pub fn hue(&self) -> &Hue {
         &self.hue
     }
@@ -39,10 +45,22 @@ impl Core {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct Flows {
+    directory: String,
+}
+
+impl Flows {
+    pub fn directory(&self) -> &str {
+        &self.directory
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Hue {
     url: String,
     retry_ms: u64,
-    max_delay_ms: u64,
+    retry_max_delay_ms: u64,
+    stale_connection_timeout_ms: u64,
     application_key: String,
 }
 
@@ -55,8 +73,12 @@ impl Hue {
         self.retry_ms
     }
 
-    pub fn max_delay_ms(&self) -> Duration {
-        Duration::from_millis(self.max_delay_ms)
+    pub fn retry_max_delay_ms(&self) -> Duration {
+        Duration::from_millis(self.retry_max_delay_ms)
+    }
+
+    pub fn stale_connection_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.stale_connection_timeout_ms)
     }
 
     pub fn application_key(&self) -> &str {
@@ -75,10 +97,14 @@ impl AppConfigBuilder {
         AppConfigBuilder {
             config: AppConfig {
                 core: Core { store_buffer_size: 1 },
+                flows: Flows {
+                    directory: "flows".to_string(),
+                },
                 hue: Hue {
                     url: "https://hue.url/".to_string(),
                     retry_ms: 100,
-                    max_delay_ms: 200,
+                    retry_max_delay_ms: 200,
+                    stale_connection_timeout_ms: 30_000,
                     application_key: "key".to_string(),
                 },
             },
