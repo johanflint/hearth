@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let notifier_rx = store.notifier();
 
     task::spawn(async move {
-        store_listener(notifier_rx).await;
+        store_listener(notifier_rx, flows).await;
     });
     info!("✅  Initialized store listener");
 
