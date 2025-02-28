@@ -8,7 +8,7 @@
   "hue": {
     url: "https://192.168.1.150",
     retry_ms: 500,
-    max_delay_ms: 30000,
+    retry_max_delay_ms: 30000,
     application_key: "Hue application key"
   }
 }

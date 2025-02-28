@@ -59,7 +59,7 @@ impl Flows {
 pub struct Hue {
     url: String,
     retry_ms: u64,
-    max_delay_ms: u64,
+    retry_max_delay_ms: u64,
     application_key: String,
 }
 
@@ -72,8 +72,8 @@ impl Hue {
         self.retry_ms
     }
 
-    pub fn max_delay_ms(&self) -> Duration {
-        Duration::from_millis(self.max_delay_ms)
+    pub fn retry_max_delay_ms(&self) -> Duration {
+        Duration::from_millis(self.retry_max_delay_ms)
     }
 
     pub fn application_key(&self) -> &str {
@@ -98,7 +98,7 @@ impl AppConfigBuilder {
                 hue: Hue {
                     url: "https://hue.url/".to_string(),
                     retry_ms: 100,
-                    max_delay_ms: 200,
+                    retry_max_delay_ms: 200,
                     application_key: "key".to_string(),
                 },
             },
