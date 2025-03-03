@@ -2,6 +2,7 @@ use crate::app_config::AppConfig;
 use crate::domain::device::{Device, DeviceType};
 use crate::hue::device_get::DeviceGet;
 use crate::hue::hue_response::HueResponse;
+use crate::hue::light_response::LightGet;
 use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -21,6 +22,16 @@ pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>,
 
     let hue_response = response.json::<HueResponse<DeviceGet>>().await?;
     info!("Retrieving Hue devices... OK, {} found", hue_response.data.len());
+
+    let response = client
+        .get(format!("{}/clip/v2/resource/light", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(|e| ObserverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
+
+    let light_response = response.json::<HueResponse<LightGet>>().await?;
+    info!("Retrieving lights... OK, {} found", light_response.data.len());
 
     let devices = hue_response
         .data
