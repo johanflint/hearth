@@ -12,3 +12,9 @@ pub struct HueResponse<T> {
 pub struct HueError {
     pub description: String,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct Owner {
+    pub rid: String,
+    pub rtype: String,
+}
