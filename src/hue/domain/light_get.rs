@@ -1,4 +1,4 @@
-use crate::hue::hue_response::Owner;
+use crate::hue::domain::hue_response::Owner;
 use serde::Deserialize;
 
 // API: https://developers.meethue.com/develop/hue-api-v2/api-reference/#resource_light_get

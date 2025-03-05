@@ -1,7 +1,6 @@
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, Property, PropertyType};
-use crate::hue::device_response::DeviceGet;
-use crate::hue::light_response::LightGet;
+use crate::hue::domain::{DeviceGet, LightGet};
 use std::collections::HashMap;
 use thiserror::Error;
 
