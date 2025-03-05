@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::fmt::Debug;
+use thiserror::Error;
 
 pub trait Property: Debug + Send + Sync {
     fn name(&self) -> &str;
@@ -22,4 +23,10 @@ impl PartialEq for dyn Property {
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum PropertyType {
     On,
+}
+
+#[derive(Error, PartialEq, Debug)]
+pub enum PropertyError {
+    #[error("unable to modify readonly property")]
+    ReadOnly,
 }

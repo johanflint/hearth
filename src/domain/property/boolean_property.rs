@@ -1,4 +1,4 @@
-use crate::domain::property::{Property, PropertyType};
+use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 
 #[derive(PartialEq, Debug)]
@@ -18,6 +18,16 @@ impl BooleanProperty {
             readonly,
             external_id,
             value,
+        }
+    }
+
+    pub fn set_value(&mut self, value: bool) -> Result<bool, PropertyError> {
+        if !self.readonly {
+            self.value = value;
+
+            Ok(value)
+        } else {
+            Err(PropertyError::ReadOnly)
         }
     }
 }
@@ -55,25 +65,38 @@ impl Property for BooleanProperty {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
-    #[tokio::test]
-    async fn test_boolean_property() {
-        let property = BooleanProperty {
+    #[test]
+    fn set_value_returns_the_value_if_property_is_editable() {
+        let mut property = BooleanProperty {
             name: "on".to_string(),
             property_type: PropertyType::On,
             readonly: false,
-            external_id: Some("lol".to_string()),
-            value: true,
+            external_id: None,
+            value: false,
         };
 
-        let mut properties: HashMap<String, Box<dyn Property>> = HashMap::new();
-        properties.insert(property.name().to_string(), Box::new(property));
+        let result = property.set_value(true);
 
-        if let Some(property) = properties.get_mut("on") {
-            if let Some(boolean_property) = property.as_any_mut().downcast_mut::<BooleanProperty>() {
-                boolean_property.value = false;
-            }
-        }
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), true);
+        assert_eq!(property.value, true);
+    }
+
+    #[test]
+    fn set_value_returns_an_error_if_property_is_readonly() {
+        let mut property = BooleanProperty {
+            name: "on".to_string(),
+            property_type: PropertyType::On,
+            readonly: true,
+            external_id: None,
+            value: false,
+        };
+
+        let result = property.set_value(false);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), PropertyError::ReadOnly);
+        assert_eq!(property.value, false);
     }
 }
