@@ -70,7 +70,7 @@ mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
     use crate::domain::device::DeviceType;
-    use crate::domain::property::{BooleanProperty, Property, PropertyType};
+    use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyType, Unit};
     use crate::hue::client::new_client;
     use std::collections::HashMap;
 
@@ -108,6 +108,14 @@ mod tests {
             false,
         ));
 
+        let brightness_property: Box<dyn Property> = Box::new(
+            NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false)
+                .external_id("703c7167-ff79-4fd4-a3d9-635b3f237a4f".to_string())
+                .unit(Unit::Percentage)
+                .float(19.37, Some(2.0), Some(100.0))
+                .build(),
+        );
+
         mock.assert();
         assert_eq!(response.len(), 1);
         assert_eq!(
@@ -119,7 +127,10 @@ mod tests {
                 model_id: "LWA004".to_string(),
                 product_name: "Hue filament bulb".to_string(),
                 name: "Woonkamer".to_string(),
-                properties: HashMap::from([(on_property.name().to_string(), on_property),]),
+                properties: HashMap::from([
+                    (on_property.name().to_string(), on_property),
+                    (brightness_property.name().to_string(), brightness_property)
+                ]),
                 external_id: None,
                 address: None,
             }
