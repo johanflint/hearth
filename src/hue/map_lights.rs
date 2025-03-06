@@ -1,5 +1,5 @@
 use crate::domain::device::{Device, DeviceType};
-use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyType, Unit};
+use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, NumberProperty, Property, PropertyType, Unit};
 use crate::hue::domain::{DeviceGet, LightGet};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -12,7 +12,7 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
                 .remove(&light.owner.rid)
                 .ok_or_else(|| MapLightsError::UnknownDevice { device_id: light.owner.rid })?;
 
-            let mut properties = HashMap::with_capacity(2);
+            let mut properties = HashMap::with_capacity(3);
 
             let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
                 "on".to_string(),
@@ -31,6 +31,24 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
                         .float(dimming.brightness, dimming.min_dim_level.or(Some(0.0)), Some(100.0))
                         .build(),
                 );
+                properties.insert(brightness_property.name().to_owned(), brightness_property);
+            });
+
+            light.color.map(|color| {
+                let brightness_property: Box<dyn Property> = Box::new(ColorProperty::new(
+                    "color".to_string(),
+                    PropertyType::Color,
+                    false,
+                    Some(light.id.clone()),
+                    CartesianCoordinate::new(color.xy.x, color.xy.y),
+                    color.gamut.map(|g| {
+                        Gamut::new(
+                            CartesianCoordinate::new(g.red.x, g.red.y),
+                            CartesianCoordinate::new(g.green.x, g.green.y),
+                            CartesianCoordinate::new(g.blue.x, g.blue.y),
+                        )
+                    }),
+                ));
                 properties.insert(brightness_property.name().to_owned(), brightness_property);
             });
 

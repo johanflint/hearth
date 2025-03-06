@@ -70,7 +70,7 @@ mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
     use crate::domain::device::DeviceType;
-    use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyType, Unit};
+    use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, NumberProperty, Property, PropertyType, Unit};
     use crate::hue::client::new_client;
     use std::collections::HashMap;
 
@@ -116,6 +116,19 @@ mod tests {
                 .build(),
         );
 
+        let color_property: Box<dyn Property> = Box::new(ColorProperty::new(
+            "color".to_string(),
+            PropertyType::Color,
+            false,
+            Some("703c7167-ff79-4fd4-a3d9-635b3f237a4f".to_string()),
+            CartesianCoordinate::new(0.4584, 0.41),
+            Some(Gamut::new(
+                CartesianCoordinate::new(0.675, 0.322),
+                CartesianCoordinate::new(0.409, 0.518),
+                CartesianCoordinate::new(0.167, 0.04),
+            )),
+        ));
+
         mock.assert();
         assert_eq!(response.len(), 1);
         assert_eq!(
@@ -129,7 +142,8 @@ mod tests {
                 name: "Woonkamer".to_string(),
                 properties: HashMap::from([
                     (on_property.name().to_string(), on_property),
-                    (brightness_property.name().to_string(), brightness_property)
+                    (brightness_property.name().to_string(), brightness_property),
+                    (color_property.name().to_string(), color_property),
                 ]),
                 external_id: None,
                 address: None,

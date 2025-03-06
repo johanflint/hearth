@@ -27,6 +27,27 @@
         "min_dim_level": 2.0
       },
       "dimming_delta": {},
+      "color": {
+        "xy": {
+          "x": 0.4584,
+          "y": 0.41
+        },
+        "gamut": {
+          "red": {
+            "x": 0.675,
+            "y": 0.322
+          },
+          "green": {
+            "x": 0.409,
+            "y": 0.518
+          },
+          "blue": {
+            "x": 0.167,
+            "y": 0.04
+          }
+        },
+        "gamut_type": "B"
+      },
       "dynamics": {
         "status": "none",
         "status_values": [
