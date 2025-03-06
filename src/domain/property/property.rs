@@ -22,6 +22,7 @@ impl PartialEq for dyn Property {
 // Semantic property type
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum PropertyType {
+    Brightness,
     On,
 }
 
@@ -29,4 +30,10 @@ pub enum PropertyType {
 pub enum PropertyError {
     #[error("unable to modify readonly property")]
     ReadOnly,
+    #[error("value is smaller than the minimum value")]
+    ValueTooSmall,
+    #[error("value is smaller than the minimum value")]
+    ValueTooLarge,
+    #[error("value is smaller than the minimum value")]
+    IncorrectValueType,
 }
