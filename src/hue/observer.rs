@@ -70,8 +70,9 @@ mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
     use crate::domain::device::DeviceType;
-    use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, NumberProperty, Property, PropertyType, Unit};
+    use crate::domain::property::{BooleanProperty, Property, PropertyType};
     use crate::hue::client::new_client;
+    use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 
     #[tokio::test]
@@ -91,7 +92,7 @@ mod tests {
             .mock("GET", "/clip/v2/resource/light")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(include_str!("../../tests/resources/hue_light_response.json"))
+            .with_body(include_str!("../../tests/resources/hue_light_simplified_response.json"))
             .create_async()
             .await;
 
@@ -108,27 +109,6 @@ mod tests {
             false,
         ));
 
-        let brightness_property: Box<dyn Property> = Box::new(
-            NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false)
-                .external_id("703c7167-ff79-4fd4-a3d9-635b3f237a4f".to_string())
-                .unit(Unit::Percentage)
-                .float(19.37, Some(2.0), Some(100.0))
-                .build(),
-        );
-
-        let color_property: Box<dyn Property> = Box::new(ColorProperty::new(
-            "color".to_string(),
-            PropertyType::Color,
-            false,
-            Some("703c7167-ff79-4fd4-a3d9-635b3f237a4f".to_string()),
-            CartesianCoordinate::new(0.4584, 0.41),
-            Some(Gamut::new(
-                CartesianCoordinate::new(0.675, 0.322),
-                CartesianCoordinate::new(0.409, 0.518),
-                CartesianCoordinate::new(0.167, 0.04),
-            )),
-        ));
-
         mock.assert();
         assert_eq!(response.len(), 1);
         assert_eq!(
@@ -140,11 +120,7 @@ mod tests {
                 model_id: "LWA004".to_string(),
                 product_name: "Hue filament bulb".to_string(),
                 name: "Woonkamer".to_string(),
-                properties: HashMap::from([
-                    (on_property.name().to_string(), on_property),
-                    (brightness_property.name().to_string(), brightness_property),
-                    (color_property.name().to_string(), color_property),
-                ]),
+                properties: HashMap::from([(on_property.name().to_string(), on_property),]),
                 external_id: None,
                 address: None,
             }
