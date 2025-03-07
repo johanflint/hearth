@@ -91,3 +91,96 @@ pub enum MapLightsError {
     #[error("unknown device '{device_id}'")]
     UnknownDevice { device_id: String },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hue::domain::{HueResponse, Metadata, ProductData};
+    use pretty_assertions::assert_eq;
+
+    #[tokio::test]
+    async fn test_map_lights() -> Result<(), MapLightsError> {
+        let json = include_str!("../../tests/resources/hue_light_response.json");
+
+        let response = serde_json::from_str::<HueResponse<LightGet>>(json).unwrap();
+
+        let device_get = DeviceGet {
+            id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
+            product_data: ProductData {
+                model_id: "LCT007".to_string(),
+                manufacturer_name: "Signify Netherlands B.V.".to_string(),
+                product_name: "Hue color lamp".to_string(),
+                product_archetype: "sultan_bulb".to_string(),
+                certified: false,
+                software_version: "67.116.3".to_string(),
+                hardware_platform_type: Some("100b-104".to_string()),
+            },
+            metadata: Metadata {
+                name: "Lamp".to_string(),
+                archetype: "sultan_bulb".to_string(),
+            },
+        };
+
+        let mut device_map = HashMap::from([(device_get.id.clone(), device_get)]);
+        let result = map_lights(response.data, &mut device_map)?;
+
+        let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
+            "on".to_string(),
+            PropertyType::On,
+            false,
+            Some("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string()),
+            false,
+        ));
+
+        let brightness_property: Box<dyn Property> = Box::new(
+            NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false)
+                .external_id("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string())
+                .unit(Unit::Percentage)
+                .float(58.89, Some(2.0), Some(100.0))
+                .build(),
+        );
+
+        let color_temperature_property: Box<dyn Property> = Box::new(
+            NumberProperty::builder("colorTemperature".to_string(), PropertyType::ColorTemperature, false)
+                .external_id("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string())
+                .unit(Unit::Kelvin)
+                .positive_int(6535, Some(2000), Some(6535))
+                .build(),
+        );
+
+        let color_property: Box<dyn Property> = Box::new(ColorProperty::new(
+            "color".to_string(),
+            PropertyType::Color,
+            false,
+            Some("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string()),
+            CartesianCoordinate::new(0.4851, 0.4331),
+            Some(Gamut::new(
+                CartesianCoordinate::new(0.675, 0.322),
+                CartesianCoordinate::new(0.409, 0.518),
+                CartesianCoordinate::new(0.167, 0.04),
+            )),
+        ));
+
+        assert_eq!(
+            result[0],
+            Device {
+                id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
+                r#type: DeviceType::Light,
+                manufacturer: "Signify Netherlands B.V.".to_string(),
+                model_id: "LCT007".to_string(),
+                product_name: "Hue color lamp".to_string(),
+                name: "Lamp".to_string(),
+                properties: HashMap::from([
+                    (on_property.name().to_string(), on_property),
+                    (brightness_property.name().to_string(), brightness_property),
+                    (color_temperature_property.name().to_string(), color_temperature_property),
+                    (color_property.name().to_string(), color_property),
+                ]),
+                external_id: None,
+                address: None,
+            }
+        );
+
+        Ok(())
+    }
+}
