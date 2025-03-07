@@ -53,6 +53,7 @@ impl FlowNode {
 #[derive(Debug)]
 pub struct FlowLink {
     node: Arc<FlowNode>,
+    #[allow(dead_code)]
     value: Option<String>,
 }
 

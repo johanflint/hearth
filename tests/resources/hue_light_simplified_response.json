@@ -1,0 +1,90 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "703c7167-ff79-4fd4-a3d9-635b3f237a4f",
+      "id_v1": "/lights/16",
+      "owner": {
+        "rid": "079e0321-7e18-46bc-bc16-fcbc3dd09e30",
+        "rtype": "device"
+      },
+      "metadata": {
+        "name": "Eettafel rechts",
+        "archetype": "vintage_bulb",
+        "fixed_mired": 476,
+        "function": "mixed"
+      },
+      "product_data": {
+        "function": "mixed"
+      },
+      "identify": {},
+      "service_id": 0,
+      "on": {
+        "on": false
+      },
+      "dynamics": {
+        "status": "none",
+        "status_values": [
+          "none"
+        ],
+        "speed": 0.0,
+        "speed_valid": false
+      },
+      "alert": {
+        "action_values": [
+          "breathe"
+        ]
+      },
+      "signaling": {
+        "signal_values": [
+          "no_signal",
+          "on_off"
+        ]
+      },
+      "mode": "normal",
+      "effects": {
+        "status_values": [
+          "no_effect",
+          "candle"
+        ],
+        "status": "no_effect",
+        "effect_values": [
+          "no_effect",
+          "candle"
+        ]
+      },
+      "effects_v2": {
+        "action": {
+          "effect_values": [
+            "no_effect",
+            "candle"
+          ]
+        },
+        "status": {
+          "effect": "no_effect",
+          "effect_values": [
+            "no_effect",
+            "candle"
+          ]
+        }
+      },
+      "powerup": {
+        "preset": "custom",
+        "configured": true,
+        "on": {
+          "mode": "on",
+          "on": {
+            "on": true
+          }
+        },
+        "dimming": {
+          "mode": "dimming",
+          "dimming": {
+            "brightness": 49.8
+          }
+        }
+      },
+      "type": "light"
+    }
+  ]
+}

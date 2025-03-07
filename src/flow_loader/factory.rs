@@ -131,7 +131,7 @@ pub enum FlowFactoryError {
     NoConnectingNode { node: String, flow: String },
     #[error("node '{node_id}' has a missing outgoing node to '{outgoing_node_id}'")]
     MissingNode { node_id: String, outgoing_node_id: String },
-    #[error("unused nodes: {}", nodes.join(","))]
+    #[error("unused nodes: {}", nodes.join(", "))]
     UnusedNodes { nodes: Vec<String> },
 }
 

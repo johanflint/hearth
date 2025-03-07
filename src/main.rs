@@ -26,7 +26,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::load();
     info!("✅  Loaded configuration");
 
-    let flows = flow_loader::load_flows_from(config.flows().directory(), "json").await?;
+    let flows = flow_loader::load_flows_from(config.flows().directory(), "json")
+        .await
+        .unwrap_or_else(|_| Vec::new()); // Errors are already logged in the function
     info!("✅  Loaded flows");
 
     let hue_client = hue::client::new_client(&config)?;

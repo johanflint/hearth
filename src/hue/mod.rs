@@ -1,4 +1,4 @@
 pub mod client;
-mod device_get;
-mod hue_response;
+mod domain;
+mod map_lights;
 pub mod observer;

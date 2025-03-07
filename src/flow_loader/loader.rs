@@ -14,9 +14,10 @@ use tracing::{error, info, instrument, warn};
 #[instrument]
 pub async fn load_flows_from(directory: &str, extension: &str) -> Result<Vec<Flow>, LoaderError> {
     info!("📁 Loading flows...");
-    let files = list_files(directory, extension)
-        .await
-        .map_err(|e| LoaderError::Io { source: e, path: None })?;
+    let files = list_files(directory, extension).await.map_err(|e| {
+        warn!("⚠️ Loading flows... failed: {}", e.to_string().to_lowercase());
+        LoaderError::Io { source: e, path: None }
+    })?;
 
     let results = load_files(files).await;
     let (flows, errors): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);

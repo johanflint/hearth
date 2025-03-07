@@ -1,0 +1,105 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b",
+      "id_v1": "/lights/2",
+      "owner": {
+        "rid": "ab917a9a-a7d5-4853-9518-75909236a182",
+        "rtype": "device"
+      },
+      "metadata": {
+        "name": "Slaapkamer plafonnière",
+        "archetype": "sultan_bulb",
+        "function": "mixed"
+      },
+      "product_data": {
+        "function": "mixed"
+      },
+      "identify": {},
+      "service_id": 0,
+      "on": {
+        "on": false
+      },
+      "dimming": {
+        "brightness": 58.89,
+        "min_dim_level": 2.0
+      },
+      "dimming_delta": {},
+      "color_temperature": {
+        "mirek": null,
+        "mirek_valid": false,
+        "mirek_schema": {
+          "mirek_minimum": 153,
+          "mirek_maximum": 500
+        }
+      },
+      "color_temperature_delta": {},
+      "color": {
+        "xy": {
+          "x": 0.4851,
+          "y": 0.4331
+        },
+        "gamut": {
+          "red": {
+            "x": 0.675,
+            "y": 0.322
+          },
+          "green": {
+            "x": 0.409,
+            "y": 0.518
+          },
+          "blue": {
+            "x": 0.167,
+            "y": 0.04
+          }
+        },
+        "gamut_type": "B"
+      },
+      "dynamics": {
+        "status": "none",
+        "status_values": [
+          "none",
+          "dynamic_palette"
+        ],
+        "speed": 0.0,
+        "speed_valid": false
+      },
+      "alert": {
+        "action_values": [
+          "breathe"
+        ]
+      },
+      "signaling": {
+        "signal_values": [
+          "no_signal",
+          "on_off"
+        ]
+      },
+      "mode": "normal",
+      "powerup": {
+        "preset": "safety",
+        "configured": true,
+        "on": {
+          "mode": "on",
+          "on": {
+            "on": true
+          }
+        },
+        "dimming": {
+          "mode": "dimming",
+          "dimming": {
+            "brightness": 100.0
+          }
+        },
+        "color": {
+          "mode": "color_temperature",
+          "color_temperature": {
+            "mirek": 366
+          }
+        }
+      },
+      "type": "light"
+    }
+  ]
+}

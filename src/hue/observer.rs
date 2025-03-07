@@ -1,13 +1,13 @@
 use crate::app_config::AppConfig;
-use crate::domain::device::{Device, DeviceType};
-use crate::hue::device_get::DeviceGet;
-use crate::hue::hue_response::HueResponse;
+use crate::domain::device::Device;
+use crate::hue::domain::{DeviceGet, HueResponse, LightGet};
+use crate::hue::map_lights::map_lights;
 use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
 use thiserror::Error;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
-#[instrument(skip(client, config))]
+#[instrument(skip_all)]
 pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>, ObserverError> {
     info!("Retrieving Hue devices...");
 
@@ -22,30 +22,58 @@ pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>,
     let hue_response = response.json::<HueResponse<DeviceGet>>().await?;
     info!("Retrieving Hue devices... OK, {} found", hue_response.data.len());
 
-    let devices = hue_response
-        .data
-        .into_iter()
-        .map(|device_get| Device {
-            id: device_get.id,
-            r#type: DeviceType::Light,
-            manufacturer: device_get.product_data.manufacturer_name,
-            model_id: device_get.product_data.model_id,
-            product_name: device_get.product_data.product_name,
-            name: device_get.metadata.name,
-            properties: HashMap::new(),
-            external_id: None,
-            address: None,
-        })
-        .collect::<Vec<Device>>();
+    let response = client
+        .get(format!("{}/clip/v2/resource/light", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(|e| ObserverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
+
+    let light_response = response.json::<HueResponse<LightGet>>().await?;
+    info!("Retrieving lights... OK, {} found", light_response.data.len());
+
+    let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
+    let devices = map_lights(light_response.data, &mut device_map).unwrap();
+
+    if !device_map.is_empty() {
+        log_unmapped_devices(&device_map);
+    }
 
     Ok(devices)
+}
+
+#[instrument(skip_all)]
+fn log_unmapped_devices(device_map: &HashMap<String, DeviceGet>) {
+    let unmapped_devices = device_map
+        .iter()
+        .map(|(_, d)| {
+            format!(
+                "- {} {} '{}'",
+                d.product_data.manufacturer_name, d.product_data.product_name, d.metadata.name
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+    warn!("⚠️ Ignored {} unsupported Hue devices:\n{}", device_map.len(), unmapped_devices);
+}
+
+#[derive(Error, Debug)]
+pub enum ObserverError {
+    #[error("client error: {0}")]
+    ClientError(#[from] reqwest::Error),
+    #[error("unexpected status code {0} when calling {1}")]
+    UnexpectedResponse(StatusCode, String),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
+    use crate::domain::device::DeviceType;
+    use crate::domain::property::{BooleanProperty, Property, PropertyType};
     use crate::hue::client::new_client;
+    use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn observe_returns_mapped_devices() -> Result<(), ObserverError> {
@@ -60,10 +88,26 @@ mod tests {
             .create_async()
             .await;
 
+        server
+            .mock("GET", "/clip/v2/resource/light")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_light_simplified_response.json"))
+            .create_async()
+            .await;
+
         let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
         let client = new_client(&app_config).unwrap();
 
         let response = observe(&client, &app_config).await?;
+
+        let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
+            "on".to_string(),
+            PropertyType::On,
+            false,
+            Some("703c7167-ff79-4fd4-a3d9-635b3f237a4f".to_string()),
+            false,
+        ));
 
         mock.assert();
         assert_eq!(response.len(), 1);
@@ -76,7 +120,7 @@ mod tests {
                 model_id: "LWA004".to_string(),
                 product_name: "Hue filament bulb".to_string(),
                 name: "Woonkamer".to_string(),
-                properties: HashMap::new(),
+                properties: HashMap::from([(on_property.name().to_string(), on_property),]),
                 external_id: None,
                 address: None,
             }
@@ -108,12 +152,4 @@ mod tests {
         mock.assert();
         Ok(())
     }
-}
-
-#[derive(Error, Debug)]
-pub enum ObserverError {
-    #[error("client error: {0}")]
-    ClientError(#[from] reqwest::Error),
-    #[error("unexpected status code {0} when calling {1}")]
-    UnexpectedResponse(StatusCode, String),
 }

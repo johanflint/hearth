@@ -1,3 +1,4 @@
+use crate::domain::property::Property;
 use std::collections::HashMap;
 
 #[derive(PartialEq, Debug)]
@@ -8,7 +9,7 @@ pub struct Device {
     pub model_id: String,
     pub product_name: String,
     pub name: String,
-    pub properties: HashMap<String, String>,
+    pub properties: HashMap<String, Box<dyn Property>>,
     pub external_id: Option<String>,
     pub address: Option<String>,
 }

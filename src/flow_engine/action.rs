@@ -33,7 +33,7 @@ impl<'de> Deserialize<'de> for Box<dyn Action> {
             Err(serde::de::Error::custom(format!(
                 "unknown action type '{}', known types: {}",
                 kind,
-                known_actions().join(",")
+                known_actions().join(", ")
             )))
         }
     }
