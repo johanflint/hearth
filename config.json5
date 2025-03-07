@@ -6,7 +6,7 @@
     "directory": ""
   },
   "hue": {
-    url: "https://192.168.1.150",
+    url: "https://localhost",
     retry_ms: 500,
     retry_max_delay_ms: 30000,
     stale_connection_timeout_ms: 60000,
