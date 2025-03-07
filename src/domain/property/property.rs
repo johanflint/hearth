@@ -24,6 +24,7 @@ impl PartialEq for dyn Property {
 pub enum PropertyType {
     Brightness,
     Color,
+    ColorTemperature,
     On,
 }
 

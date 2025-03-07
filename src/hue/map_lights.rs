@@ -1,5 +1,6 @@
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, NumberProperty, Property, PropertyType, Unit};
+use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::{DeviceGet, LightGet};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -12,7 +13,7 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
                 .remove(&light.owner.rid)
                 .ok_or_else(|| MapLightsError::UnknownDevice { device_id: light.owner.rid })?;
 
-            let mut properties = HashMap::with_capacity(3);
+            let mut properties = HashMap::with_capacity(4);
 
             let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
                 "on".to_string(),
@@ -32,6 +33,24 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
                         .build(),
                 );
                 properties.insert(brightness_property.name().to_owned(), brightness_property);
+            });
+
+            light.color_temperature.map(|temperature| {
+                let mirek_value = temperature.mirek.unwrap_or(temperature.mirek_schema.mirek_minimum);
+
+                let color_temperature_property: Box<dyn Property> = Box::new(
+                    NumberProperty::builder("colorTemperature".to_string(), PropertyType::ColorTemperature, false)
+                        .external_id(light.id.clone())
+                        .unit(Unit::Kelvin)
+                        .positive_int(
+                            mirek_value.max(temperature.mirek_schema.mirek_minimum).mirek_to_kelvin(),
+                            Some(temperature.mirek_schema.mirek_maximum.mirek_to_kelvin()), // Not a bug: mirek is inverse to K
+                            Some(temperature.mirek_schema.mirek_minimum.mirek_to_kelvin()),
+                        )
+                        .build(),
+                );
+
+                properties.insert(color_temperature_property.name().to_owned(), color_temperature_property);
             });
 
             light.color.map(|color| {

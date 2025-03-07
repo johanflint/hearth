@@ -8,6 +8,7 @@ pub struct LightGet {
     pub owner: Owner,
     pub on: On,
     pub dimming: Option<Dimming>,
+    pub color_temperature: Option<ColorTemperature>,
     pub color: Option<Color>,
 }
 
@@ -20,6 +21,19 @@ pub struct On {
 pub struct Dimming {
     pub brightness: f64,
     pub min_dim_level: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ColorTemperature {
+    pub mirek: Option<u64>, // >= 153 && <= 500, color temperature in mirek or null when the light color is not in the ct spectrum
+    pub mirek_valid: bool,
+    pub mirek_schema: MirekSchema,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MirekSchema {
+    pub mirek_minimum: u64,
+    pub mirek_maximum: u64,
 }
 
 #[derive(Debug, Deserialize)]
