@@ -8,7 +8,7 @@ use thiserror::Error;
 use tracing::{info, instrument, warn};
 
 #[instrument(skip_all)]
-pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>, ObserverError> {
+pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>, DiscoverError> {
     info!("Retrieving Hue devices...");
 
     let hue_url = config.hue().url();
@@ -17,7 +17,7 @@ pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>,
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| ObserverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
+        .map_err(|e| DiscoverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
 
     let hue_response = response.json::<HueResponse<DeviceGet>>().await?;
     info!("Retrieving Hue devices... OK, {} found", hue_response.data.len());
@@ -27,7 +27,7 @@ pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>,
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| ObserverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
+        .map_err(|e| DiscoverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
 
     let light_response = response.json::<HueResponse<LightGet>>().await?;
     info!("Retrieving lights... OK, {} found", light_response.data.len());
@@ -58,7 +58,7 @@ fn log_unmapped_devices(device_map: &HashMap<String, DeviceGet>) {
 }
 
 #[derive(Error, Debug)]
-pub enum ObserverError {
+pub enum DiscoverError {
     #[error("client error: {0}")]
     ClientError(#[from] reqwest::Error),
     #[error("unexpected status code {0} when calling {1}")]
@@ -76,7 +76,7 @@ mod tests {
     use std::collections::HashMap;
 
     #[tokio::test]
-    async fn observe_returns_mapped_devices() -> Result<(), ObserverError> {
+    async fn discover_returns_mapped_devices() -> Result<(), DiscoverError> {
         let mut server = mockito::Server::new_async().await;
 
         let mock = server
@@ -99,7 +99,7 @@ mod tests {
         let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
         let client = new_client(&app_config).unwrap();
 
-        let response = observe(&client, &app_config).await?;
+        let response = discover(&client, &app_config).await?;
 
         let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
             "on".to_string(),
@@ -130,7 +130,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn observe_returns_an_error_for_an_unexpected_response() -> Result<(), ObserverError> {
+    async fn discover_returns_an_error_for_an_unexpected_response() -> Result<(), DiscoverError> {
         let mut server = mockito::Server::new_async().await;
 
         let mock = server.mock("GET", "/clip/v2/resource/device").with_status(400).create_async().await;
@@ -139,11 +139,11 @@ mod tests {
 
         let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
 
-        let response = observe(&client, &app_config).await;
+        let response = discover(&client, &app_config).await;
         assert!(response.is_err());
 
         match response {
-            Err(ObserverError::UnexpectedResponse(StatusCode::BAD_REQUEST, url)) => {
+            Err(DiscoverError::UnexpectedResponse(StatusCode::BAD_REQUEST, url)) => {
                 assert_eq!(url, format!("{}/clip/v2/resource/device", server.url()))
             }
             _ => panic!("unexpected response"),

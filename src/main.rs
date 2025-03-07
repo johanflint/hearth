@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| Vec::new()); // Errors are already logged in the function
     info!("✅  Loaded flows");
 
-    let hue_client = hue::client::new_client(&config)?;
+    let hue_client = hue::new_client(&config)?;
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
     let mut store = Store::new(rx);
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store");
 
-    let hue_devices = hue::observer::observe(&hue_client, &config).await.expect("Could not observe Hue");
+    let hue_devices = hue::discover(&hue_client, &config).await.expect("Could not discover Hue devices");
     trace!("Observed Hue devices: {:?}", &hue_devices);
     tx.send(Event::DiscoveredDevices(hue_devices))
         .await
