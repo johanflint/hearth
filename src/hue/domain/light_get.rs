@@ -23,6 +23,7 @@ pub struct Dimming {
     pub min_dim_level: Option<f64>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ColorTemperature {
     pub mirek: Option<u64>, // >= 153 && <= 500, color temperature in mirek or null when the light color is not in the ct spectrum
@@ -36,6 +37,7 @@ pub struct MirekSchema {
     pub mirek_maximum: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Color {
     pub xy: Xy,

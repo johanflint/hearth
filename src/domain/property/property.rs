@@ -2,6 +2,7 @@ use std::any::Any;
 use std::fmt::Debug;
 use thiserror::Error;
 
+#[allow(dead_code)]
 pub trait Property: Debug + Send + Sync {
     fn name(&self) -> &str;
     fn property_type(&self) -> PropertyType;

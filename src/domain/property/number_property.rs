@@ -233,12 +233,15 @@ impl NumberPropertyBuilder {
 #[derive(PartialEq, Debug)]
 pub enum Unit {
     Percentage,
+    #[allow(dead_code)]
     Lux,
+    #[allow(dead_code)]
     DegreesCelsius,
     Kelvin,
 }
 
 impl Unit {
+    #[allow(dead_code)]
     pub fn symbol(&self) -> &str {
         match self {
             Unit::Percentage => "%",

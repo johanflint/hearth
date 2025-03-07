@@ -13,6 +13,7 @@ pub struct HueError {
     pub description: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Owner {
     pub rid: String,
