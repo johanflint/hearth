@@ -5,10 +5,11 @@ use serde::de::DeserializeOwned;
 use std::error::Error;
 use std::fmt::Debug;
 use std::time::Duration;
+use tokio::sync::mpsc::Sender;
 use tokio::time::timeout;
 use tokio_retry::Retry;
 use tokio_retry::strategy::{ExponentialBackoff, jitter};
-use tracing::{error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Debug)]
 pub struct Config {
@@ -18,10 +19,10 @@ pub struct Config {
     pub stale_connection_timeout_ms: Duration,
 }
 
-#[instrument(skip(client, config))]
-pub async fn listen<T>(client: &Client, config: &Config) -> Result<(), Box<dyn Error>>
+#[instrument(skip_all)]
+pub async fn listen<T>(tx: Sender<ServerSentEvent<T>>, client: &Client, config: &Config) -> Result<(), Box<dyn Error>>
 where
-    T: DeserializeOwned + Debug,
+    T: DeserializeOwned + Debug + 'static,
 {
     let strategy = ExponentialBackoff::from_millis(config.retry_ms)
         .factor(2)
@@ -30,7 +31,7 @@ where
 
     info!("Connecting to SSE stream {}...", config.url);
     Retry::spawn(strategy, || async {
-        match connect_sse_stream::<T>(&client, config).await {
+        match connect_sse_stream::<T>(tx.clone(), &client, config).await {
             Ok(_) => {
                 info!("✅ SSE stream ended gracefully. Restarting...");
                 Err("Stream ended") // Triggers retry
@@ -46,9 +47,9 @@ where
     Ok(())
 }
 
-async fn connect_sse_stream<T>(client: &Client, config: &Config) -> Result<(), Box<dyn Error>>
+async fn connect_sse_stream<T>(tx: Sender<ServerSentEvent<T>>, client: &Client, config: &Config) -> Result<(), Box<dyn Error>>
 where
-    T: DeserializeOwned + Debug,
+    T: DeserializeOwned + Debug + 'static,
 {
     let url = format!("{}/eventstream/clip/v2", config.url);
     let response = client.get(&url).header("Accept", "text/event-stream").send().await?.error_for_status()?;
@@ -64,7 +65,8 @@ where
             Ok(Some(Ok(chunk))) => {
                 if let Ok(text) = String::from_utf8(chunk.to_vec()) {
                     let event = ServerSentEvent::<T>::from_str(&text)?;
-                    info!(event = text.trim(), "🔹 Received event: {:?}", event);
+                    debug!(event = text.trim(), "🔸 Received event: {:?}", event);
+                    tx.send(event).await?;
                 }
             }
             Ok(Some(Err(e))) => {
