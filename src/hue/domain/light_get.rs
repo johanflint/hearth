@@ -64,3 +64,25 @@ pub enum GamutType {
     B,
     C,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct LightChanged {
+    pub id: String,
+    pub owner: Owner,
+    pub on: Option<On>,
+    pub dimming: Option<Dimming>,
+    pub color_temperature: Option<ChangedColorTemperature>,
+    pub color: Option<ChangedColor>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangedColorTemperature {
+    pub mirek: u64, // >= 153 && <= 500, color temperature in mirek or null when the light color is not in the ct spectrum
+    pub mirek_valid: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangedColor {
+    pub xy: Xy,
+    pub gamut: Option<ColorGamut>,
+}

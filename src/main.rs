@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Discovered all devices");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
 
-    sse::listen(&hue_client, &config).await.expect("Could not listen to SSE stream");
+    hue::observe(&hue_client, &config).await?;
 
     Ok(())
 }

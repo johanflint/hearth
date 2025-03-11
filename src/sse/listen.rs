@@ -1,14 +1,20 @@
 use crate::app_config::AppConfig;
+use crate::sse::server_sent_event::ServerSentEvent;
 use futures::StreamExt;
 use reqwest::{Client, StatusCode};
+use serde::de::DeserializeOwned;
 use std::error::Error;
+use std::fmt::Debug;
 use tokio::time::timeout;
 use tokio_retry::Retry;
 use tokio_retry::strategy::{ExponentialBackoff, jitter};
 use tracing::{error, info, instrument, warn};
 
 #[instrument(skip(client, config))]
-pub async fn listen(client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>> {
+pub async fn listen<T>(client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>>
+where
+    T: DeserializeOwned + Debug,
+{
     let strategy = ExponentialBackoff::from_millis(config.hue().retry_ms())
         .factor(2)
         .max_delay(config.hue().retry_max_delay_ms())
@@ -16,7 +22,7 @@ pub async fn listen(client: &Client, config: &AppConfig) -> Result<(), Box<dyn E
 
     info!("Connecting to SSE stream {}...", config.hue().url());
     Retry::spawn(strategy, || async {
-        match connect_sse_stream(&client, config).await {
+        match connect_sse_stream::<T>(&client, config).await {
             Ok(_) => {
                 info!("✅ SSE stream ended gracefully. Restarting...");
                 Err("Stream ended") // Triggers retry
@@ -33,7 +39,10 @@ pub async fn listen(client: &Client, config: &AppConfig) -> Result<(), Box<dyn E
 }
 
 #[instrument(skip(client, config))]
-async fn connect_sse_stream(client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>> {
+async fn connect_sse_stream<T>(client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>>
+where
+    T: DeserializeOwned + Debug,
+{
     let url = format!("{}/eventstream/clip/v2", config.hue().url());
     let response = client.get(&url).header("Accept", "text/event-stream").send().await?.error_for_status()?;
 
@@ -47,12 +56,8 @@ async fn connect_sse_stream(client: &Client, config: &AppConfig) -> Result<(), B
         match event {
             Ok(Some(Ok(chunk))) => {
                 if let Ok(text) = String::from_utf8(chunk.to_vec()) {
-                    for line in text.lines() {
-                        if line.starts_with("data:") {
-                            let event_data = line.trim_start_matches("data:").trim();
-                            info!(event = %event_data, "🔹 Received event: {:?}", event_data);
-                        }
-                    }
+                    let event = ServerSentEvent::<T>::from_str(&text)?;
+                    info!(event = text.trim(), "🔹 Received event: {:?}", event);
                 }
             }
             Ok(Some(Err(e))) => {
