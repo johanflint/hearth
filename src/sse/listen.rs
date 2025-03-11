@@ -46,7 +46,6 @@ where
     Ok(())
 }
 
-#[instrument(skip(client, config))]
 async fn connect_sse_stream<T>(client: &Client, config: &Config) -> Result<(), Box<dyn Error>>
 where
     T: DeserializeOwned + Debug,
