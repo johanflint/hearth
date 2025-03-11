@@ -1,26 +1,34 @@
-use crate::app_config::AppConfig;
 use crate::sse::server_sent_event::ServerSentEvent;
 use futures::StreamExt;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use std::error::Error;
 use std::fmt::Debug;
+use std::time::Duration;
 use tokio::time::timeout;
 use tokio_retry::Retry;
 use tokio_retry::strategy::{ExponentialBackoff, jitter};
 use tracing::{error, info, instrument, warn};
 
+#[derive(Debug)]
+pub struct Config {
+    pub url: String,
+    pub retry_ms: u64,
+    pub retry_max_delay: Duration,
+    pub stale_connection_timeout_ms: Duration,
+}
+
 #[instrument(skip(client, config))]
-pub async fn listen<T>(client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>>
+pub async fn listen<T>(client: &Client, config: &Config) -> Result<(), Box<dyn Error>>
 where
     T: DeserializeOwned + Debug,
 {
-    let strategy = ExponentialBackoff::from_millis(config.hue().retry_ms())
+    let strategy = ExponentialBackoff::from_millis(config.retry_ms)
         .factor(2)
-        .max_delay(config.hue().retry_max_delay_ms())
+        .max_delay(config.retry_max_delay)
         .map(jitter);
 
-    info!("Connecting to SSE stream {}...", config.hue().url());
+    info!("Connecting to SSE stream {}...", config.url);
     Retry::spawn(strategy, || async {
         match connect_sse_stream::<T>(&client, config).await {
             Ok(_) => {
@@ -39,20 +47,20 @@ where
 }
 
 #[instrument(skip(client, config))]
-async fn connect_sse_stream<T>(client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>>
+async fn connect_sse_stream<T>(client: &Client, config: &Config) -> Result<(), Box<dyn Error>>
 where
     T: DeserializeOwned + Debug,
 {
-    let url = format!("{}/eventstream/clip/v2", config.hue().url());
+    let url = format!("{}/eventstream/clip/v2", config.url);
     let response = client.get(&url).header("Accept", "text/event-stream").send().await?.error_for_status()?;
 
     if response.status() == StatusCode::OK {
-        info!(status = %response.status(), "Connecting to SSE stream {}... OK", config.hue().url());
+        info!(status = %response.status(), "Connecting to SSE stream {}... OK", config.url);
     }
 
     let mut stream = response.bytes_stream();
     loop {
-        let event = timeout(config.hue().stale_connection_timeout_ms(), stream.next()).await;
+        let event = timeout(config.stale_connection_timeout_ms, stream.next()).await;
         match event {
             Ok(Some(Ok(chunk))) => {
                 if let Ok(text) = String::from_utf8(chunk.to_vec()) {
@@ -69,10 +77,7 @@ where
                 return Err("Stream closed".into());
             }
             Err(_) => {
-                warn!(
-                    "⏳ No data for {} seconds. Reconnecting...",
-                    config.hue().stale_connection_timeout_ms().as_secs()
-                );
+                warn!("⏳ No data for {} seconds. Reconnecting...", config.stale_connection_timeout_ms.as_secs());
                 return Err("Timeout".into());
             }
         }
