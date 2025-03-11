@@ -1,6 +1,5 @@
 use crate::app_config::AppConfig;
 use crate::domain::events::Event;
-use crate::sse_listen::listen;
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use tokio::sync::mpsc;
@@ -13,7 +12,7 @@ mod extensions;
 mod flow_engine;
 mod flow_loader;
 mod hue;
-mod sse_listen;
+mod sse;
 mod store;
 mod store_listener;
 
@@ -56,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Discovered all devices");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
 
-    listen(&hue_client, &config).await.expect("Could not listen to SSE stream");
+    sse::listen(&hue_client, &config).await.expect("Could not listen to SSE stream");
 
     Ok(())
 }

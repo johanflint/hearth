@@ -3,8 +3,8 @@ use futures::StreamExt;
 use reqwest::{Client, StatusCode};
 use std::error::Error;
 use tokio::time::timeout;
-use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
+use tokio_retry::strategy::{ExponentialBackoff, jitter};
 use tracing::{error, info, instrument, warn};
 
 #[instrument(skip(client, config))]
