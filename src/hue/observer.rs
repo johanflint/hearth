@@ -27,9 +27,12 @@ pub async fn observe(client: &Client, config: &AppConfig) -> Result<(), Box<dyn 
         }
     });
 
-    sse::listen::<Vec<ServerSentEventPayload>>(tx, &client, &sse_config)
-        .await
-        .expect("Could not listen to SSE stream");
+    let cloned_client = client.clone();
+    task::spawn(async move {
+        sse::listen::<Vec<ServerSentEventPayload>>(tx, &cloned_client, &sse_config)
+            .await
+            .expect("Could not listen to SSE stream");
+    });
 
     Ok(())
 }

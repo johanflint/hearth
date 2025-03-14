@@ -3,8 +3,8 @@ use crate::domain::events::Event;
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use tokio::sync::mpsc;
-use tokio::task;
-use tracing::{info, trace};
+use tokio::{signal, task};
+use tracing::{error, info, trace};
 
 mod app_config;
 mod domain;
@@ -56,6 +56,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
 
     hue::observe(&hue_client, &config).await?;
+
+    match signal::ctrl_c().await {
+        Ok(()) => {}
+        Err(err) => {
+            error!("Unable to listen for shutdown signal: {}", err);
+        }
+    }
 
     Ok(())
 }
