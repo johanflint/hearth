@@ -1,6 +1,6 @@
 use crate::hue::domain::LightChanged;
 use serde::{Deserialize, Deserializer};
-use serde_json::Value;
+use serde_json::{Value, to_string_pretty};
 use std::ops::IndexMut;
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +32,7 @@ pub enum ChangedProperty {
 #[derive(Debug)]
 pub struct UnknownProperty {
     pub property_type: String,
+    pub value: String,
 }
 
 impl<'de> Deserialize<'de> for UnknownProperty {
@@ -40,8 +41,12 @@ impl<'de> Deserialize<'de> for UnknownProperty {
         D: Deserializer<'de>,
     {
         let mut value = Value::deserialize(deserializer)?;
+        let string_value = to_string_pretty(&value).unwrap();
         match value.index_mut("type").take() {
-            Value::String(property_type) => Ok(UnknownProperty { property_type }),
+            Value::String(property_type) => Ok(UnknownProperty {
+                property_type,
+                value: string_value,
+            }),
             _ => Err(serde::de::Error::missing_field("type")),
         }
     }
@@ -118,7 +123,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         let first_result = &result[0];
         assert_eq!(first_result.data.len(), 1);
-        assert!(matches!(&first_result.data[0], ChangedProperty::Unknown(UnknownProperty { property_type }) if property_type == "unknown"));
+        assert!(matches!(&first_result.data[0], ChangedProperty::Unknown(UnknownProperty { property_type, .. }) if property_type == "unknown"));
 
         Ok(())
     }
