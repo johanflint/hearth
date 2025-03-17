@@ -1,11 +1,12 @@
 use crate::domain::device::Device;
 use crate::domain::events::Event;
+use crate::domain::property::BooleanProperty;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
-use tokio::sync::{watch, RwLock};
-use tracing::{debug, info, instrument};
+use tokio::sync::{RwLock, watch};
+use tracing::{debug, info, instrument, warn};
 
 pub type DeviceMap = Arc<RwLock<HashMap<String, Device>>>;
 
@@ -48,6 +49,46 @@ impl Store {
                     info!("🔵 Registring {} device(s)... OK", num_devices);
 
                     self.notifier_tx.send(self.devices.clone()).unwrap_or_default();
+                }
+                Event::BooleanPropertyChanged {
+                    device_id,
+                    property_id,
+                    value,
+                } => {
+                    let mut write_guard = self.devices.write().await;
+
+                    let Some(device) = write_guard.get_mut(&device_id) else {
+                        #[rustfmt::skip]
+                        warn!(device_id = device_id, "⚠️ Received boolean property changed event for unknown device '{}'", device_id);
+                        return;
+                    };
+
+                    let Some(property) = device.properties.get_mut(&property_id) else {
+                        #[rustfmt::skip]
+                        warn!(device_id = device.id,"⚠️ Unknown property '{}' for device '{}'", property_id, device.name);
+                        return;
+                    };
+
+                    let Some(boolean_property) = property.as_any_mut().downcast_mut::<BooleanProperty>() else {
+                        warn!(device_id = device.id, "⚠️ Expected boolean property for property '{}'", property_id);
+                        return;
+                    };
+
+                    let previous_value = boolean_property.value();
+                    boolean_property.set_value(value).unwrap_or_else(|e| {
+                        #[rustfmt::skip]
+                        warn!(device_id = device.id, "⚠️ Could not set boolean value for property '{}': {}", property_id, e);
+                        false
+                    });
+
+                    info!(
+                        device_id = device.id,
+                        "🟢 Updated device '{}', set '{}' to '{}', was '{}'",
+                        device.name,
+                        property.name(),
+                        value,
+                        previous_value
+                    );
                 }
             }
         }

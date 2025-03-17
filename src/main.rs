@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Discovered all devices");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
 
-    hue::observe(&hue_client, &config).await?;
+    hue::observe(tx.clone(), &hue_client, &config).await?;
 
     match signal::ctrl_c().await {
         Ok(()) => {}

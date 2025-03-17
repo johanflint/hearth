@@ -21,6 +21,10 @@ impl BooleanProperty {
         }
     }
 
+    pub fn value(&self) -> bool {
+        self.value
+    }
+
     pub fn set_value(&mut self, value: bool) -> Result<bool, PropertyError> {
         if !self.readonly {
             self.value = value;

@@ -1,6 +1,7 @@
 mod client;
 mod discoverer;
 mod domain;
+mod map_light_changed;
 mod map_lights;
 mod observer;
 
