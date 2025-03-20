@@ -35,8 +35,8 @@ pub enum PropertyError {
     ReadOnly,
     #[error("value is smaller than the minimum value")]
     ValueTooSmall,
-    #[error("value is smaller than the minimum value")]
+    #[error("value is larger than the maximum value")]
     ValueTooLarge,
-    #[error("value is smaller than the minimum value")]
+    #[error("value type is incorrect")]
     IncorrectValueType,
 }
