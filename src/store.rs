@@ -1,6 +1,6 @@
 use crate::domain::device::Device;
 use crate::domain::events::Event;
-use crate::domain::property::BooleanProperty;
+use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyError};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
@@ -55,42 +55,68 @@ impl Store {
                     property_id,
                     value,
                 } => {
-                    let mut write_guard = self.devices.write().await;
+                    self.reduce_property_changed_event(&device_id, &property_id, |property: &mut Box<dyn Property>| {
+                        let Some(boolean_property) = property.as_any_mut().downcast_mut::<BooleanProperty>() else {
+                            warn!(device_id = device_id, "⚠️ Expected boolean property for property '{}'", &property_id);
+                            return Err(PropertyError::MissingProperty);
+                        };
 
-                    let Some(device) = write_guard.get_mut(&device_id) else {
-                        #[rustfmt::skip]
-                        warn!(device_id = device_id, "⚠️ Received boolean property changed event for unknown device '{}'", device_id);
-                        return;
-                    };
+                        return boolean_property.set_value(value).map(|_| ());
+                    })
+                    .await;
+                }
+                Event::NumberPropertyChanged {
+                    device_id,
+                    property_id,
+                    value,
+                } => {
+                    self.reduce_property_changed_event(&device_id.clone(), &property_id.clone(), move |property: &mut Box<dyn Property>| {
+                        let Some(number_property) = property.as_any_mut().downcast_mut::<NumberProperty>() else {
+                            warn!(device_id = device_id, "⚠️ Expected number property for property '{}'", &property_id);
+                            return Err(PropertyError::MissingProperty);
+                        };
 
-                    let Some(property) = device.properties.get_mut(&property_id) else {
-                        #[rustfmt::skip]
-                        warn!(device_id = device.id,"⚠️ Unknown property '{}' for device '{}'", property_id, device.name);
-                        return;
-                    };
-
-                    let Some(boolean_property) = property.as_any_mut().downcast_mut::<BooleanProperty>() else {
-                        warn!(device_id = device.id, "⚠️ Expected boolean property for property '{}'", property_id);
-                        return;
-                    };
-
-                    let previous_value = boolean_property.value();
-                    boolean_property.set_value(value).unwrap_or_else(|e| {
-                        #[rustfmt::skip]
-                        warn!(device_id = device.id, "⚠️ Could not set boolean value for property '{}': {}", property_id, e);
-                        false
-                    });
-
-                    info!(
-                        device_id = device.id,
-                        "🟢 Updated device '{}', set '{}' to '{}', was '{}'",
-                        device.name,
-                        property.name(),
-                        value,
-                        previous_value
-                    );
+                        return number_property.set_value(value).map(|_| ());
+                    })
+                    .await;
                 }
             }
         }
+    }
+
+    #[inline(always)]
+    async fn reduce_property_changed_event<F>(&mut self, device_id: &str, property_id: &str, set_value: F)
+    where
+        F: FnOnce(&mut Box<dyn Property>) -> Result<(), PropertyError>,
+    {
+        let mut write_guard = self.devices.write().await;
+
+        let Some(device) = write_guard.get_mut(device_id) else {
+            #[rustfmt::skip]
+            warn!(device_id = device_id, "⚠️ Received property changed event for unknown device '{}'", device_id);
+            return;
+        };
+
+        let Some(property) = device.properties.get_mut(property_id) else {
+            #[rustfmt::skip]
+            warn!(device_id = device.id,"⚠️ Unknown property '{}' for device '{}'", property_id, device.name);
+            return;
+        };
+
+        let previous_value = property.value_string();
+        if let Err(err) = set_value(property) {
+            #[rustfmt::skip]
+            warn!(device_id = device.id, "⚠️ Could not set value for property '{}': {}", property_id, err);
+            return;
+        }
+
+        info!(
+            device_id = device.id,
+            "🟢 Updated device '{}', set '{}' to '{}', was '{}'",
+            device.name,
+            property.name(),
+            property.value_string(),
+            previous_value
+        );
     }
 }

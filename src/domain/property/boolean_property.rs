@@ -53,6 +53,10 @@ impl Property for BooleanProperty {
         self.external_id.as_deref()
     }
 
+    fn value_string(&self) -> String {
+        self.value.to_string()
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

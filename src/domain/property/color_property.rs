@@ -48,6 +48,10 @@ impl Property for ColorProperty {
         self.external_id.as_deref()
     }
 
+    fn value_string(&self) -> String {
+        format!("CIE XY {{ x: {}, y: {} }}", self.xy.x, self.xy.y)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
