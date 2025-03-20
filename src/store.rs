@@ -1,6 +1,7 @@
 use crate::domain::device::Device;
 use crate::domain::events::Event;
 use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyError};
+use std::any::type_name;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
@@ -55,13 +56,8 @@ impl Store {
                     property_id,
                     value,
                 } => {
-                    self.reduce_property_changed_event(&device_id, &property_id, |property: &mut Box<dyn Property>| {
-                        let Some(boolean_property) = property.as_any_mut().downcast_mut::<BooleanProperty>() else {
-                            warn!(device_id = device_id, "⚠️ Expected boolean property for property '{}'", &property_id);
-                            return Err(PropertyError::MissingProperty);
-                        };
-
-                        return boolean_property.set_value(value).map(|_| ());
+                    self.reduce_property_changed_event(&device_id, &property_id, |property: &mut BooleanProperty| {
+                        return property.set_value(value).map(|_| ());
                     })
                     .await;
                 }
@@ -70,13 +66,8 @@ impl Store {
                     property_id,
                     value,
                 } => {
-                    self.reduce_property_changed_event(&device_id.clone(), &property_id.clone(), move |property: &mut Box<dyn Property>| {
-                        let Some(number_property) = property.as_any_mut().downcast_mut::<NumberProperty>() else {
-                            warn!(device_id = device_id, "⚠️ Expected number property for property '{}'", &property_id);
-                            return Err(PropertyError::MissingProperty);
-                        };
-
-                        return number_property.set_value(value).map(|_| ());
+                    self.reduce_property_changed_event(&device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
+                        return property.set_value(value).map(|_| ());
                     })
                     .await;
                 }
@@ -85,15 +76,16 @@ impl Store {
     }
 
     #[inline(always)]
-    async fn reduce_property_changed_event<F>(&mut self, device_id: &str, property_id: &str, set_value: F)
+    async fn reduce_property_changed_event<F, T>(&mut self, device_id: &str, property_id: &str, set_value: F)
     where
-        F: FnOnce(&mut Box<dyn Property>) -> Result<(), PropertyError>,
+        F: FnOnce(&mut T) -> Result<(), PropertyError>,
+        T: Property + 'static,
     {
         let mut write_guard = self.devices.write().await;
 
         let Some(device) = write_guard.get_mut(device_id) else {
             #[rustfmt::skip]
-            warn!(device_id = device_id, "⚠️ Received property changed event for unknown device '{}'", device_id);
+            warn!(device_id, "⚠️ Received property changed event for unknown device '{}'", device_id);
             return;
         };
 
@@ -104,7 +96,13 @@ impl Store {
         };
 
         let previous_value = property.value_string();
-        if let Err(err) = set_value(property) {
+        let Some(downcast_property) = property.as_any_mut().downcast_mut::<T>() else {
+            #[rustfmt::skip]
+            warn!(device_id, "⚠️ Expected {} property for property '{}'", type_name::<T>(), &property_id);
+            return;
+        };
+
+        if let Err(err) = set_value(downcast_property) {
             #[rustfmt::skip]
             warn!(device_id = device.id, "⚠️ Could not set value for property '{}': {}", property_id, err);
             return;
