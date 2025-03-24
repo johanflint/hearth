@@ -51,28 +51,17 @@ impl Store {
 
                     self.notifier_tx.send(self.devices.clone()).unwrap_or_default();
                 }
-                Event::BooleanPropertyChanged {
-                    device_id,
-                    property_id,
-                    value,
-                } => {
+                Event::BooleanPropertyChanged { device_id, property_id, value } => {
                     reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut BooleanProperty| {
                         property.set_value(value).map(|_| ())
                     })
                     .await
                     .unwrap_or_default();
                 }
-                Event::NumberPropertyChanged {
-                    device_id,
-                    property_id,
-                    value,
-                } => {
-                    reduce_property_changed_event(
-                        &mut self.devices.clone(),
-                        &device_id.clone(),
-                        &property_id.clone(),
-                        move |property: &mut NumberProperty| property.set_value(value).map(|_| ()),
-                    )
+                Event::NumberPropertyChanged { device_id, property_id, value } => {
+                    reduce_property_changed_event(&mut self.devices.clone(), &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
+                        property.set_value(value).map(|_| ())
+                    })
                     .await
                     .unwrap_or_default();
                 }

@@ -12,14 +12,7 @@ pub struct ColorProperty {
 }
 
 impl ColorProperty {
-    pub fn new(
-        name: String,
-        property_type: PropertyType,
-        readonly: bool,
-        external_id: Option<String>,
-        xy: CartesianCoordinate,
-        gamut: Option<Gamut>,
-    ) -> Self {
+    pub fn new(name: String, property_type: PropertyType, readonly: bool, external_id: Option<String>, xy: CartesianCoordinate, gamut: Option<Gamut>) -> Self {
         ColorProperty {
             name,
             property_type,

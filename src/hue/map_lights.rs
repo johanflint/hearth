@@ -15,13 +15,7 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
 
             let mut properties = HashMap::with_capacity(4);
 
-            let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
-                "on".to_string(),
-                PropertyType::On,
-                false,
-                Some(light.id.clone()),
-                light.on.on,
-            ));
+            let on_property: Box<dyn Property> = Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, false, Some(light.id.clone()), light.on.on));
             properties.insert(on_property.name().to_owned(), on_property);
 
             light.dimming.map(|dimming| {
