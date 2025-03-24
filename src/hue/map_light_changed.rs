@@ -21,6 +21,14 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
         });
     }
 
+    if let Some(color_temperature) = property.color_temperature {
+        events.push(Event::NumberPropertyChanged {
+            device_id: property.owner.rid.to_string(),
+            property_id: "colorTemperature".to_string(),
+            value: Number::PositiveInt(color_temperature.mirek.mirek_to_kelvin()),
+        });
+    }
+
     if let Some(color) = property.color {
         events.push(Event::ColorPropertyChanged {
             device_id: property.owner.rid.to_string(),
