@@ -54,13 +54,7 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
                     false,
                     Some(light.id.clone()),
                     CartesianCoordinate::new(color.xy.x, color.xy.y),
-                    color.gamut.map(|g| {
-                        Gamut::new(
-                            CartesianCoordinate::new(g.red.x, g.red.y),
-                            CartesianCoordinate::new(g.green.x, g.green.y),
-                            CartesianCoordinate::new(g.blue.x, g.blue.y),
-                        )
-                    }),
+                    color.gamut.map(|mut g| g.take_gamut()),
                 ));
                 properties.insert(brightness_property.name().to_owned(), brightness_property);
             });

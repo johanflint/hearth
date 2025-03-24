@@ -1,4 +1,4 @@
-use crate::domain::property::{Property, PropertyType};
+use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 
 #[derive(PartialEq, Debug)]
@@ -21,6 +21,19 @@ impl ColorProperty {
             xy,
             gamut,
         }
+    }
+
+    pub fn set_value(&mut self, value: CartesianCoordinate, gamut: Option<Gamut>) -> Result<(CartesianCoordinate, Option<Gamut>), PropertyError> {
+        if self.readonly {
+            return Err(PropertyError::ReadOnly);
+        }
+
+        self.xy = value;
+        if gamut.is_some() {
+            self.gamut = gamut;
+        }
+
+        Ok((self.xy.clone(), self.gamut.clone()))
     }
 }
 
@@ -58,7 +71,7 @@ impl Property for ColorProperty {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct CartesianCoordinate {
     x: f64,
     y: f64,
@@ -70,7 +83,7 @@ impl CartesianCoordinate {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Gamut {
     red: CartesianCoordinate,
     green: CartesianCoordinate,

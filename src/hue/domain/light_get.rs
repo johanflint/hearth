@@ -1,3 +1,4 @@
+use crate::domain::property::{CartesianCoordinate, Gamut};
 use crate::hue::domain::hue_response::Owner;
 use serde::Deserialize;
 
@@ -56,6 +57,16 @@ pub struct ColorGamut {
     pub red: Xy,
     pub green: Xy,
     pub blue: Xy,
+}
+
+impl ColorGamut {
+    pub fn take_gamut(&mut self) -> Gamut {
+        Gamut::new(
+            CartesianCoordinate::new(self.red.x, self.red.y),
+            CartesianCoordinate::new(self.green.x, self.green.y),
+            CartesianCoordinate::new(self.blue.x, self.blue.y),
+        )
+    }
 }
 
 #[derive(Debug, Deserialize)]
