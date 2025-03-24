@@ -12,6 +12,7 @@ mod extensions;
 mod flow_engine;
 mod flow_loader;
 mod hue;
+mod property_changed_reducer;
 mod sse;
 mod store;
 mod store_listener;
