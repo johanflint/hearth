@@ -1,6 +1,6 @@
 use crate::domain::device::Device;
 use crate::domain::events::Event;
-use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty, Property};
+use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty};
 use crate::property_changed_reducer::reduce_property_changed_event;
 use std::collections::HashMap;
 use std::sync::Arc;

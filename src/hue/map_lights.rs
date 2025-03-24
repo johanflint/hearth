@@ -1,5 +1,5 @@
 use crate::domain::device::{Device, DeviceType};
-use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, NumberProperty, Property, PropertyType, Unit};
+use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, Property, PropertyType, Unit};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::{DeviceGet, LightGet};
 use std::collections::HashMap;
@@ -83,6 +83,7 @@ pub enum MapLightsError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::property::Gamut;
     use crate::hue::domain::{HueResponse, Metadata, ProductData};
     use pretty_assertions::assert_eq;
 
