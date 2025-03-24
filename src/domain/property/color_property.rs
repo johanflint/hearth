@@ -23,7 +23,7 @@ impl ColorProperty {
         }
     }
 
-    pub fn set_value(&mut self, value: CartesianCoordinate, gamut: Option<Gamut>) -> Result<(CartesianCoordinate, Option<Gamut>), PropertyError> {
+    pub fn set_value(&mut self, value: CartesianCoordinate, gamut: Option<Gamut>) -> Result<(), PropertyError> {
         if self.readonly {
             return Err(PropertyError::ReadOnly);
         }
@@ -33,7 +33,7 @@ impl ColorProperty {
             self.gamut = gamut;
         }
 
-        Ok((self.xy.clone(), self.gamut.clone()))
+        Ok(())
     }
 }
 
@@ -71,7 +71,7 @@ impl Property for ColorProperty {
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(PartialEq, Debug)]
 pub struct CartesianCoordinate {
     x: f64,
     y: f64,
@@ -83,7 +83,7 @@ impl CartesianCoordinate {
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(PartialEq, Debug)]
 pub struct Gamut {
     red: CartesianCoordinate,
     green: CartesianCoordinate,

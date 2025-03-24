@@ -25,11 +25,11 @@ impl BooleanProperty {
         self.value
     }
 
-    pub fn set_value(&mut self, value: bool) -> Result<bool, PropertyError> {
+    pub fn set_value(&mut self, value: bool) -> Result<(), PropertyError> {
         if !self.readonly {
             self.value = value;
 
-            Ok(value)
+            Ok(())
         } else {
             Err(PropertyError::ReadOnly)
         }
@@ -87,7 +87,7 @@ mod tests {
         let result = property.set_value(true);
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true);
+        assert_eq!(result.unwrap(), ());
         assert_eq!(property.value, true);
     }
 

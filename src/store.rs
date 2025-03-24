@@ -53,21 +53,21 @@ impl Store {
                 }
                 Event::BooleanPropertyChanged { device_id, property_id, value } => {
                     reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut BooleanProperty| {
-                        property.set_value(value).map(|_| ())
+                        property.set_value(value)
                     })
                     .await
                     .unwrap_or_default();
                 }
                 Event::NumberPropertyChanged { device_id, property_id, value } => {
                     reduce_property_changed_event(&mut self.devices.clone(), &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
-                        property.set_value(value).map(|_| ())
+                        property.set_value(value)
                     })
                     .await
                     .unwrap_or_default();
                 }
                 Event::ColorPropertyChanged { device_id, property_id, xy, gamut } => {
                     reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut ColorProperty| {
-                        property.set_value(xy, gamut).map(|_| ())
+                        property.set_value(xy, gamut)
                     })
                     .await
                     .unwrap_or_default();
