@@ -1,14 +1,13 @@
 use crate::domain::device::Device;
 use crate::domain::events::Event;
-use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyError};
+use crate::domain::property::{BooleanProperty, NumberProperty};
 use crate::property_changed_reducer::reduce_property_changed_event;
-use std::any::type_name;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
 use tokio::sync::{RwLock, watch};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument};
 
 pub type DeviceMap = Arc<RwLock<HashMap<String, Device>>>;
 
@@ -60,7 +59,8 @@ impl Store {
                     reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut BooleanProperty| {
                         property.set_value(value).map(|_| ())
                     })
-                    .await;
+                    .await
+                    .unwrap_or_default();
                 }
                 Event::NumberPropertyChanged {
                     device_id,
@@ -73,7 +73,8 @@ impl Store {
                         &property_id.clone(),
                         move |property: &mut NumberProperty| property.set_value(value).map(|_| ()),
                     )
-                    .await;
+                    .await
+                    .unwrap_or_default();
                 }
             }
         }
