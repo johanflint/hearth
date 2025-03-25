@@ -48,8 +48,6 @@ impl Store {
 
                     write_guard.extend(discovered_devices.into_iter().map(|device| (device.id.clone(), device)));
                     info!("🔵 Registring {} device(s)... OK", num_devices);
-
-                    self.notifier_tx.send(self.devices.clone()).unwrap_or_default();
                 }
                 Event::BooleanPropertyChanged { device_id, property_id, value } => {
                     reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut BooleanProperty| {
@@ -73,6 +71,8 @@ impl Store {
                     .unwrap_or_default();
                 }
             }
+
+            self.notifier_tx.send(self.devices.clone()).unwrap_or_default();
         }
     }
 }
