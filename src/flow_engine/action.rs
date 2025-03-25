@@ -23,10 +23,7 @@ impl<'de> Deserialize<'de> for Box<dyn Action> {
         D: Deserializer<'de>,
     {
         let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
-        let kind = value
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| serde::de::Error::custom("missing field 'type'"))?;
+        let kind = value.get("type").and_then(|v| v.as_str()).ok_or_else(|| serde::de::Error::custom("missing field 'type'"))?;
 
         let registry = ACTION_REGISTRY.read().unwrap();
         if let Some(action) = registry.get(kind) {
@@ -117,9 +114,7 @@ mod tests {
 
         let node = serde_json::from_str::<Box<dyn Action>>(json)?;
 
-        let expected = LogAction {
-            message: "Hello".to_string(),
-        };
+        let expected = LogAction { message: "Hello".to_string() };
 
         let action = node.as_any().downcast_ref::<LogAction>().unwrap();
         assert_eq!(&expected, action);

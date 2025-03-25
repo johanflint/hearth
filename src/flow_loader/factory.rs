@@ -67,10 +67,7 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
     Ok(flow)
 }
 
-fn map_outgoing_nodes(
-    serialized_node: &SerializedFlowNode,
-    flow_node_map: &HashMap<String, Arc<FlowNode>>,
-) -> Result<Vec<FlowLink>, FlowFactoryError> {
+fn map_outgoing_nodes(serialized_node: &SerializedFlowNode, flow_node_map: &HashMap<String, Arc<FlowNode>>) -> Result<Vec<FlowLink>, FlowFactoryError> {
     if let Some(outgoing_node_id) = serialized_node.outgoing_nodes() {
         let node = flow_node_map.get(outgoing_node_id).ok_or_else(|| FlowFactoryError::MissingNode {
             node_id: serialized_node.id().to_owned(),
@@ -189,11 +186,7 @@ mod tests {
         let flow = from_json(json).unwrap();
 
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
-        let start_node = FlowNode::new(
-            "startNode".to_string(),
-            vec![FlowLink::new(Arc::new(end_node), None)],
-            FlowNodeKind::Start,
-        );
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(end_node), None)], FlowNodeKind::Start);
 
         let expected = Flow::new("emptyFlow".to_string(), start_node).unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
@@ -212,11 +205,7 @@ mod tests {
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(LogAction::new("Action is triggered".to_string())))),
         );
 
-        let start_node = FlowNode::new(
-            "startNode".to_string(),
-            vec![FlowLink::new(Arc::new(action_node), None)],
-            FlowNodeKind::Start,
-        );
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
 
         let expected = Flow::new("logFlow".to_string(), start_node).unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
