@@ -13,6 +13,7 @@ impl AppConfig {
     pub fn load() -> Self {
         Config::builder()
             .add_source(config::File::with_name("config").required(true))
+            .add_source(config::File::with_name("config_local").required(false))
             .add_source(config::Environment::default())
             .build()
             .unwrap()

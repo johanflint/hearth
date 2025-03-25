@@ -9,6 +9,9 @@ pub trait Property: Debug + Send + Sync {
     fn readonly(&self) -> bool;
     fn external_id(&self) -> Option<&str>;
 
+    /// Returns a string representation of the value of the property
+    fn value_string(&self) -> String;
+
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn eq_dyn(&self, other: &dyn Property) -> bool;
@@ -35,8 +38,10 @@ pub enum PropertyError {
     ReadOnly,
     #[error("value is smaller than the minimum value")]
     ValueTooSmall,
-    #[error("value is smaller than the minimum value")]
+    #[error("value is larger than the maximum value")]
     ValueTooLarge,
-    #[error("value is smaller than the minimum value")]
+    #[error("value type is incorrect")]
     IncorrectValueType,
+    #[error("missing property")]
+    MissingProperty,
 }

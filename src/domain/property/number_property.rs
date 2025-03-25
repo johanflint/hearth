@@ -1,6 +1,6 @@
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 #[derive(PartialEq, Debug)]
 pub struct NumberProperty {
@@ -48,7 +48,7 @@ impl NumberProperty {
         }
     }
 
-    pub fn set_positive_int(&mut self, value: u64) -> Result<u64, PropertyError> {
+    pub fn set_positive_int(&mut self, value: u64) -> Result<(), PropertyError> {
         if self.readonly {
             return Err(PropertyError::ReadOnly);
         }
@@ -72,10 +72,10 @@ impl NumberProperty {
         }
 
         self.value = Number::PositiveInt(value);
-        Ok(value)
+        Ok(())
     }
 
-    pub fn set_negative_int(&mut self, value: i64) -> Result<i64, PropertyError> {
+    pub fn set_negative_int(&mut self, value: i64) -> Result<(), PropertyError> {
         if self.readonly {
             return Err(PropertyError::ReadOnly);
         }
@@ -99,10 +99,10 @@ impl NumberProperty {
         }
 
         self.value = Number::NegativeInt(value);
-        Ok(value)
+        Ok(())
     }
 
-    pub fn set_float(&mut self, value: f64) -> Result<f64, PropertyError> {
+    pub fn set_float(&mut self, value: f64) -> Result<(), PropertyError> {
         if self.readonly {
             return Err(PropertyError::ReadOnly);
         }
@@ -126,7 +126,19 @@ impl NumberProperty {
         }
 
         self.value = Number::Float(value);
-        Ok(value)
+        Ok(())
+    }
+
+    pub fn value(&self) -> &Number {
+        &self.value
+    }
+
+    pub fn set_value(&mut self, value: Number) -> Result<(), PropertyError> {
+        match value {
+            Number::PositiveInt(n) => self.set_positive_int(n),
+            Number::NegativeInt(n) => self.set_negative_int(n),
+            Number::Float(n) => self.set_float(n),
+        }
     }
 }
 
@@ -145,6 +157,10 @@ impl Property for NumberProperty {
 
     fn external_id(&self) -> Option<&str> {
         self.external_id.as_deref()
+    }
+
+    fn value_string(&self) -> String {
+        self.value.to_string()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -259,6 +275,16 @@ pub enum Number {
     Float(f64),
 }
 
+impl Display for Number {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Number::PositiveInt(n) => write!(f, "{}", n),
+            Number::NegativeInt(n) => write!(f, "{}", n),
+            Number::Float(n) => write!(f, "{}", n),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,7 +344,7 @@ mod tests {
             let result = property.set_positive_int(7);
 
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), 7);
+            assert_eq!(result.unwrap(), ());
             assert_eq!(property.value, Number::PositiveInt(7));
         }
 
@@ -377,7 +403,7 @@ mod tests {
             let result = property.set_negative_int(-7);
 
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), -7);
+            assert_eq!(result.unwrap(), ());
             assert_eq!(property.value, Number::NegativeInt(-7));
         }
 
@@ -436,7 +462,7 @@ mod tests {
             let result = property.set_float(7.0);
 
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), 7.0);
+            assert_eq!(result.unwrap(), ());
             assert_eq!(property.value, Number::Float(7.0));
         }
 

@@ -5,5 +5,5 @@ mod property;
 
 pub use boolean_property::BooleanProperty;
 pub use color_property::{CartesianCoordinate, ColorProperty, Gamut};
-pub use number_property::{NumberProperty, Unit};
+pub use number_property::{Number, NumberProperty, Unit};
 pub use property::{Property, PropertyError, PropertyType};

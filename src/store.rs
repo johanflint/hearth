@@ -1,10 +1,12 @@
 use crate::domain::device::Device;
 use crate::domain::events::Event;
+use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty};
+use crate::property_changed_reducer::reduce_property_changed_event;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
-use tokio::sync::{watch, RwLock};
+use tokio::sync::{RwLock, watch};
 use tracing::{debug, info, instrument};
 
 pub type DeviceMap = Arc<RwLock<HashMap<String, Device>>>;
@@ -48,6 +50,27 @@ impl Store {
                     info!("🔵 Registring {} device(s)... OK", num_devices);
 
                     self.notifier_tx.send(self.devices.clone()).unwrap_or_default();
+                }
+                Event::BooleanPropertyChanged { device_id, property_id, value } => {
+                    reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut BooleanProperty| {
+                        property.set_value(value)
+                    })
+                    .await
+                    .unwrap_or_default();
+                }
+                Event::NumberPropertyChanged { device_id, property_id, value } => {
+                    reduce_property_changed_event(&mut self.devices.clone(), &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
+                        property.set_value(value)
+                    })
+                    .await
+                    .unwrap_or_default();
+                }
+                Event::ColorPropertyChanged { device_id, property_id, xy, gamut } => {
+                    reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut ColorProperty| {
+                        property.set_value(xy, gamut)
+                    })
+                    .await
+                    .unwrap_or_default();
                 }
             }
         }

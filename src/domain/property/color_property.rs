@@ -1,4 +1,4 @@
-use crate::domain::property::{Property, PropertyType};
+use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 
 #[derive(PartialEq, Debug)]
@@ -12,14 +12,7 @@ pub struct ColorProperty {
 }
 
 impl ColorProperty {
-    pub fn new(
-        name: String,
-        property_type: PropertyType,
-        readonly: bool,
-        external_id: Option<String>,
-        xy: CartesianCoordinate,
-        gamut: Option<Gamut>,
-    ) -> Self {
+    pub fn new(name: String, property_type: PropertyType, readonly: bool, external_id: Option<String>, xy: CartesianCoordinate, gamut: Option<Gamut>) -> Self {
         ColorProperty {
             name,
             property_type,
@@ -28,6 +21,19 @@ impl ColorProperty {
             xy,
             gamut,
         }
+    }
+
+    pub fn set_value(&mut self, value: CartesianCoordinate, gamut: Option<Gamut>) -> Result<(), PropertyError> {
+        if self.readonly {
+            return Err(PropertyError::ReadOnly);
+        }
+
+        self.xy = value;
+        if gamut.is_some() {
+            self.gamut = gamut;
+        }
+
+        Ok(())
     }
 }
 
@@ -46,6 +52,10 @@ impl Property for ColorProperty {
 
     fn external_id(&self) -> Option<&str> {
         self.external_id.as_deref()
+    }
+
+    fn value_string(&self) -> String {
+        format!("CIE XY {{ x: {}, y: {} }}", self.xy.x, self.xy.y)
     }
 
     fn as_any(&self) -> &dyn Any {

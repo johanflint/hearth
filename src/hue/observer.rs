@@ -1,155 +1,66 @@
 use crate::app_config::AppConfig;
-use crate::domain::device::Device;
-use crate::hue::domain::{DeviceGet, HueResponse, LightGet};
-use crate::hue::map_lights::map_lights;
-use reqwest::{Client, StatusCode};
-use std::collections::HashMap;
-use thiserror::Error;
-use tracing::{info, instrument, warn};
+use crate::domain::events::Event;
+use crate::hue::domain::{ChangedProperty, ServerSentEventPayload, UnknownProperty};
+use crate::hue::map_light_changed::map_light_changed_property;
+use crate::sse;
+use crate::sse::{Config, ServerSentEvent};
+use reqwest::Client;
+use std::error::Error;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
+use tokio::task;
+use tracing::{debug, info, instrument, trace, warn};
+
+type HueEvent = ServerSentEvent<Vec<ServerSentEventPayload>>;
 
 #[instrument(skip_all)]
-pub async fn observe(client: &Client, config: &AppConfig) -> Result<Vec<Device>, ObserverError> {
-    info!("Retrieving Hue devices...");
+pub async fn observe(tx: Sender<Event>, client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>> {
+    let (sse_tx, mut sse_rx) = mpsc::channel::<HueEvent>(config.core().store_buffer_size());
 
-    let hue_url = config.hue().url();
-    let response = client
-        .get(format!("{}/clip/v2/resource/device", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(|e| ObserverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
+    let sse_config = Config {
+        url: config.hue().url().to_owned(),
+        retry_ms: config.hue().retry_ms(),
+        retry_max_delay: config.hue().retry_max_delay_ms(),
+        stale_connection_timeout_ms: config.hue().stale_connection_timeout_ms(),
+    };
 
-    let hue_response = response.json::<HueResponse<DeviceGet>>().await?;
-    info!("Retrieving Hue devices... OK, {} found", hue_response.data.len());
-
-    let response = client
-        .get(format!("{}/clip/v2/resource/light", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(|e| ObserverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
-
-    let light_response = response.json::<HueResponse<LightGet>>().await?;
-    info!("Retrieving lights... OK, {} found", light_response.data.len());
-
-    let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
-    let devices = map_lights(light_response.data, &mut device_map).unwrap();
-
-    if !device_map.is_empty() {
-        log_unmapped_devices(&device_map);
-    }
-
-    Ok(devices)
-}
-
-#[instrument(skip_all)]
-fn log_unmapped_devices(device_map: &HashMap<String, DeviceGet>) {
-    let unmapped_devices = device_map
-        .iter()
-        .map(|(_, d)| {
-            format!(
-                "- {} {} '{}'",
-                d.product_data.manufacturer_name, d.product_data.product_name, d.metadata.name
-            )
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
-    warn!("⚠️ Ignored {} unsupported Hue devices:\n{}", device_map.len(), unmapped_devices);
-}
-
-#[derive(Error, Debug)]
-pub enum ObserverError {
-    #[error("client error: {0}")]
-    ClientError(#[from] reqwest::Error),
-    #[error("unexpected status code {0} when calling {1}")]
-    UnexpectedResponse(StatusCode, String),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app_config::AppConfigBuilder;
-    use crate::domain::device::DeviceType;
-    use crate::domain::property::{BooleanProperty, Property, PropertyType};
-    use crate::hue::client::new_client;
-    use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
-
-    #[tokio::test]
-    async fn observe_returns_mapped_devices() -> Result<(), ObserverError> {
-        let mut server = mockito::Server::new_async().await;
-
-        let mock = server
-            .mock("GET", "/clip/v2/resource/device")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(include_str!("../../tests/resources/hue_device_response.json"))
-            .match_header("hue-application-key", "key")
-            .create_async()
-            .await;
-
-        server
-            .mock("GET", "/clip/v2/resource/light")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(include_str!("../../tests/resources/hue_light_simplified_response.json"))
-            .create_async()
-            .await;
-
-        let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
-        let client = new_client(&app_config).unwrap();
-
-        let response = observe(&client, &app_config).await?;
-
-        let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
-            "on".to_string(),
-            PropertyType::On,
-            false,
-            Some("703c7167-ff79-4fd4-a3d9-635b3f237a4f".to_string()),
-            false,
-        ));
-
-        mock.assert();
-        assert_eq!(response.len(), 1);
-        assert_eq!(
-            response[0],
-            Device {
-                id: "079e0321-7e18-46bc-bc16-fcbc3dd09e30".to_string(),
-                r#type: DeviceType::Light,
-                manufacturer: "Signify Netherlands B.V.".to_string(),
-                model_id: "LWA004".to_string(),
-                product_name: "Hue filament bulb".to_string(),
-                name: "Woonkamer".to_string(),
-                properties: HashMap::from([(on_property.name().to_string(), on_property),]),
-                external_id: None,
-                address: None,
+    task::spawn(async move {
+        while let Some(hue_event) = sse_rx.recv().await {
+            if let Some(comment) = &hue_event.comment {
+                info!("🔹 {}", comment);
             }
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn observe_returns_an_error_for_an_unexpected_response() -> Result<(), ObserverError> {
-        let mut server = mockito::Server::new_async().await;
-
-        let mock = server.mock("GET", "/clip/v2/resource/device").with_status(400).create_async().await;
-
-        let client = Client::new();
-
-        let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
-
-        let response = observe(&client, &app_config).await;
-        assert!(response.is_err());
-
-        match response {
-            Err(ObserverError::UnexpectedResponse(StatusCode::BAD_REQUEST, url)) => {
-                assert_eq!(url, format!("{}/clip/v2/resource/device", server.url()))
+            if let Some(data) = hue_event.data {
+                for payload in data {
+                    for property in payload.data {
+                        handle_changed_property(tx.clone(), property).await;
+                    }
+                }
             }
-            _ => panic!("unexpected response"),
         }
+    });
 
-        mock.assert();
-        Ok(())
+    let cloned_client = client.clone();
+    task::spawn(async move {
+        sse::listen::<Vec<ServerSentEventPayload>>(sse_tx, &cloned_client, &sse_config)
+            .await
+            .expect("Could not listen to SSE stream");
+    });
+
+    Ok(())
+}
+
+async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty) {
+    match property {
+        ChangedProperty::Light(property) => {
+            for event in map_light_changed_property(property) {
+                tx.send(event).await.unwrap_or_else(|e| {
+                    warn!("⚠️ Unable to send changed light event: {}", e);
+                });
+            }
+        }
+        ChangedProperty::Unknown(UnknownProperty { property_type, value }) => {
+            debug!("⚠️ Unknown changed property type '{}'", property_type);
+            trace!("   Payload: {}", value);
+        }
     }
 }

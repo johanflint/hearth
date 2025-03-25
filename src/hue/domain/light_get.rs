@@ -1,3 +1,4 @@
+use crate::domain::property::{CartesianCoordinate, Gamut};
 use crate::hue::domain::hue_response::Owner;
 use serde::Deserialize;
 
@@ -58,9 +59,41 @@ pub struct ColorGamut {
     pub blue: Xy,
 }
 
+impl ColorGamut {
+    pub fn take_gamut(&mut self) -> Gamut {
+        Gamut::new(
+            CartesianCoordinate::new(self.red.x, self.red.y),
+            CartesianCoordinate::new(self.green.x, self.green.y),
+            CartesianCoordinate::new(self.blue.x, self.blue.y),
+        )
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub enum GamutType {
     A,
     B,
     C,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LightChanged {
+    pub id: String,
+    pub owner: Owner,
+    pub on: Option<On>,
+    pub dimming: Option<Dimming>,
+    pub color_temperature: Option<ChangedColorTemperature>,
+    pub color: Option<ChangedColor>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangedColorTemperature {
+    pub mirek: u64, // >= 153 && <= 500, color temperature in mirek or null when the light color is not in the ct spectrum
+    pub mirek_valid: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangedColor {
+    pub xy: Xy,
+    pub gamut: Option<ColorGamut>,
 }

@@ -21,11 +21,15 @@ impl BooleanProperty {
         }
     }
 
-    pub fn set_value(&mut self, value: bool) -> Result<bool, PropertyError> {
+    pub fn value(&self) -> bool {
+        self.value
+    }
+
+    pub fn set_value(&mut self, value: bool) -> Result<(), PropertyError> {
         if !self.readonly {
             self.value = value;
 
-            Ok(value)
+            Ok(())
         } else {
             Err(PropertyError::ReadOnly)
         }
@@ -47,6 +51,10 @@ impl Property for BooleanProperty {
 
     fn external_id(&self) -> Option<&str> {
         self.external_id.as_deref()
+    }
+
+    fn value_string(&self) -> String {
+        self.value.to_string()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -79,7 +87,7 @@ mod tests {
         let result = property.set_value(true);
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true);
+        assert_eq!(result.unwrap(), ());
         assert_eq!(property.value, true);
     }
 
