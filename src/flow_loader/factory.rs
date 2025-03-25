@@ -138,7 +138,8 @@ pub enum FlowFactoryError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flow_engine::action::LogAction;
+    use crate::flow_engine::action::{ControlDeviceAction, LogAction};
+    use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
 
     #[tokio::test]
     async fn returns_an_error_if_an_unknown_node_type_is_found() {
@@ -218,6 +219,28 @@ mod tests {
         );
 
         let expected = Flow::new("logFlow".to_string(), start_node).unwrap();
+        assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
+    }
+
+    #[tokio::test]
+    async fn creates_a_flow_with_an_action_node_of_type_control_device() {
+        let json = include_str!("../../tests/resources/flows/controlDeviceFlow.json");
+        let flow = from_json(json).unwrap();
+
+        let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
+
+        let action_node = FlowNode::new(
+            "controlNode".to_string(),
+            vec![FlowLink::new(Arc::new(end_node), None)],
+            FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(
+                "42".to_string(),
+                HashMap::from([("fan".to_string(), SetBooleanValue(true))]),
+            )))),
+        );
+
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
+
+        let expected = Flow::new("controlDeviceFlow".to_string(), start_node).unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
     }
 }

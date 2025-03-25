@@ -1,0 +1,29 @@
+{
+  "name": "controlDeviceFlow",
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "controlNode"
+    },
+    {
+      "id": "controlNode",
+      "type": "actionNode",
+      "outgoingNode": "endNode",
+      "action": {
+        "type": "controlDevice",
+        "deviceId": "42",
+        "property": {
+          "fan": {
+            "type": "boolean",
+            "value": true
+          }
+        }
+      }
+    },
+    {
+      "id": "endNode",
+      "type": "endNode"
+    }
+  ]
+}
