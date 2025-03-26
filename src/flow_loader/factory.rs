@@ -137,6 +137,7 @@ mod tests {
     use super::*;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
+    use pretty_assertions::assert_eq;
 
     #[tokio::test]
     async fn returns_an_error_if_an_unknown_node_type_is_found() {
