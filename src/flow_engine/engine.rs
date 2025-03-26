@@ -1,36 +1,35 @@
+use crate::flow_engine::context::Context;
 use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
 use thiserror::Error;
 use tracing::{debug, info, instrument, trace};
 
-#[instrument(fields(flow = flow.name()))]
-pub async fn execute(flow: &Flow) -> Result<(), FlowEngineError> {
+#[instrument(fields(flow = flow.name()), skip_all)]
+pub async fn execute(flow: &Flow, context: &Context) -> Result<(), FlowEngineError> {
     info!("▶️ Executing flow...");
 
     let mut next_node = Some(flow.start_node());
     while let Some(node) = next_node {
-        next_node = execute_node(node).await?;
+        next_node = execute_node(node, context).await?;
     }
 
     info!("▶️ Executing flow... OK");
     Ok(())
 }
 
-#[instrument(fields(node = node.id()))]
-async fn execute_node(node: &FlowNode) -> Result<Option<&FlowNode>, FlowEngineError> {
+#[instrument(fields(node = node.id()), skip_all)]
+async fn execute_node<'a>(node: &'a FlowNode, context: &Context) -> Result<Option<&'a FlowNode>, FlowEngineError> {
     trace!("{:?}", node);
 
     let next_flow_link = match node.kind() {
         FlowNodeKind::Action(action_flow_node) => {
             info!("Executing action {}", action_flow_node.action().kind());
-            action_flow_node.action().execute().await;
+            action_flow_node.action().execute(context).await;
             node.outgoing_nodes().first()
         }
         _ => node.outgoing_nodes().first(),
     };
 
-    let next_node = next_flow_link
-        .ok_or_else(|| FlowEngineError::MissingOutgoingNode(node.id().to_owned()))?
-        .node();
+    let next_node = next_flow_link.ok_or_else(|| FlowEngineError::MissingOutgoingNode(node.id().to_owned()))?.node();
 
     debug!("Next node: {}", next_node.id());
     match next_node.kind() {
@@ -64,14 +63,10 @@ mod tests {
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(action))),
         );
 
-        let start_node = FlowNode::new(
-            "startNode".to_string(),
-            vec![FlowLink::new(Arc::new(log_node), None)],
-            FlowNodeKind::Start,
-        );
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(log_node), None)], FlowNodeKind::Start);
         let flow = Flow::new("flow".to_string(), start_node).unwrap();
 
-        let result = execute(&flow).await;
+        let result = execute(&flow, &Context::default()).await;
         assert!(result.is_ok());
     }
 
@@ -80,7 +75,7 @@ mod tests {
         let start_node = FlowNode::new("startNode".to_string(), vec![], FlowNodeKind::Start);
         let flow = Flow::new("flow".to_string(), start_node).unwrap();
 
-        let result = execute(&flow).await;
+        let result = execute(&flow, &Context::default()).await;
         assert!(matches!(result, Err(FlowEngineError::MissingOutgoingNode(_))));
     }
 }

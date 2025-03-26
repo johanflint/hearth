@@ -1,4 +1,5 @@
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions, register_action};
+use crate::flow_engine::context::Context;
 use crate::flow_engine::property_value::PropertyValue;
 use action_macros::register_action;
 use async_trait::async_trait;
@@ -6,13 +7,13 @@ use serde::{Deserialize, Deserializer};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 #[async_trait]
 pub trait Action: Debug + Send + Sync {
     fn kind(&self) -> &'static str;
 
-    async fn execute(&self);
+    async fn execute(&self, context: &Context);
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -57,8 +58,8 @@ impl Action for LogAction {
         "log"
     }
 
-    #[instrument(fields(action = self.kind()), skip(self))]
-    async fn execute(&self) {
+    #[instrument(fields(action = self.kind()), skip_all)]
+    async fn execute(&self, _context: &Context) {
         info!("{}", self.message);
     }
 
@@ -88,9 +89,17 @@ impl Action for ControlDeviceAction {
         "controlDevice"
     }
 
-    #[instrument(fields(action = self.kind()), skip(self))]
-    async fn execute(&self) {
-        info!(device_id = self.device_id, "Control device");
+    #[instrument(fields(action = self.kind()), skip_all)]
+    async fn execute(&self, context: &Context) {
+        let devices = context.read_devices().await;
+        let Some(device) = devices.get(&self.device_id) else {
+            warn!(
+                device_id = self.device_id,
+                "Unable to control unknown device '{}', ignoring action: {:?}", self.device_id, self.property
+            );
+            return;
+        };
+        info!("Control device '{}': {:?}", device.name, self.property);
     }
 
     fn as_any(&self) -> &dyn Any {
