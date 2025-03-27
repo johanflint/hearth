@@ -1,5 +1,6 @@
 use crate::flow_engine::context::Context;
 use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
+use crate::flow_engine::scope::Scope;
 use thiserror::Error;
 use tracing::{debug, info, instrument, trace};
 
@@ -7,9 +8,10 @@ use tracing::{debug, info, instrument, trace};
 pub async fn execute(flow: &Flow, context: &Context) -> Result<(), FlowEngineError> {
     info!("▶️ Executing flow...");
 
+    let mut scope = Scope::new();
     let mut next_node = Some(flow.start_node());
     while let Some(node) = next_node {
-        next_node = execute_node(node, context).await?;
+        next_node = execute_node(node, context, &mut scope).await?;
     }
 
     info!("▶️ Executing flow... OK");
@@ -17,13 +19,13 @@ pub async fn execute(flow: &Flow, context: &Context) -> Result<(), FlowEngineErr
 }
 
 #[instrument(fields(node = node.id()), skip_all)]
-async fn execute_node<'a>(node: &'a FlowNode, context: &Context) -> Result<Option<&'a FlowNode>, FlowEngineError> {
+async fn execute_node<'a>(node: &'a FlowNode, context: &Context, scope: &mut Scope) -> Result<Option<&'a FlowNode>, FlowEngineError> {
     trace!("{:?}", node);
 
     let next_flow_link = match node.kind() {
         FlowNodeKind::Action(action_flow_node) => {
             info!("Executing action {}", action_flow_node.action().kind());
-            action_flow_node.action().execute(context).await;
+            action_flow_node.action().execute(context, scope).await;
             node.outgoing_nodes().first()
         }
         _ => node.outgoing_nodes().first(),

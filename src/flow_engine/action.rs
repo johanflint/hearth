@@ -1,19 +1,20 @@
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions, register_action};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::property_value::PropertyValue;
+use crate::flow_engine::scope::Scope;
 use action_macros::register_action;
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use tracing::{info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 #[async_trait]
 pub trait Action: Debug + Send + Sync {
     fn kind(&self) -> &'static str;
 
-    async fn execute(&self, context: &Context);
+    async fn execute(&self, context: &Context, scope: &mut Scope);
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -59,7 +60,7 @@ impl Action for LogAction {
     }
 
     #[instrument(fields(action = self.kind()), skip_all)]
-    async fn execute(&self, _context: &Context) {
+    async fn execute(&self, _context: &Context, _scope: &mut Scope) {
         info!("{}", self.message);
     }
 
@@ -83,6 +84,8 @@ impl ControlDeviceAction {
     }
 }
 
+type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
+
 #[async_trait]
 impl Action for ControlDeviceAction {
     fn kind(&self) -> &'static str {
@@ -90,7 +93,7 @@ impl Action for ControlDeviceAction {
     }
 
     #[instrument(fields(action = self.kind()), skip_all)]
-    async fn execute(&self, context: &Context) {
+    async fn execute(&self, context: &Context, scope: &mut Scope) {
         let devices = context.read_devices().await;
         let Some(device) = devices.get(&self.device_id) else {
             warn!(
@@ -99,7 +102,22 @@ impl Action for ControlDeviceAction {
             );
             return;
         };
-        info!("Control device '{}': {:?}", device.name, self.property);
+
+        let Some(command_map) = scope.ensure_entry_mut::<CommandMap, _>("command_map".to_string(), HashMap::new) else {
+            error!("🛑 Incorrect type for the command map");
+            return;
+        };
+
+        let device_command_map = command_map.entry(self.device_id.clone()).or_insert_with(HashMap::new);
+        for (property_id, property_value) in self.property.iter() {
+            let result = device_command_map.insert(property_id.clone(), property_value.clone());
+            if let Some(previous_value) = result {
+                warn!(
+                    device_id = self.device_id,
+                    "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'", property_id, device.name, previous_value
+                );
+            }
+        }
     }
 
     fn as_any(&self) -> &dyn Any {

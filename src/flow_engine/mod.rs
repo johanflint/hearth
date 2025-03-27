@@ -4,6 +4,7 @@ mod context;
 mod engine;
 pub mod flow;
 pub mod property_value;
+mod scope;
 
 pub use context::Context;
 pub use engine::FlowEngineError;
