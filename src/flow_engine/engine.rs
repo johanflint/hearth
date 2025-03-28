@@ -1,12 +1,17 @@
 use crate::flow_engine::context::Context;
 use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
 use crate::flow_engine::scope::Scope;
+use std::any::Any;
+use std::collections::HashMap;
+use std::time::Duration;
 use thiserror::Error;
+use tokio::time::Instant;
 use tracing::{debug, info, instrument, trace};
 
 #[instrument(fields(flow = flow.name()), skip_all)]
-pub async fn execute(flow: &Flow, context: &Context) -> Result<(), FlowEngineError> {
+pub async fn execute(flow: &Flow, context: &Context) -> Result<FlowExecutionReport, FlowEngineError> {
     info!("▶️ Executing flow...");
+    let start = Instant::now();
 
     let mut scope = Scope::new();
     let mut next_node = Some(flow.start_node());
@@ -14,8 +19,10 @@ pub async fn execute(flow: &Flow, context: &Context) -> Result<(), FlowEngineErr
         next_node = execute_node(node, context, &mut scope).await?;
     }
 
-    info!("▶️ Executing flow... OK");
-    Ok(())
+    let duration = Instant::now() - start;
+    info!(duration = ?duration, "▶️ Executing flow... OK");
+
+    Ok(FlowExecutionReport { scope: scope.take(), duration })
 }
 
 #[instrument(fields(node = node.id()), skip_all)]
@@ -44,6 +51,21 @@ async fn execute_node<'a>(node: &'a FlowNode, context: &Context, scope: &mut Sco
 pub enum FlowEngineError {
     #[error("missing outgoing node for node '{0}'")]
     MissingOutgoingNode(String),
+}
+
+pub struct FlowExecutionReport {
+    scope: HashMap<String, Box<dyn Any + Send + Sync>>,
+    duration: Duration,
+}
+
+impl FlowExecutionReport {
+    pub fn scope(&self) -> &HashMap<String, Box<dyn Any + Send + Sync>> {
+        &self.scope
+    }
+
+    pub fn duration(&self) -> Duration {
+        self.duration
+    }
 }
 
 #[cfg(test)]

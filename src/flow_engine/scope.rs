@@ -27,4 +27,8 @@ impl Scope {
     pub fn ensure_entry_mut<T: 'static + Send + Sync, F: FnOnce() -> T>(&mut self, k: String, default: F) -> Option<&mut T> {
         self.data.entry(k).or_insert_with(|| Box::new(default())).downcast_mut::<T>()
     }
+
+    pub fn take(self) -> HashMap<String, Box<dyn Any + Send + Sync>> {
+        self.data
+    }
 }

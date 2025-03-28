@@ -1,6 +1,6 @@
 use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
-use crate::flow_engine::{Context, FlowEngineError};
+use crate::flow_engine::{Context, FlowEngineError, FlowExecutionReport};
 use crate::store::DeviceMap;
 use futures::stream::FuturesUnordered;
 use tokio::sync::watch::Receiver;
@@ -19,7 +19,7 @@ pub async fn store_listener(mut rx: Receiver<DeviceMap>, flows: Vec<Flow>) {
     }
 }
 
-async fn execute_flows(flows: &[Flow], context: &Context) -> Vec<Result<(), FlowEngineError>> {
+async fn execute_flows(flows: &[Flow], context: &Context) -> Vec<Result<FlowExecutionReport, FlowEngineError>> {
     use futures::stream::StreamExt;
     FuturesUnordered::from_iter(flows.iter().map(|flow| async { flow_engine::execute(flow, context).await }))
         .collect::<Vec<_>>()
