@@ -59,8 +59,17 @@ pub struct FlowExecutionReport {
 }
 
 impl FlowExecutionReport {
+    #[cfg(test)]
+    pub fn new(scope: HashMap<String, Box<dyn Any + Send + Sync>>, duration: Duration) -> Self {
+        FlowExecutionReport { scope, duration }
+    }
+
     pub fn scope(&self) -> &HashMap<String, Box<dyn Any + Send + Sync>> {
         &self.scope
+    }
+
+    pub fn take_from_scope<T: 'static + Send + Sync>(mut self, k: &str) -> Option<T> {
+        self.scope.remove(k).and_then(|v| v.downcast::<T>().ok().map(|boxed| *boxed))
     }
 
     pub fn duration(&self) -> Duration {
