@@ -12,6 +12,7 @@ pub struct Device {
     pub properties: HashMap<String, Box<dyn Property>>,
     pub external_id: Option<String>,
     pub address: Option<String>,
+    pub controller_id: Option<&'static str>,
 }
 
 #[derive(PartialEq, Debug)]

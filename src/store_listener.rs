@@ -1,3 +1,5 @@
+use crate::domain::commands::Command;
+use crate::domain::controller_registry;
 use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_value::PropertyValue;
@@ -5,8 +7,9 @@ use crate::flow_engine::{Context, FlowEngineError, FlowExecutionReport};
 use crate::store::DeviceMap;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::watch::Receiver;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
 
@@ -21,7 +24,20 @@ pub async fn store_listener(mut rx: Receiver<DeviceMap>, flows: Vec<Flow>) {
         let context = Context::new(store.clone());
         let results = execute_flows(&flows, &context).await;
 
-        merge_command_maps(results);
+        let command_map = merge_command_maps(results);
+        for (device_id, properties) in command_map {
+            if let Some(device) = read_guard.get(&device_id) {
+                if let Some(controller) = device.controller_id.and_then(|controller_id| controller_registry::get(controller_id)) {
+                    let command = Command::ControlDevice {
+                        device_id,
+                        property: Arc::new(properties),
+                    };
+                    controller.execute(command).await;
+                } else {
+                    warn!(device_id, "⚠️ Device '{}' is not tied to a controller", device.name);
+                }
+            }
+        }
     }
 }
 

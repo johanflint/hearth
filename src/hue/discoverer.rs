@@ -123,6 +123,7 @@ mod tests {
                 properties: HashMap::from([(on_property.name().to_string(), on_property),]),
                 external_id: None,
                 address: None,
+                controller_id: Some("hue"),
             }
         );
 

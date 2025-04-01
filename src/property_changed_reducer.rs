@@ -94,6 +94,7 @@ mod tests {
             properties: HashMap::from([(on_property.name().to_string(), on_property)]),
             external_id: None,
             address: None,
+            controller_id: None,
         };
 
         Arc::new(RwLock::new(HashMap::from([(DEVICE_ID.to_string(), device)])))
