@@ -1,7 +1,8 @@
 use crate::domain::device::Device;
 use crate::store::DeviceMap;
 use std::collections::HashMap;
-use tokio::sync::RwLockReadGuard;
+use std::sync::Arc;
+use tokio::sync::{RwLock, RwLockReadGuard};
 
 #[derive(Default, Debug)]
 pub struct Context {
@@ -13,7 +14,7 @@ impl Context {
         Context { devices }
     }
 
-    pub async fn read_devices(&self) -> RwLockReadGuard<'_, HashMap<String, Device>> {
+    pub async fn read_devices(&self) -> RwLockReadGuard<'_, HashMap<String, Arc<RwLock<Device>>>> {
         self.devices.read().await
     }
 }

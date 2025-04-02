@@ -17,19 +17,20 @@ type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
 pub async fn store_listener(mut rx: Receiver<DeviceMap>, flows: Vec<Flow>) {
     while rx.changed().await.is_ok() {
         let store: DeviceMap = rx.borrow().clone();
-        // Note that the read_guard locks until it is dropped, can be avoided to clone the read_guard which is expensive
-        let read_guard = store.read().await;
-        info!("Updated store: {:?}", read_guard);
+        // Note that the store_lock locks until it is dropped, can be avoided to clone the read_guard which is expensive
+        let store_lock = store.read().await;
+        info!("Updated store: {:?}", store_lock);
 
         let context = Context::new(store.clone());
         let results = execute_flows(&flows, &context).await;
 
         let command_map = merge_command_maps(results);
         for (device_id, properties) in command_map {
-            if let Some(device) = read_guard.get(&device_id) {
+            if let Some(device_lock) = store_lock.get(&device_id) {
+                let device = device_lock.read().await;
                 if let Some(controller) = device.controller_id.and_then(|controller_id| controller_registry::get(controller_id)) {
                     let command = Command::ControlDevice {
-                        device_id,
+                        device: device_lock.clone(),
                         property: Arc::new(properties),
                     };
                     controller.execute(command).await;

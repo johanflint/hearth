@@ -9,11 +9,11 @@ use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
 use tokio::sync::{RwLock, watch};
 use tracing::{debug, info, instrument};
 
-pub type DeviceMap = Arc<RwLock<HashMap<String, Device>>>;
+pub type DeviceMap = Arc<RwLock<HashMap<String, Arc<RwLock<Device>>>>>;
 
 #[derive(Debug)]
 pub struct Store {
-    devices: Arc<RwLock<HashMap<String, Device>>>,
+    devices: DeviceMap,
     rx: Receiver<Event>,
     notifier_tx: WatchSender<DeviceMap>,
     notifier_rx: WatchReceiver<DeviceMap>,
@@ -46,7 +46,7 @@ impl Store {
                     debug!("🔵 Registring {} device(s)...", num_devices);
                     let mut write_guard = self.devices.write().await;
 
-                    write_guard.extend(discovered_devices.into_iter().map(|device| (device.id.clone(), device)));
+                    write_guard.extend(discovered_devices.into_iter().map(|device| (device.id.clone(), Arc::new(RwLock::new(device)))));
                     info!("🔵 Registring {} device(s)... OK", num_devices);
                 }
                 Event::BooleanPropertyChanged { device_id, property_id, value } => {

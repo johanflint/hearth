@@ -12,11 +12,17 @@ where
 {
     let mut write_guard = devices.write().await;
 
-    let Some(device) = write_guard.get_mut(device_id) else {
+    let Some(device_lock) = write_guard.get_mut(device_id) else {
         warn!(device_id, "⚠️ Received property changed event for unknown device '{}'", device_id);
         return Err(ReducerError::UnknownDevice { device_id: device_id.to_string() });
     };
 
+    let device_name = {
+        let device_read = device_lock.read().await;
+        device_read.name.clone()
+    };
+
+    let mut device = device_lock.write().await;
     let Some(property) = device.properties.get_mut(property_id) else {
         warn!(device_id = device.id, "⚠️ Unknown property '{}' for device '{}'", property_id, device.name);
         return Err(ReducerError::UnknownProperty {
@@ -41,9 +47,9 @@ where
     }
 
     info!(
-        device_id = device.id,
+        device_id,
         "🟢 Updated device '{}', set '{}' to '{}', was '{}'",
-        device.name,
+        device_name,
         property.name(),
         property.value_string(),
         previous_value
@@ -97,7 +103,7 @@ mod tests {
             controller_id: None,
         };
 
-        Arc::new(RwLock::new(HashMap::from([(DEVICE_ID.to_string(), device)])))
+        Arc::new(RwLock::new(HashMap::from([(DEVICE_ID.to_string(), Arc::new(RwLock::new(device)))])))
     }
 
     #[test(tokio::test)]

@@ -112,9 +112,10 @@ impl Action for ControlDeviceAction {
         for (property_id, property_value) in self.property.iter() {
             let result = device_command_map.insert(property_id.clone(), property_value.clone());
             if let Some(previous_value) = result {
+                let device_lock = device.read().await;
                 warn!(
                     device_id = self.device_id,
-                    "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'", property_id, device.name, previous_value
+                    "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'", property_id, device_lock.name, previous_value
                 );
             }
         }
