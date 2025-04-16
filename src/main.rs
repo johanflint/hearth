@@ -25,14 +25,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("🪵 Starting {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 
-    let config = AppConfig::load();
+    let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
 
     let flows = flow_loader::load_flows_from(config.flows().directory(), "json").await.unwrap_or_else(|_| Vec::new()); // Errors are already logged in the function
     info!("✅  Loaded flows");
 
     let hue_client = hue::new_client(&config)?;
-    let hue_controller = hue::Controller {};
+    let hue_controller = hue::Controller::new(hue_client.clone(), config.clone());
     controller_registry::register(Arc::new(hue_controller));
     info!("✅  Initialized controllers");
 
