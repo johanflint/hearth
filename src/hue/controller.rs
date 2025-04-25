@@ -34,6 +34,7 @@ impl Controller for HueController {
                     if let Some(on_property) = device.get_property_of_type::<BooleanProperty>(PropertyType::On) {
                         let property_value = property.get(on_property.name()).map(|pv| match pv {
                             PropertyValue::SetBooleanValue(value) => On { on: *value },
+                            PropertyValue::ToggleBooleanValue => On { on: !on_property.value() },
                         });
 
                         if let Some(value) = &property_value {

@@ -19,6 +19,7 @@ impl<'de> Deserialize<'de> for PropertyValue {
                     .ok_or_else(|| Error::custom(format!("expected field '{}' of type '{}'", "value", "boolean")))?;
                 Ok(PropertyValue::SetBooleanValue(value))
             }
+            "toggle" => Ok(PropertyValue::ToggleBooleanValue),
             _ => Err(Error::custom(format!("unknown property type '{}'", kind))),
         }
     }
