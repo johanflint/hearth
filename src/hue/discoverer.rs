@@ -46,12 +46,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
 fn log_unmapped_devices(device_map: &HashMap<String, DeviceGet>) {
     let unmapped_devices = device_map
         .iter()
-        .map(|(_, d)| {
-            format!(
-                "- {} {} '{}'",
-                d.product_data.manufacturer_name, d.product_data.product_name, d.metadata.name
-            )
-        })
+        .map(|(_, d)| format!("- {} {} '{}'", d.product_data.manufacturer_name, d.product_data.product_name, d.metadata.name))
         .collect::<Vec<String>>()
         .join("\n");
     warn!("⚠️ Ignored {} unsupported Hue devices:\n{}", device_map.len(), unmapped_devices);
