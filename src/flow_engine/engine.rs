@@ -1,36 +1,44 @@
+use crate::flow_engine::context::Context;
 use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
+use crate::flow_engine::scope::Scope;
+use std::any::Any;
+use std::collections::HashMap;
+use std::time::Duration;
 use thiserror::Error;
+use tokio::time::Instant;
 use tracing::{debug, info, instrument, trace};
 
-#[instrument(fields(flow = flow.name()))]
-pub async fn execute(flow: &Flow) -> Result<(), FlowEngineError> {
+#[instrument(fields(flow = flow.name()), skip_all)]
+pub async fn execute(flow: &Flow, context: &Context) -> Result<FlowExecutionReport, FlowEngineError> {
     info!("▶️ Executing flow...");
+    let start = Instant::now();
 
+    let mut scope = Scope::new();
     let mut next_node = Some(flow.start_node());
     while let Some(node) = next_node {
-        next_node = execute_node(node).await?;
+        next_node = execute_node(node, context, &mut scope).await?;
     }
 
-    info!("▶️ Executing flow... OK");
-    Ok(())
+    let duration = Instant::now() - start;
+    info!(duration = ?duration, "▶️ Executing flow... OK");
+
+    Ok(FlowExecutionReport { scope: scope.take(), duration })
 }
 
-#[instrument(fields(node = node.id()))]
-async fn execute_node(node: &FlowNode) -> Result<Option<&FlowNode>, FlowEngineError> {
+#[instrument(fields(node = node.id()), skip_all)]
+async fn execute_node<'a>(node: &'a FlowNode, context: &Context, scope: &mut Scope) -> Result<Option<&'a FlowNode>, FlowEngineError> {
     trace!("{:?}", node);
 
     let next_flow_link = match node.kind() {
         FlowNodeKind::Action(action_flow_node) => {
             info!("Executing action {}", action_flow_node.action().kind());
-            action_flow_node.action().execute().await;
+            action_flow_node.action().execute(context, scope).await;
             node.outgoing_nodes().first()
         }
         _ => node.outgoing_nodes().first(),
     };
 
-    let next_node = next_flow_link
-        .ok_or_else(|| FlowEngineError::MissingOutgoingNode(node.id().to_owned()))?
-        .node();
+    let next_node = next_flow_link.ok_or_else(|| FlowEngineError::MissingOutgoingNode(node.id().to_owned()))?.node();
 
     debug!("Next node: {}", next_node.id());
     match next_node.kind() {
@@ -43,6 +51,30 @@ async fn execute_node(node: &FlowNode) -> Result<Option<&FlowNode>, FlowEngineEr
 pub enum FlowEngineError {
     #[error("missing outgoing node for node '{0}'")]
     MissingOutgoingNode(String),
+}
+
+pub struct FlowExecutionReport {
+    scope: HashMap<String, Box<dyn Any + Send + Sync>>,
+    duration: Duration,
+}
+
+impl FlowExecutionReport {
+    #[cfg(test)]
+    pub fn new(scope: HashMap<String, Box<dyn Any + Send + Sync>>, duration: Duration) -> Self {
+        FlowExecutionReport { scope, duration }
+    }
+
+    pub fn scope(&self) -> &HashMap<String, Box<dyn Any + Send + Sync>> {
+        &self.scope
+    }
+
+    pub fn take_from_scope<T: 'static + Send + Sync>(mut self, k: &str) -> Option<T> {
+        self.scope.remove(k).and_then(|v| v.downcast::<T>().ok().map(|boxed| *boxed))
+    }
+
+    pub fn duration(&self) -> Duration {
+        self.duration
+    }
 }
 
 #[cfg(test)]
@@ -64,14 +96,10 @@ mod tests {
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(action))),
         );
 
-        let start_node = FlowNode::new(
-            "startNode".to_string(),
-            vec![FlowLink::new(Arc::new(log_node), None)],
-            FlowNodeKind::Start,
-        );
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(log_node), None)], FlowNodeKind::Start);
         let flow = Flow::new("flow".to_string(), start_node).unwrap();
 
-        let result = execute(&flow).await;
+        let result = execute(&flow, &Context::default()).await;
         assert!(result.is_ok());
     }
 
@@ -80,7 +108,7 @@ mod tests {
         let start_node = FlowNode::new("startNode".to_string(), vec![], FlowNodeKind::Start);
         let flow = Flow::new("flow".to_string(), start_node).unwrap();
 
-        let result = execute(&flow).await;
+        let result = execute(&flow, &Context::default()).await;
         assert!(matches!(result, Err(FlowEngineError::MissingOutgoingNode(_))));
     }
 }

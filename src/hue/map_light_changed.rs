@@ -40,3 +40,150 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
 
     events
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::events::Event::{BooleanPropertyChanged, ColorPropertyChanged, NumberPropertyChanged};
+    use crate::domain::property::Gamut;
+    use crate::domain::property::Number::{Float, PositiveInt};
+    use crate::hue::domain::{ChangedColor, ChangedColorTemperature, ColorGamut, Dimming, On, Owner, Xy};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn maps_no_changes() {
+        let light_changed = LightChanged {
+            id: "42".to_string(),
+            owner: Owner {
+                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                rtype: "device".to_string(),
+            },
+            on: None,
+            dimming: None,
+            color_temperature: None,
+            color: None,
+        };
+
+        let result = map_light_changed_property(light_changed);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn maps_on_property() {
+        let light_changed = LightChanged {
+            id: "42".to_string(),
+            owner: Owner {
+                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                rtype: "device".to_string(),
+            },
+            on: Some(On { on: true }),
+            dimming: None,
+            color_temperature: None,
+            color: None,
+        };
+
+        let result = map_light_changed_property(light_changed);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            BooleanPropertyChanged {
+                device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                property_id: "on".to_string(),
+                value: true
+            }
+        );
+    }
+
+    #[test]
+    fn maps_dimming_property() {
+        let light_changed = LightChanged {
+            id: "42".to_string(),
+            owner: Owner {
+                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                rtype: "device".to_string(),
+            },
+            on: None,
+            dimming: Some(Dimming {
+                brightness: 20.8,
+                min_dim_level: None,
+            }),
+            color_temperature: None,
+            color: None,
+        };
+
+        let result = map_light_changed_property(light_changed);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            NumberPropertyChanged {
+                device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                property_id: "brightness".to_string(),
+                value: Float(20.8),
+            }
+        );
+    }
+
+    #[test]
+    fn maps_color_temperature_property() {
+        let light_changed = LightChanged {
+            id: "42".to_string(),
+            owner: Owner {
+                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                rtype: "device".to_string(),
+            },
+            on: None,
+            dimming: None,
+            color_temperature: Some(ChangedColorTemperature { mirek: 153, mirek_valid: true }),
+            color: None,
+        };
+
+        let result = map_light_changed_property(light_changed);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            NumberPropertyChanged {
+                device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                property_id: "colorTemperature".to_string(),
+                value: PositiveInt(6535)
+            }
+        );
+    }
+
+    #[test]
+    fn maps_color_property() {
+        let light_changed = LightChanged {
+            id: "42".to_string(),
+            owner: Owner {
+                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                rtype: "device".to_string(),
+            },
+            on: None,
+            dimming: None,
+            color_temperature: None,
+            color: Some(ChangedColor {
+                xy: Xy { x: 0.0, y: 0.0 },
+                gamut: Some(ColorGamut {
+                    red: Xy { x: 0.1, y: 0.2 },
+                    green: Xy { x: 0.3, y: 0.4 },
+                    blue: Xy { x: 0.5, y: 0.6 },
+                }),
+            }),
+        };
+
+        let result = map_light_changed_property(light_changed);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            ColorPropertyChanged {
+                device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                property_id: "color".to_string(),
+                xy: CartesianCoordinate::new(0.0, 0.0),
+                gamut: Some(Gamut::new(
+                    CartesianCoordinate::new(0.1, 0.2),
+                    CartesianCoordinate::new(0.3, 0.4),
+                    CartesianCoordinate::new(0.5, 0.6)
+                )),
+            }
+        );
+    }
+}

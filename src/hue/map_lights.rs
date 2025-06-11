@@ -1,6 +1,7 @@
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, Property, PropertyType, Unit};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
+use crate::hue::controller::CONTROLLER_ID;
 use crate::hue::domain::{DeviceGet, LightGet};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -69,6 +70,7 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
                 properties,
                 external_id: None,
                 address: None,
+                controller_id: Some(CONTROLLER_ID),
             })
         })
         .collect()
@@ -167,6 +169,7 @@ mod tests {
                 ]),
                 external_id: None,
                 address: None,
+                controller_id: Some("hue"),
             }
         );
 

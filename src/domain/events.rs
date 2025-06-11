@@ -1,7 +1,7 @@
 use crate::domain::device::Device;
 use crate::domain::property::{CartesianCoordinate, Gamut, Number};
 
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 pub enum Event {
     DiscoveredDevices(Vec<Device>),
     BooleanPropertyChanged {

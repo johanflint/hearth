@@ -1,6 +1,6 @@
 use crate::domain::property::{CartesianCoordinate, Gamut};
 use crate::hue::domain::hue_response::Owner;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // API: https://developers.meethue.com/develop/hue-api-v2/api-reference/#resource_light_get
 #[derive(Debug, Deserialize)]
@@ -13,7 +13,12 @@ pub struct LightGet {
     pub color: Option<Color>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize)]
+pub struct LightRequest {
+    pub on: Option<On>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct On {
     pub on: bool,
 }

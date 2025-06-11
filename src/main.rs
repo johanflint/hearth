@@ -1,7 +1,9 @@
 use crate::app_config::AppConfig;
+use crate::domain::controller_registry;
 use crate::domain::events::Event;
 use crate::store::Store;
 use crate::store_listener::store_listener;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::{signal, task};
 use tracing::{error, info, trace};
@@ -23,15 +25,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("🪵 Starting {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 
-    let config = AppConfig::load();
+    let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
 
-    let flows = flow_loader::load_flows_from(config.flows().directory(), "json")
-        .await
-        .unwrap_or_else(|_| Vec::new()); // Errors are already logged in the function
+    let flows = flow_loader::load_flows_from(config.flows().directory(), "json").await.unwrap_or_else(|_| Vec::new()); // Errors are already logged in the function
     info!("✅  Loaded flows");
 
     let hue_client = hue::new_client(&config)?;
+    let hue_controller = hue::Controller::new(hue_client.clone(), config.clone());
+    controller_registry::register(Arc::new(hue_controller));
+    info!("✅  Initialized controllers");
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
     let mut store = Store::new(rx);
