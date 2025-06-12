@@ -268,7 +268,7 @@ impl Unit {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Number {
     PositiveInt(u64),
     NegativeInt(i64),
