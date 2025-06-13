@@ -5,4 +5,6 @@ pub enum PropertyValue {
     SetBooleanValue(bool),
     ToggleBooleanValue,
     SetNumberValue(Number),
+    IncrementNumberValue(Number),
+    DecrementNumberValue(Number),
 }

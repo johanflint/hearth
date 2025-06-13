@@ -48,6 +48,8 @@ impl Controller for HueController {
                     let brightness = device.get_property_of_type::<NumberProperty>(PropertyType::Brightness).and_then(|brightness_property| {
                         property.get(brightness_property.name()).and_then(|pv| match pv {
                             PropertyValue::SetNumberValue(value) => value.as_f64(),
+                            PropertyValue::IncrementNumberValue(value) => (brightness_property.value() + value.clone()).as_f64(),
+                            PropertyValue::DecrementNumberValue(value) => (brightness_property.value() - value.clone()).as_f64(),
                             _ => None,
                         })
                     });
@@ -66,8 +68,8 @@ impl Controller for HueController {
                         }
                         Ok(response) if !response.status().is_success() => {
                             let status = response.status();
-                            let body = response.text().await;
-                            warn!(device_id = device.id, status_code = %status, "⚠️ Unable to control the light, request to the Hue bridge failed. Response: {:?}", body);
+                            let body = response.text().await.unwrap_or_default();
+                            warn!(device_id = device.id, status_code = %status, "⚠️ Unable to control the light, request to the Hue bridge failed. Response: {}", body);
                         }
                         _ => {}
                     }

@@ -23,6 +23,14 @@ impl<'de> Deserialize<'de> for PropertyValue {
                 let value = value.index_mut("value").as_number().ok_or_missing("value", "number")?;
                 Ok(PropertyValue::SetNumberValue(value.into()))
             }
+            "increment" => {
+                let value = value.index_mut("value").as_number().ok_or_missing("value", "number")?;
+                Ok(PropertyValue::IncrementNumberValue(value.into()))
+            }
+            "decrement" => {
+                let value = value.index_mut("value").as_number().ok_or_missing("value", "number")?;
+                Ok(PropertyValue::DecrementNumberValue(value.into()))
+            }
             _ => Err(Error::custom(format!("unknown property type '{}'", kind))),
         }
     }
@@ -106,5 +114,41 @@ mod tests {
         let response = serde_json::from_str::<PropertyValue>(&json);
         assert!(response.is_ok());
         assert_eq!(response.unwrap(), PropertyValue::SetNumberValue(expected_number));
+    }
+
+    #[rstest]
+    #[case::for_positive_int("1337", Number::PositiveInt(1337))]
+    #[case::for_negative_int("-1337", Number::NegativeInt(-1337))]
+    #[case::for_float("13.37", Number::Float(13.37))]
+    fn deserialize_increment_number_value(#[case] json_value: String, #[case] expected_number: Number) {
+        let json = format!(
+            r#"{{
+                "type": "increment",
+                "value": {}
+            }}"#,
+            json_value
+        );
+
+        let response = serde_json::from_str::<PropertyValue>(&json);
+        assert!(response.is_ok());
+        assert_eq!(response.unwrap(), PropertyValue::IncrementNumberValue(expected_number));
+    }
+
+    #[rstest]
+    #[case::for_positive_int("1337", Number::PositiveInt(1337))]
+    #[case::for_negative_int("-1337", Number::NegativeInt(-1337))]
+    #[case::for_float("13.37", Number::Float(13.37))]
+    fn deserialize_decrement_number_value(#[case] json_value: String, #[case] expected_number: Number) {
+        let json = format!(
+            r#"{{
+                "type": "decrement",
+                "value": {}
+            }}"#,
+            json_value
+        );
+
+        let response = serde_json::from_str::<PropertyValue>(&json);
+        assert!(response.is_ok());
+        assert_eq!(response.unwrap(), PropertyValue::DecrementNumberValue(expected_number));
     }
 }

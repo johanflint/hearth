@@ -1,6 +1,7 @@
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 use std::fmt::{Debug, Display};
+use std::ops;
 
 #[derive(PartialEq, Debug)]
 pub struct NumberProperty {
@@ -281,6 +282,63 @@ impl Number {
             Number::PositiveInt(n) => Some(n.clone() as f64),
             Number::NegativeInt(n) => Some(n.clone() as f64),
             Number::Float(n) => Some(n.clone()),
+        }
+    }
+}
+
+impl ops::Add for Number {
+    type Output = Number;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            // Integer + Integer
+            (Number::PositiveInt(a), Number::PositiveInt(b)) => Number::PositiveInt(a.saturating_add(b)),
+            (Number::PositiveInt(a), Number::NegativeInt(b)) => match a as i128 + b as i128 {
+                sum if sum >= 0 => Number::PositiveInt(sum as u64),
+                sum => Number::NegativeInt(sum as i64),
+            },
+            (Number::NegativeInt(a), Number::PositiveInt(b)) => match a as i128 + b as i128 {
+                sum if sum >= 0 => Number::PositiveInt(sum as u64),
+                sum => Number::NegativeInt(sum as i64),
+            },
+            (Number::NegativeInt(a), Number::NegativeInt(b)) => Number::NegativeInt(a.saturating_add(b)),
+
+            // Float involved
+            (Number::Float(a), Number::Float(b)) => Number::Float(a + b),
+            (Number::Float(a), Number::PositiveInt(b)) => Number::Float(a + b as f64),
+            (Number::Float(a), Number::NegativeInt(b)) => Number::Float(a + b as f64),
+            (Number::PositiveInt(a), Number::Float(b)) => Number::Float(a as f64 + b),
+            (Number::NegativeInt(a), Number::Float(b)) => Number::Float(a as f64 + b),
+        }
+    }
+}
+
+impl ops::Sub for Number {
+    type Output = Number;
+
+    fn sub(self, rhs: Number) -> Number {
+        match (self, rhs) {
+            // Integer - Integer
+            (Number::PositiveInt(a), Number::PositiveInt(b)) => {
+                if a >= b {
+                    Number::PositiveInt(a - b)
+                } else {
+                    Number::NegativeInt((a as i128 - b as i128) as i64)
+                }
+            }
+            (Number::PositiveInt(a), Number::NegativeInt(b)) => {
+                let sum = a as i128 + b.abs() as i128;
+                Number::PositiveInt(sum as u64)
+            }
+            (Number::NegativeInt(a), Number::PositiveInt(b)) => Number::NegativeInt(a.saturating_sub(b as i64)),
+            (Number::NegativeInt(a), Number::NegativeInt(b)) => Number::NegativeInt(a.saturating_sub(b)),
+
+            // Float involved
+            (Number::Float(a), Number::Float(b)) => Number::Float(a - b),
+            (Number::Float(a), Number::PositiveInt(b)) => Number::Float(a - b as f64),
+            (Number::Float(a), Number::NegativeInt(b)) => Number::Float(a - b as f64),
+            (Number::PositiveInt(a), Number::Float(b)) => Number::Float(a as f64 - b),
+            (Number::NegativeInt(a), Number::Float(b)) => Number::Float(a as f64 - b),
         }
     }
 }
