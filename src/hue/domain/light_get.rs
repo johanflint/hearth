@@ -16,6 +16,16 @@ pub struct LightGet {
 #[derive(Debug, Serialize)]
 pub struct LightRequest {
     pub on: Option<On>,
+    pub dimming: Option<SetDimming>,
+}
+
+impl LightRequest {
+    pub fn new(on: Option<On>, dimming: Option<f64>) -> Self {
+        LightRequest {
+            on,
+            dimming: dimming.map(|brightness| SetDimming { brightness }),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -27,6 +37,11 @@ pub struct On {
 pub struct Dimming {
     pub brightness: f64,
     pub min_dim_level: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetDimming {
+    pub brightness: f64,
 }
 
 #[allow(dead_code)]

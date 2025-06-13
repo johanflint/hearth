@@ -129,8 +129,8 @@ impl NumberProperty {
         Ok(())
     }
 
-    pub fn value(&self) -> &Number {
-        &self.value
+    pub fn value(&self) -> Number {
+        self.value.clone()
     }
 
     pub fn set_value(&mut self, value: Number) -> Result<(), PropertyError> {
@@ -273,6 +273,16 @@ pub enum Number {
     PositiveInt(u64),
     NegativeInt(i64),
     Float(f64),
+}
+
+impl Number {
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Number::PositiveInt(n) => Some(n.clone() as f64),
+            Number::NegativeInt(n) => Some(n.clone() as f64),
+            Number::Float(n) => Some(n.clone()),
+        }
+    }
 }
 
 impl Display for Number {
