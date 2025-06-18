@@ -1,5 +1,6 @@
+use crate::domain::Number;
 use crate::domain::events::Event;
-use crate::domain::property::{CartesianCoordinate, Number};
+use crate::domain::property::CartesianCoordinate;
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::LightChanged;
 
@@ -44,9 +45,9 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Number::{Float, PositiveInt};
     use crate::domain::events::Event::{BooleanPropertyChanged, ColorPropertyChanged, NumberPropertyChanged};
     use crate::domain::property::Gamut;
-    use crate::domain::property::Number::{Float, PositiveInt};
     use crate::hue::domain::{ChangedColor, ChangedColorTemperature, ColorGamut, Dimming, On, Owner, Xy};
     use pretty_assertions::assert_eq;
 

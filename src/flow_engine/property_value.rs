@@ -1,4 +1,4 @@
-use crate::domain::property::Number;
+use crate::domain::Number;
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum PropertyValue {

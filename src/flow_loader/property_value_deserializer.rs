@@ -1,4 +1,4 @@
-use crate::domain::property::Number;
+use crate::domain::Number;
 use crate::flow_engine::property_value::PropertyValue;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};

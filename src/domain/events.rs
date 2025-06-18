@@ -1,5 +1,6 @@
+use crate::domain::Number;
 use crate::domain::device::Device;
-use crate::domain::property::{CartesianCoordinate, Gamut, Number};
+use crate::domain::property::{CartesianCoordinate, Gamut};
 
 #[derive(PartialEq, Debug)]
 pub enum Event {
