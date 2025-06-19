@@ -1,8 +1,9 @@
 use crate::app_config::AppConfig;
+use crate::domain::Number;
 use crate::domain::commands::Command;
 use crate::domain::controller::Controller;
 use crate::domain::device::DeviceType;
-use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyType};
+use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
 use crate::flow_engine::property_value::PropertyValue;
 use crate::hue::domain::{LightRequest, On};
 use async_trait::async_trait;
@@ -46,12 +47,35 @@ impl Controller for HueController {
                     }
 
                     let brightness = device.get_property_of_type::<NumberProperty>(PropertyType::Brightness).and_then(|brightness_property| {
-                        property.get(brightness_property.name()).and_then(|pv| match pv {
-                            PropertyValue::SetNumberValue(value) => value.as_f64(),
-                            PropertyValue::IncrementNumberValue(value) => (brightness_property.value() + value.clone()).as_f64(),
-                            PropertyValue::DecrementNumberValue(value) => (brightness_property.value() - value.clone()).as_f64(),
-                            _ => None,
-                        })
+                        property
+                            .get(brightness_property.name())
+                            .and_then(|pv| match pv {
+                                PropertyValue::SetNumberValue(value) => value.as_f64(),
+                                PropertyValue::IncrementNumberValue(value) => (brightness_property.value() + value.clone()).as_f64(),
+                                PropertyValue::DecrementNumberValue(value) => (brightness_property.value() - value.clone()).as_f64(),
+                                _ => None,
+                            })
+                            .and_then(|brightness| match brightness_property.validate_value(Number::Float(brightness)) {
+                                ValidatedValue::Valid(value) => value.as_f64(),
+                                ValidatedValue::Clamped(value, PropertyError::ValueTooSmall) => {
+                                    #[rustfmt::skip]
+                                    warn!(device_id = device.id, ?brightness_property, "🔅 Brightness value of '{}%' is too small, clamped to the minimum valid value of '{}%'", brightness, value);
+                                    value.as_f64()
+                                }
+                                ValidatedValue::Clamped(value, PropertyError::ValueTooLarge) => {
+                                    #[rustfmt::skip]
+                                    warn!(device_id = device.id, ?brightness_property, "🔆 Brightness value of '{}%' is too large, clamped to the maximim valid value of '{}%'", brightness, value);
+                                    value.as_f64()
+                                }
+                                ValidatedValue::Clamped(value, error) => {
+                                    warn!("🔆 Brightness value of '{}%' is invalid, clamped to {}", error, value);
+                                    value.as_f64()
+                                }
+                                ValidatedValue::Invalid(error) => {
+                                    warn!("🔆 Brightness value is invalid: {}", error);
+                                    None
+                                }
+                            })
                     });
 
                     let request = LightRequest::new(on, brightness);
