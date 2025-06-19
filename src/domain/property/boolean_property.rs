@@ -26,13 +26,12 @@ impl BooleanProperty {
     }
 
     pub fn set_value(&mut self, value: bool) -> Result<(), PropertyError> {
-        if !self.readonly {
-            self.value = value;
-
-            Ok(())
-        } else {
-            Err(PropertyError::ReadOnly)
+        if self.readonly {
+            return Err(PropertyError::ReadOnly);
         }
+
+        self.value = value;
+        Ok(())
     }
 }
 
