@@ -40,8 +40,6 @@ pub enum PropertyError {
     ValueTooSmall,
     #[error("value is larger than the maximum value")]
     ValueTooLarge,
-    #[error("value type is incorrect")]
-    IncorrectValueType,
     #[error("missing property")]
     MissingProperty,
 }
