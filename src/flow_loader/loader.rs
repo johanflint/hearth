@@ -1,14 +1,14 @@
 use crate::extensions::path_ext::FileName;
 use crate::flow_engine::flow::Flow;
-use crate::flow_loader::factory::{from_json, FlowFactoryError};
+use crate::flow_loader::factory::{FlowFactoryError, from_json};
 use futures::stream::FuturesUnordered;
 use std::io;
 use std::path::PathBuf;
 use thiserror::Error;
 use tokio::task::JoinError;
 use tokio::{fs, task};
-use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReadDirStream;
 use tracing::{error, info, instrument, warn};
 
 #[instrument]
@@ -56,10 +56,7 @@ async fn load_files(paths: Vec<PathBuf>) -> Vec<Result<Flow, LoaderError>> {
     FuturesUnordered::from_iter(paths.into_iter().map(|path| async move {
         match fs::read_to_string(&path).await {
             Ok(content) => task::spawn_blocking(move || from_json(&content).map_err(|e| LoaderError::FlowFactory { source: e, path })).await?,
-            Err(err) => Err(LoaderError::Io {
-                source: err,
-                path: Some(path),
-            }),
+            Err(err) => Err(LoaderError::Io { source: err, path: Some(path) }),
         }
     }))
     .collect()
@@ -110,10 +107,7 @@ mod tests {
         files.sort();
         let string_file_names = files.iter().map(|e| e.to_string_lossy()).collect::<Vec<_>>();
 
-        assert_eq!(
-            string_file_names,
-            vec![file1.to_string_lossy().into_owned(), file3.to_string_lossy().into_owned(),]
-        );
+        assert_eq!(string_file_names, vec![file1.to_string_lossy().into_owned(), file3.to_string_lossy().into_owned(),]);
 
         Ok(())
     }
@@ -135,10 +129,7 @@ mod tests {
 
     #[test(tokio::test)]
     async fn load_files_returns_an_error_for_an_invalid_flow_file() -> Result<(), LoaderError> {
-        let path = PathBuf::from(format!(
-            "{}/tests/resources/flows/invalid/missingEndNodeFlow.json",
-            env!("CARGO_MANIFEST_DIR")
-        ));
+        let path = PathBuf::from(format!("{}/tests/resources/flows/invalid/missingEndNodeFlow.json", env!("CARGO_MANIFEST_DIR")));
         assert!(path.is_file(), "expected path to be a file");
 
         let result = load_files(vec![path]).await;

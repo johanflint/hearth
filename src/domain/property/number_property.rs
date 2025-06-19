@@ -1,6 +1,7 @@
+use crate::domain::Number;
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 
 #[derive(PartialEq, Debug)]
 pub struct NumberProperty {
@@ -48,98 +49,47 @@ impl NumberProperty {
         }
     }
 
-    pub fn set_positive_int(&mut self, value: u64) -> Result<(), PropertyError> {
+    pub fn value(&self) -> Number {
+        self.value.clone()
+    }
+
+    pub fn validate_value(&self, value: Number) -> ValidatedValue {
         if self.readonly {
-            return Err(PropertyError::ReadOnly);
+            return ValidatedValue::Invalid(PropertyError::ReadOnly);
         }
 
-        if let Number::PositiveInt(_) = self.value {
-            // Current value has the correct type
-        } else {
-            return Err(PropertyError::IncorrectValueType);
-        }
-
-        if let Some(Number::PositiveInt(minimum)) = self.minimum {
-            if value < minimum {
-                return Err(PropertyError::ValueTooSmall);
+        if let Some(minimum) = &self.minimum {
+            if &value < minimum {
+                return ValidatedValue::Clamped(minimum.clone(), PropertyError::ValueTooSmall);
             }
         }
 
-        if let Some(Number::PositiveInt(maximum)) = self.maximum {
-            if value > maximum {
-                return Err(PropertyError::ValueTooLarge);
+        if let Some(maximum) = &self.maximum {
+            if &value > maximum {
+                return ValidatedValue::Clamped(maximum.clone(), PropertyError::ValueTooLarge);
             }
         }
 
-        self.value = Number::PositiveInt(value);
-        Ok(())
+        ValidatedValue::Valid(value)
     }
 
-    pub fn set_negative_int(&mut self, value: i64) -> Result<(), PropertyError> {
-        if self.readonly {
-            return Err(PropertyError::ReadOnly);
-        }
-
-        if let Number::NegativeInt(_) = self.value {
-            // Current value has the correct type
-        } else {
-            return Err(PropertyError::IncorrectValueType);
-        }
-
-        if let Some(Number::NegativeInt(minimum)) = self.minimum {
-            if value < minimum {
-                return Err(PropertyError::ValueTooSmall);
-            }
-        }
-
-        if let Some(Number::NegativeInt(maximum)) = self.maximum {
-            if value > maximum {
-                return Err(PropertyError::ValueTooLarge);
-            }
-        }
-
-        self.value = Number::NegativeInt(value);
-        Ok(())
-    }
-
-    pub fn set_float(&mut self, value: f64) -> Result<(), PropertyError> {
-        if self.readonly {
-            return Err(PropertyError::ReadOnly);
-        }
-
-        if let Number::Float(_) = self.value {
-            // Current value has the correct type
-        } else {
-            return Err(PropertyError::IncorrectValueType);
-        }
-
-        if let Some(Number::Float(minimum)) = self.minimum {
-            if value < minimum {
-                return Err(PropertyError::ValueTooSmall);
-            }
-        }
-
-        if let Some(Number::Float(maximum)) = self.maximum {
-            if value > maximum {
-                return Err(PropertyError::ValueTooLarge);
-            }
-        }
-
-        self.value = Number::Float(value);
-        Ok(())
-    }
-
-    pub fn value(&self) -> &Number {
-        &self.value
-    }
-
+    // This function does not validate the value as the value comes from an observer and the system
+    // must be in sync with the observed system.
     pub fn set_value(&mut self, value: Number) -> Result<(), PropertyError> {
-        match value {
-            Number::PositiveInt(n) => self.set_positive_int(n),
-            Number::NegativeInt(n) => self.set_negative_int(n),
-            Number::Float(n) => self.set_float(n),
+        if self.readonly {
+            return Err(PropertyError::ReadOnly);
         }
+
+        self.value = value;
+        Ok(())
     }
+}
+
+#[derive(PartialEq, Debug)]
+pub enum ValidatedValue {
+    Valid(Number),
+    Clamped(Number, PropertyError),
+    Invalid(PropertyError),
 }
 
 impl Property for NumberProperty {
@@ -268,26 +218,10 @@ impl Unit {
     }
 }
 
-#[derive(PartialEq, Debug)]
-pub enum Number {
-    PositiveInt(u64),
-    NegativeInt(i64),
-    Float(f64),
-}
-
-impl Display for Number {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Number::PositiveInt(n) => write!(f, "{}", n),
-            Number::NegativeInt(n) => write!(f, "{}", n),
-            Number::Float(n) => write!(f, "{}", n),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use rstest::rstest;
 
     fn builder(readonly: bool) -> NumberPropertyBuilder {
@@ -320,194 +254,65 @@ mod tests {
         assert_eq!(property.as_f64(), expected);
     }
 
-    mod with_positive_int {
-        use super::*;
+    #[test]
+    fn returns_the_value() {
+        let property = builder(false).positive_int(42, None, None).build();
 
-        #[test]
-        fn returns_the_value() {
-            let property = builder(false).positive_int(42, None, None).build();
+        assert!(property.as_i64().is_some());
+        assert_eq!(property.as_i64().unwrap(), 42i64);
 
-            assert!(property.as_i64().is_some());
-            assert_eq!(property.as_i64().unwrap(), 42i64);
+        assert!(property.as_u64().is_some());
+        assert_eq!(property.as_u64().unwrap(), 42u64);
 
-            assert!(property.as_u64().is_some());
-            assert_eq!(property.as_u64().unwrap(), 42u64);
-
-            assert!(property.as_f64().is_some());
-            assert_eq!(property.as_f64().unwrap(), 42f64);
-        }
-
-        #[test]
-        fn set_value_returns_the_value_if_property_is_editable() {
-            let mut property = builder(false).positive_int(42, Some(1), Some(100)).build();
-
-            let result = property.set_positive_int(7);
-
-            assert!(result.is_ok());
-            assert_eq!(result.unwrap(), ());
-            assert_eq!(property.value, Number::PositiveInt(7));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_property_is_readonly() {
-            let mut property = builder(true).positive_int(42, Some(1), Some(100)).build();
-
-            let result = property.set_positive_int(7);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::ReadOnly);
-            assert_eq!(property.value, Number::PositiveInt(42));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_value_type_is_incorrect() {
-            let mut property = builder(false).negative_int(42, Some(1), Some(100)).build();
-
-            let result = property.set_positive_int(7);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::IncorrectValueType);
-            assert_eq!(property.value, Number::NegativeInt(42));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_value_is_too_small() {
-            let mut property = builder(false).positive_int(42, Some(1), Some(100)).build();
-
-            let result = property.set_positive_int(0);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::ValueTooSmall);
-            assert_eq!(property.value, Number::PositiveInt(42));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_value_is_too_large() {
-            let mut property = builder(false).positive_int(42, Some(1), Some(100)).build();
-
-            let result = property.set_positive_int(101);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::ValueTooLarge);
-            assert_eq!(property.value, Number::PositiveInt(42));
-        }
+        assert!(property.as_f64().is_some());
+        assert_eq!(property.as_f64().unwrap(), 42f64);
     }
 
-    mod with_negative_int {
-        use super::*;
+    #[rstest]
+    #[case(Number::PositiveInt(7))]
+    #[case(Number::NegativeInt(-7))]
+    #[case(Number::Float(7.0))]
+    fn validate_value_returns_valid_if_property_is_editable(#[case] value: Number) {
+        let property = builder(false).negative_int(42, Some(-100), Some(100)).build();
 
-        #[test]
-        fn set_value_returns_the_value_if_property_is_editable() {
-            let mut property = builder(false).negative_int(-42, Some(-100), Some(0)).build();
+        let result = property.validate_value(value.clone());
 
-            let result = property.set_negative_int(-7);
-
-            assert!(result.is_ok());
-            assert_eq!(result.unwrap(), ());
-            assert_eq!(property.value, Number::NegativeInt(-7));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_property_is_readonly() {
-            let mut property = builder(true).negative_int(-42, Some(-100), Some(0)).build();
-
-            let result = property.set_negative_int(-7);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::ReadOnly);
-            assert_eq!(property.value, Number::NegativeInt(-42));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_value_type_is_incorrect() {
-            let mut property = builder(false).positive_int(42, Some(1), Some(100)).build();
-
-            let result = property.set_negative_int(-7);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::IncorrectValueType);
-            assert_eq!(property.value, Number::PositiveInt(42));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_value_is_too_small() {
-            let mut property = builder(false).negative_int(-42, Some(-100), Some(0)).build();
-
-            let result = property.set_negative_int(-101);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::ValueTooSmall);
-            assert_eq!(property.value, Number::NegativeInt(-42));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_value_is_too_large() {
-            let mut property = builder(false).negative_int(-42, Some(-100), Some(0)).build();
-
-            let result = property.set_negative_int(1);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::ValueTooLarge);
-            assert_eq!(property.value, Number::NegativeInt(-42));
-        }
+        assert_eq!(result, ValidatedValue::Valid(value));
     }
 
-    mod with_float {
-        use super::*;
+    #[rstest]
+    #[case(Number::PositiveInt(7))]
+    #[case(Number::NegativeInt(-7))]
+    #[case(Number::Float(7.0))]
+    fn validate_value_returns_invalid_if_property_is_readonly(#[case] value: Number) {
+        let property = builder(true).positive_int(42, Some(1), Some(100)).build();
 
-        #[test]
-        fn set_value_returns_the_value_if_property_is_editable() {
-            let mut property = builder(false).float(42.0, Some(1.0), Some(100.1)).build();
+        let result = property.validate_value(value);
 
-            let result = property.set_float(7.0);
+        assert_eq!(result, ValidatedValue::Invalid(PropertyError::ReadOnly));
+    }
 
-            assert!(result.is_ok());
-            assert_eq!(result.unwrap(), ());
-            assert_eq!(property.value, Number::Float(7.0));
-        }
+    #[rstest]
+    #[case(Number::PositiveInt(7))]
+    #[case(Number::NegativeInt(-7))]
+    #[case(Number::Float(7.0))]
+    fn validate_value_returned_clamped_if_value_is_too_small(#[case] value: Number) {
+        let property = builder(false).positive_int(42, Some(10), Some(100)).build();
 
-        #[test]
-        fn set_value_returns_an_error_if_property_is_readonly() {
-            let mut property = builder(true).float(42.0, Some(1.0), Some(100.1)).build();
+        let result = property.validate_value(value);
 
-            let result = property.set_float(7.0);
+        assert_eq!(result, ValidatedValue::Clamped(Number::PositiveInt(10), PropertyError::ValueTooSmall));
+    }
 
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::ReadOnly);
-            assert_eq!(property.value, Number::Float(42.0));
-        }
+    #[rstest]
+    #[case(Number::PositiveInt(42))]
+    #[case(Number::NegativeInt(42))]
+    #[case(Number::Float(42.7))]
+    fn validate_value_returned_clamped_if_value_is_too_large(#[case] value: Number) {
+        let property = builder(false).positive_int(42, Some(1), Some(10)).build();
 
-        #[test]
-        fn set_value_returns_an_error_if_value_type_is_incorrect() {
-            let mut property = builder(false).negative_int(42, Some(1), Some(100)).build();
+        let result = property.validate_value(value);
 
-            let result = property.set_float(7.0);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::IncorrectValueType);
-            assert_eq!(property.value, Number::NegativeInt(42));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_value_is_too_small() {
-            let mut property = builder(false).float(42.0, Some(1.0), Some(100.1)).build();
-
-            let result = property.set_float(0.9);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::ValueTooSmall);
-            assert_eq!(property.value, Number::Float(42.0));
-        }
-
-        #[test]
-        fn set_value_returns_an_error_if_value_is_too_large() {
-            let mut property = builder(false).float(42.0, Some(1.0), Some(100.1)).build();
-
-            let result = property.set_float(101.001);
-
-            assert!(result.is_err());
-            assert_eq!(result.unwrap_err(), PropertyError::ValueTooLarge);
-            assert_eq!(property.value, Number::Float(42.0));
-        }
+        assert_eq!(result, ValidatedValue::Clamped(Number::PositiveInt(10), PropertyError::ValueTooLarge));
     }
 }

@@ -19,7 +19,7 @@ pub async fn store_listener(mut rx: Receiver<DeviceMap>, flows: Vec<Flow>) {
         let store: DeviceMap = rx.borrow().clone();
         // Note that the store_lock locks until it is dropped, can be avoided to clone the read_guard which is expensive
         let store_lock = store.read().await;
-        info!("Updated store: {:?}", store_lock);
+        info!("🔄 Updated store");
 
         let context = Context::new(store.clone());
         let results = execute_flows(&flows, &context).await;
