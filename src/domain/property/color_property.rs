@@ -1,7 +1,7 @@
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct ColorProperty {
     name: String,
     property_type: PropertyType,
@@ -69,9 +69,13 @@ impl Property for ColorProperty {
     fn eq_dyn(&self, other: &dyn Property) -> bool {
         other.as_any().downcast_ref::<ColorProperty>().map_or(false, |o| self == o)
     }
+
+    fn clone_box(&self) -> Box<dyn Property> {
+        Box::new(self.clone())
+    }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct CartesianCoordinate {
     x: f64,
     y: f64,
@@ -83,7 +87,7 @@ impl CartesianCoordinate {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Gamut {
     red: CartesianCoordinate,
     green: CartesianCoordinate,

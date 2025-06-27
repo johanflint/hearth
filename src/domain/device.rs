@@ -1,7 +1,7 @@
 use crate::domain::property::{Property, PropertyType};
 use std::collections::HashMap;
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Device {
     pub id: String,
     pub r#type: DeviceType,
@@ -28,7 +28,7 @@ impl Device {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum DeviceType {
     Light,
 }

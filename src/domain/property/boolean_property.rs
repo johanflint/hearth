@@ -1,7 +1,7 @@
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct BooleanProperty {
     name: String,
     property_type: PropertyType,
@@ -66,6 +66,10 @@ impl Property for BooleanProperty {
 
     fn eq_dyn(&self, other: &dyn Property) -> bool {
         other.as_any().downcast_ref::<BooleanProperty>().map_or(false, |o| self == o)
+    }
+
+    fn clone_box(&self) -> Box<dyn Property> {
+        Box::new(self.clone())
     }
 }
 
