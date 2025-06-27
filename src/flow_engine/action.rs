@@ -94,8 +94,8 @@ impl Action for ControlDeviceAction {
 
     #[instrument(fields(action = self.kind()), skip_all)]
     async fn execute(&self, context: &Context, scope: &mut Scope) {
-        let devices = context.read_devices().await;
-        let Some(device) = devices.get(&self.device_id) else {
+        let snapshot = context.snapshot();
+        let Some(device) = snapshot.devices.get(&self.device_id) else {
             warn!(
                 device_id = self.device_id,
                 "Unable to control unknown device '{}', ignoring action: {:?}", self.device_id, self.property
@@ -112,10 +112,9 @@ impl Action for ControlDeviceAction {
         for (property_id, property_value) in self.property.iter() {
             let result = device_command_map.insert(property_id.clone(), property_value.clone());
             if let Some(previous_value) = result {
-                let device_lock = device.read().await;
                 warn!(
                     device_id = self.device_id,
-                    "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'", property_id, device_lock.name, previous_value
+                    "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'", property_id, device.name, previous_value
                 );
             }
         }

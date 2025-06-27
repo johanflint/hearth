@@ -28,9 +28,7 @@ impl Controller for HueController {
     #[instrument(skip_all)]
     async fn execute(&self, command: Command) {
         match command {
-            Command::ControlDevice { device: device_lock, property } => {
-                let device = device_lock.read().await;
-
+            Command::ControlDevice { device, property } => {
                 if device.r#type == DeviceType::Light {
                     let on_property = device.get_property_of_type::<BooleanProperty>(PropertyType::On).unwrap();
                     let on = device.get_property_of_type::<BooleanProperty>(PropertyType::On).and_then(|on_property| {
