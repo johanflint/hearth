@@ -97,7 +97,7 @@ mod tests {
         );
 
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(log_node), None)], FlowNodeKind::Start);
-        let flow = Flow::new("flow".to_string(), start_node).unwrap();
+        let flow = Flow::new("flow".to_string(), None, start_node).unwrap();
 
         let result = execute(&flow, &Context::default()).await;
         assert!(result.is_ok());
@@ -106,7 +106,7 @@ mod tests {
     #[test(tokio::test)]
     async fn fails_if_an_outgoing_node_is_missing() {
         let start_node = FlowNode::new("startNode".to_string(), vec![], FlowNodeKind::Start);
-        let flow = Flow::new("flow".to_string(), start_node).unwrap();
+        let flow = Flow::new("flow".to_string(), None, start_node).unwrap();
 
         let result = execute(&flow, &Context::default()).await;
         assert!(matches!(result, Err(FlowEngineError::MissingOutgoingNode(_))));

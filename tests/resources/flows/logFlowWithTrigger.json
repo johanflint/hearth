@@ -1,0 +1,34 @@
+{
+  "name": "logFlowWithTrigger",
+  "trigger": {
+    "type": "equalTo",
+    "lhs": {
+      "type": "literal",
+      "value": 1337
+    },
+    "rhs": {
+      "type": "literal",
+      "value": 42.0
+    }
+  },
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "logNode"
+    },
+    {
+      "id": "logNode",
+      "type": "actionNode",
+      "outgoingNode": "endNode",
+      "action": {
+        "type": "log",
+        "message": "Action is triggered"
+      }
+    },
+    {
+      "id": "endNode",
+      "type": "endNode"
+    }
+  ]
+}

@@ -1,17 +1,24 @@
+use crate::flow_engine::Expression::Literal;
 use crate::flow_engine::action::Action;
+use crate::flow_engine::{Expression, Value};
 use std::fmt::Debug;
 use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct Flow {
     name: String,
+    trigger: Expression,
     start_node: FlowNode,
 }
 
 impl Flow {
-    pub fn new(name: String, start_node: FlowNode) -> Result<Self, String> {
+    pub fn new(name: String, trigger: Option<Expression>, start_node: FlowNode) -> Result<Self, String> {
         match start_node.kind {
-            FlowNodeKind::Start => Ok(Flow { name, start_node }),
+            FlowNodeKind::Start => Ok(Flow {
+                name,
+                trigger: trigger.unwrap_or(Literal { value: Value::Boolean(true) }),
+                start_node,
+            }),
             _ => Err("start_node must be of type FlowNodeKind::Start".to_string()),
         }
     }
