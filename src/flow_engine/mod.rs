@@ -11,3 +11,4 @@ pub use context::Context;
 pub use engine::FlowEngineError;
 pub use engine::FlowExecutionReport;
 pub use engine::execute;
+pub use expression::{Expression, Value};

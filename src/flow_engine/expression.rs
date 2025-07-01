@@ -2,24 +2,26 @@ use crate::domain::Number;
 use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
+use serde::Deserialize;
 use std::cmp::Ordering;
 use thiserror::Error;
 use tracing::warn;
 
-#[derive(Debug)]
+#[derive(PartialEq, Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum Expression {
     // Comparison
-    GreaterThanOrEqualTo(Box<Expression>, Box<Expression>),
-    GreaterThan(Box<Expression>, Box<Expression>),
-    LessThan(Box<Expression>, Box<Expression>),
-    LessThanOrEqualTo(Box<Expression>, Box<Expression>),
+    GreaterThanOrEqualTo { lhs: Box<Expression>, rhs: Box<Expression> },
+    GreaterThan { lhs: Box<Expression>, rhs: Box<Expression> },
+    LessThan { lhs: Box<Expression>, rhs: Box<Expression> },
+    LessThanOrEqualTo { lhs: Box<Expression>, rhs: Box<Expression> },
 
     // Equality
-    EqualTo(Box<Expression>, Box<Expression>),
-    NotEqualTo(Box<Expression>, Box<Expression>),
+    EqualTo { lhs: Box<Expression>, rhs: Box<Expression> },
+    NotEqualTo { lhs: Box<Expression>, rhs: Box<Expression> },
 
     // Literal
-    Literal(Value),
+    Literal { value: Value },
 
     // Property
     PropertyValue { device_id: String, property_id: String },
@@ -36,13 +38,13 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
 
     match expression {
         // Comparison
-        GreaterThanOrEqualTo(lhs, rhs) => compare(lhs, rhs, |o| o != Ordering::Less, context),
-        GreaterThan(lhs, rhs) => compare(lhs, rhs, |o| o == Ordering::Greater, context),
-        LessThan(lhs, rhs) => compare(lhs, rhs, |o| o == Ordering::Less, context),
-        LessThanOrEqualTo(lhs, rhs) => compare(lhs, rhs, |o| o != Ordering::Greater, context),
+        GreaterThanOrEqualTo { lhs, rhs } => compare(lhs, rhs, |o| o != Ordering::Less, context),
+        GreaterThan { lhs, rhs } => compare(lhs, rhs, |o| o == Ordering::Greater, context),
+        LessThan { lhs, rhs } => compare(lhs, rhs, |o| o == Ordering::Less, context),
+        LessThanOrEqualTo { lhs, rhs } => compare(lhs, rhs, |o| o != Ordering::Greater, context),
 
         // Equality
-        EqualTo(lhs, rhs) => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
+        EqualTo { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
             _ => Err(ExpressionError::OperandTypeMismatch {
@@ -52,7 +54,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 actual_rhs: format!("{:?}", rhs),
             }),
         },
-        NotEqualTo(lhs, rhs) => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
+        NotEqualTo { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(!a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a != b)),
             _ => Err(ExpressionError::OperandTypeMismatch {
@@ -64,7 +66,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         },
 
         // Literal
-        Literal(value) => Ok(value.clone()),
+        Literal { value } => Ok(value.clone()),
 
         // Property
         PropertyValue { device_id, property_id } => {
@@ -216,7 +218,10 @@ mod tests {
     #[case(Number::Float(5.1), Number::Float(5.1), true)]
     fn greater_than_or_equal_to(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
         let result = evaluate(
-            &GreaterThanOrEqualTo(Box::new(Literal(Value::Number(lhs))), Box::new(Literal(Value::Number(rhs)))),
+            &GreaterThanOrEqualTo {
+                lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                rhs: Box::new(Literal { value: Value::Number(rhs) }),
+            },
             &context(),
         )
         .unwrap();
@@ -235,7 +240,14 @@ mod tests {
     #[case(Number::Float(5.1), Number::Float(5.0), true)]
     #[case(Number::Float(5.0), Number::Float(5.0), false)]
     fn greater_than(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(&GreaterThan(Box::new(Literal(Value::Number(lhs))), Box::new(Literal(Value::Number(rhs)))), &context()).unwrap();
+        let result = evaluate(
+            &GreaterThan {
+                lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                rhs: Box::new(Literal { value: Value::Number(rhs) }),
+            },
+            &context(),
+        )
+        .unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -251,7 +263,14 @@ mod tests {
     #[case(Number::Float(5.1), Number::Float(5.0), false)]
     #[case(Number::Float(5.0), Number::Float(5.0), false)]
     fn less_than(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(&LessThan(Box::new(Literal(Value::Number(lhs))), Box::new(Literal(Value::Number(rhs)))), &context()).unwrap();
+        let result = evaluate(
+            &LessThan {
+                lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                rhs: Box::new(Literal { value: Value::Number(rhs) }),
+            },
+            &context(),
+        )
+        .unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -267,7 +286,14 @@ mod tests {
     #[case(Number::Float(5.1), Number::Float(5.0), false)]
     #[case(Number::Float(5.0), Number::Float(5.0), true)]
     fn less_than_or_equal_to(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(&LessThanOrEqualTo(Box::new(Literal(Value::Number(lhs))), Box::new(Literal(Value::Number(rhs)))), &context()).unwrap();
+        let result = evaluate(
+            &LessThanOrEqualTo {
+                lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                rhs: Box::new(Literal { value: Value::Number(rhs) }),
+            },
+            &context(),
+        )
+        .unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -283,7 +309,14 @@ mod tests {
     #[case(Number::Float(5.1), Number::Float(5.0), false)]
     #[case(Number::Float(5.0), Number::Float(5.0), true)]
     fn equal_to(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(&EqualTo(Box::new(Literal(Value::Number(lhs))), Box::new(Literal(Value::Number(rhs)))), &context()).unwrap();
+        let result = evaluate(
+            &EqualTo {
+                lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                rhs: Box::new(Literal { value: Value::Number(rhs) }),
+            },
+            &context(),
+        )
+        .unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -293,7 +326,14 @@ mod tests {
     #[case(false, true, false)]
     #[case(false, false, true)]
     fn equal_to_bool(#[case] lhs: bool, #[case] rhs: bool, #[case] expected: bool) {
-        let result = evaluate(&EqualTo(Box::new(Literal(Value::Boolean(lhs))), Box::new(Literal(Value::Boolean(rhs)))), &context()).unwrap();
+        let result = evaluate(
+            &EqualTo {
+                lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
+                rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
+            },
+            &context(),
+        )
+        .unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -301,11 +341,18 @@ mod tests {
     #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), ExpressionError::OperandTypeMismatch {
                 operand: "EqualTo",
                 expected: "Boolean|Number",
-                actual_lhs: "Literal(Boolean(true))".to_string(),
-                actual_rhs: "Literal(Number(PositiveInt(2)))".to_string(),
+                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
+                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
         })]
     fn equal_to_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
-        let result = evaluate(&EqualTo(Box::new(Literal(lhs)), Box::new(Literal(rhs))), &context()).unwrap_err();
+        let result = evaluate(
+            &EqualTo {
+                lhs: Box::new(Literal { value: lhs }),
+                rhs: Box::new(Literal { value: rhs }),
+            },
+            &context(),
+        )
+        .unwrap_err();
         assert_eq!(result, expected);
     }
 
@@ -321,7 +368,14 @@ mod tests {
     #[case(Number::Float(5.1), Number::Float(5.0), true)]
     #[case(Number::Float(5.0), Number::Float(5.0), false)]
     fn not_equal_to(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(&NotEqualTo(Box::new(Literal(Value::Number(lhs))), Box::new(Literal(Value::Number(rhs)))), &context()).unwrap();
+        let result = evaluate(
+            &NotEqualTo {
+                lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                rhs: Box::new(Literal { value: Value::Number(rhs) }),
+            },
+            &context(),
+        )
+        .unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -331,7 +385,14 @@ mod tests {
     #[case(false, true, true)]
     #[case(false, false, false)]
     fn not_equal_to_bool(#[case] lhs: bool, #[case] rhs: bool, #[case] expected: bool) {
-        let result = evaluate(&NotEqualTo(Box::new(Literal(Value::Boolean(lhs))), Box::new(Literal(Value::Boolean(rhs)))), &context()).unwrap();
+        let result = evaluate(
+            &NotEqualTo {
+                lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
+                rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
+            },
+            &context(),
+        )
+        .unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -339,11 +400,18 @@ mod tests {
     #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), ExpressionError::OperandTypeMismatch {
                 operand: "NotEqualTo",
                 expected: "Boolean|Number",
-                actual_lhs: "Literal(Boolean(true))".to_string(),
-                actual_rhs: "Literal(Number(PositiveInt(2)))".to_string(),
+                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
+                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
         })]
     fn not_equal_to_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
-        let result = evaluate(&NotEqualTo(Box::new(Literal(lhs)), Box::new(Literal(rhs))), &context()).unwrap_err();
+        let result = evaluate(
+            &NotEqualTo {
+                lhs: Box::new(Literal { value: lhs }),
+                rhs: Box::new(Literal { value: rhs }),
+            },
+            &context(),
+        )
+        .unwrap_err();
         assert_eq!(result, expected);
     }
 
