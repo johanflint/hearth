@@ -30,6 +30,10 @@ impl Flow {
     pub fn start_node(&self) -> &FlowNode {
         &self.start_node
     }
+
+    pub fn trigger(&self) -> &Expression {
+        &self.trigger
+    }
 }
 
 #[derive(Debug)]

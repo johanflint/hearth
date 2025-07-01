@@ -1,4 +1,6 @@
+use crate::flow_engine::Value;
 use crate::flow_engine::context::Context;
+use crate::flow_engine::expression::{ExpressionError, evaluate};
 use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
 use crate::flow_engine::scope::Scope;
 use std::any::Any;
@@ -6,10 +8,24 @@ use std::collections::HashMap;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::Instant;
-use tracing::{debug, info, instrument, trace};
+use tracing::{debug, info, instrument, trace, warn};
 
 #[instrument(fields(flow = flow.name()), skip_all)]
 pub async fn execute(flow: &Flow, context: &Context) -> Result<FlowExecutionReport, FlowEngineError> {
+    debug!("⚖️ Evaluating trigger condition for flow...");
+    let result = evaluate(flow.trigger(), context);
+    match result {
+        Ok(Value::Boolean(true)) => debug!("⚖️ Evaluating trigger condition for flow... true"),
+        Ok(result) => {
+            info!(result = ?result, "⚖️ Evaluating trigger condition for flow... false, skipping execution");
+            return Ok(FlowExecutionReport::empty());
+        }
+        Err(error) => {
+            warn!("⚖️ Evaluating trigger condition for flow... failed, {}", error);
+            return Err(FlowEngineError::FailedTriggerEvaluation(error));
+        }
+    }
+
     info!("▶️ Executing flow...");
     let start = Instant::now();
 
@@ -51,6 +67,8 @@ async fn execute_node<'a>(node: &'a FlowNode, context: &Context, scope: &mut Sco
 pub enum FlowEngineError {
     #[error("missing outgoing node for node '{0}'")]
     MissingOutgoingNode(String),
+    #[error("evaluation of the flow trigger failed: {0}")]
+    FailedTriggerEvaluation(ExpressionError),
 }
 
 pub struct FlowExecutionReport {
@@ -62,6 +80,13 @@ impl FlowExecutionReport {
     #[cfg(test)]
     pub fn new(scope: HashMap<String, Box<dyn Any + Send + Sync>>, duration: Duration) -> Self {
         FlowExecutionReport { scope, duration }
+    }
+
+    pub fn empty() -> Self {
+        FlowExecutionReport {
+            scope: HashMap::with_capacity(0),
+            duration: Duration::ZERO,
+        }
     }
 
     pub fn scope(&self) -> &HashMap<String, Box<dyn Any + Send + Sync>> {
@@ -80,6 +105,7 @@ impl FlowExecutionReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flow_engine::Expression;
     use crate::flow_engine::action::LogAction;
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNodeKind};
     use std::sync::Arc;
@@ -101,6 +127,18 @@ mod tests {
 
         let result = execute(&flow, &Context::default()).await;
         assert!(result.is_ok());
+    }
+
+    #[test(tokio::test)]
+    async fn skips_execution_if_the_trigger_returns_false() {
+        let start_node = FlowNode::new("startNode".to_string(), vec![], FlowNodeKind::Start);
+        let flow = Flow::new("flow".to_string(), Some(Expression::Literal { value: Value::Boolean(false) }), start_node).unwrap();
+
+        let result = execute(&flow, &Context::default()).await;
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(result.scope.is_empty());
+        assert_eq!(result.duration, Duration::ZERO);
     }
 
     #[test(tokio::test)]
