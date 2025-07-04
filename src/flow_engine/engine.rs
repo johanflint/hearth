@@ -17,7 +17,7 @@ pub async fn execute(flow: &Flow, context: &Context) -> Result<FlowExecutionRepo
     match result {
         Ok(Value::Boolean(true)) => debug!("⚖️ Evaluating trigger condition for flow... true"),
         Ok(result) => {
-            info!(result = ?result, "⚖️ Evaluating trigger condition for flow... false, skipping execution");
+            debug!(result = ?result, "⚖️ Evaluating trigger condition for flow... false, skipping execution");
             return Ok(FlowExecutionReport::empty());
         }
         Err(error) => {
