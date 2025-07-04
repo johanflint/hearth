@@ -4,6 +4,7 @@ use serde_json::{Value, to_string_pretty};
 use std::ops::IndexMut;
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ServerSentEventPayload {
     pub id: String,
     pub r#type: DataType,
@@ -43,10 +44,7 @@ impl<'de> Deserialize<'de> for UnknownProperty {
         let mut value = Value::deserialize(deserializer)?;
         let string_value = to_string_pretty(&value).unwrap();
         match value.index_mut("type").take() {
-            Value::String(property_type) => Ok(UnknownProperty {
-                property_type,
-                value: string_value,
-            }),
+            Value::String(property_type) => Ok(UnknownProperty { property_type, value: string_value }),
             _ => Err(serde::de::Error::missing_field("type")),
         }
     }

@@ -4,7 +4,7 @@ use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_value::PropertyValue;
 use crate::flow_engine::{Context, FlowEngineError, FlowExecutionReport};
-use crate::store::DeviceMap;
+use crate::store::StoreSnapshot;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,23 +14,20 @@ use tracing::{info, instrument, warn};
 type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
 
 #[instrument(skip_all)]
-pub async fn store_listener(mut rx: Receiver<DeviceMap>, flows: Vec<Flow>) {
+pub async fn store_listener(mut rx: Receiver<StoreSnapshot>, flows: Vec<Flow>) {
     while rx.changed().await.is_ok() {
-        let store: DeviceMap = rx.borrow().clone();
-        // Note that the store_lock locks until it is dropped, can be avoided to clone the read_guard which is expensive
-        let store_lock = store.read().await;
+        let snapshot: StoreSnapshot = rx.borrow().clone();
         info!("🔄 Updated store");
 
-        let context = Context::new(store.clone());
+        let context = Context::new(snapshot.clone());
         let results = execute_flows(&flows, &context).await;
 
         let command_map = merge_command_maps(results);
         for (device_id, properties) in command_map {
-            if let Some(device_lock) = store_lock.get(&device_id) {
-                let device = device_lock.read().await;
+            if let Some(device) = snapshot.devices.get(&device_id) {
                 if let Some(controller) = device.controller_id.and_then(|controller_id| controller_registry::get(controller_id)) {
                     let command = Command::ControlDevice {
-                        device: device_lock.clone(),
+                        device: device.clone(),
                         property: Arc::new(properties),
                     };
                     controller.execute(command).await;

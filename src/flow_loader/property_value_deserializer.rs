@@ -50,6 +50,16 @@ impl From<&JsonNumber> for Number {
     }
 }
 
+impl<'de> Deserialize<'de> for Number {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
+        Ok(value.as_number().ok_or_missing("value", "number")?.into())
+    }
+}
+
 trait OptionResultExt<T, E>
 where
     E: Error + Sized,

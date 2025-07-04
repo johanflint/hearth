@@ -1,30 +1,25 @@
 use crate::domain::property::{Property, PropertyError};
 use crate::store::DeviceMap;
 use std::any::type_name;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{info, warn};
 
 #[inline(always)]
-pub(crate) async fn reduce_property_changed_event<F, T>(devices: &mut DeviceMap, device_id: &str, property_id: &str, set_value: F) -> Result<(), ReducerError>
+pub(crate) fn reduce_property_changed_event<F, T>(devices: &mut DeviceMap, device_id: &str, property_id: &str, set_value: F) -> Result<(), ReducerError>
 where
     F: FnOnce(&mut T) -> Result<(), PropertyError>,
     T: Property + 'static,
 {
-    let mut write_guard = devices.write().await;
-
-    let Some(device_lock) = write_guard.get_mut(device_id) else {
+    let mut new_device = if let Some(device) = devices.get(device_id) {
+        device.as_ref().clone()
+    } else {
         warn!(device_id, "⚠️ Received property changed event for unknown device '{}'", device_id);
         return Err(ReducerError::UnknownDevice { device_id: device_id.to_string() });
     };
 
-    let device_name = {
-        let device_read = device_lock.read().await;
-        device_read.name.clone()
-    };
-
-    let mut device = device_lock.write().await;
-    let Some(property) = device.properties.get_mut(property_id) else {
-        warn!(device_id = device.id, "⚠️ Unknown property '{}' for device '{}'", property_id, device.name);
+    let Some(property) = new_device.properties.get_mut(property_id) else {
+        warn!(device_id = new_device.id, "⚠️ Unknown property '{}' for device '{}'", property_id, new_device.name);
         return Err(ReducerError::UnknownProperty {
             device_id: device_id.to_string(),
             property_id: property_id.to_string(),
@@ -42,19 +37,22 @@ where
     };
 
     if let Err(err) = set_value(downcast_property) {
-        warn!(device_id = device.id, "⚠️ Could not set value for property '{}': {}", property_id, err);
+        warn!(device_id = new_device.id, "⚠️ Could not set value for property '{}': {}", property_id, err);
         return Err(ReducerError::PropertyChangedError(err));
     }
 
     info!(
         device_id,
         "🟢 Updated device '{}', set '{}' to '{}', was '{}'",
-        device_name,
+        &new_device.name,
         property.name(),
         property.value_string(),
         previous_value
     );
-    Ok(())
+
+    devices.insert(device_id.to_string(), Arc::new(new_device));
+
+    Ok(()) // return new_device and insert in store?
 }
 
 #[derive(Error, PartialEq, Debug)]
@@ -77,7 +75,6 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use test_log::test;
-    use tokio::sync::RwLock;
 
     const DEVICE_ID: &str = "079e0321-7e18-46bc-bc16-fcbc3dd09e30";
 
@@ -103,22 +100,22 @@ mod tests {
             controller_id: None,
         };
 
-        Arc::new(RwLock::new(HashMap::from([(DEVICE_ID.to_string(), Arc::new(RwLock::new(device)))])))
+        HashMap::from([(DEVICE_ID.to_string(), Arc::new(device))])
     }
 
-    #[test(tokio::test)]
-    async fn reduce_returns_error_if_the_device_is_unknown() {
+    #[test]
+    fn reduce_returns_error_if_the_device_is_unknown() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, "unknown", "on", |_: &mut BooleanProperty| Ok(())).await;
+        let result = reduce_property_changed_event(&mut devices, "unknown", "on", |_: &mut BooleanProperty| Ok(()));
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ReducerError::UnknownDevice { device_id: "unknown".to_string() });
     }
 
-    #[test(tokio::test)]
-    async fn reduce_returns_error_if_the_property_is_unknown() {
+    #[test]
+    fn reduce_returns_error_if_the_property_is_unknown() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "unknown", |_: &mut BooleanProperty| Ok(())).await;
+        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "unknown", |_: &mut BooleanProperty| Ok(()));
 
         assert!(result.is_err());
         assert_eq!(
@@ -130,10 +127,10 @@ mod tests {
         );
     }
 
-    #[test(tokio::test)]
-    async fn reduce_returns_error_if_the_property_type_is_incorrect() {
+    #[test]
+    fn reduce_returns_error_if_the_property_type_is_incorrect() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |_: &mut NumberProperty| Ok(())).await;
+        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |_: &mut NumberProperty| Ok(()));
 
         assert!(result.is_err());
         assert_eq!(
@@ -146,10 +143,10 @@ mod tests {
         );
     }
 
-    #[test(tokio::test)]
-    async fn reduce_returns_error_if_the_lambda_returns_an_error() {
+    #[test]
+    fn reduce_returns_error_if_the_lambda_returns_an_error() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |_: &mut BooleanProperty| Err(PropertyError::ReadOnly)).await;
+        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |_: &mut BooleanProperty| Err(PropertyError::ReadOnly));
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ReducerError::PropertyChangedError(PropertyError::ReadOnly));

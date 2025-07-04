@@ -3,7 +3,7 @@ use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 use std::fmt::Debug;
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct NumberProperty {
     name: String,
     property_type: PropertyType,
@@ -124,6 +124,10 @@ impl Property for NumberProperty {
     fn eq_dyn(&self, other: &dyn Property) -> bool {
         other.as_any().downcast_ref::<NumberProperty>().map_or(false, |o| self == o)
     }
+
+    fn clone_box(&self) -> Box<dyn Property> {
+        Box::new(self.clone())
+    }
 }
 
 pub struct NumberPropertyBuilder {
@@ -196,7 +200,7 @@ impl NumberPropertyBuilder {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Unit {
     Percentage,
     #[allow(dead_code)]

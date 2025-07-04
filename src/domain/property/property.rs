@@ -15,6 +15,13 @@ pub trait Property: Debug + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn eq_dyn(&self, other: &dyn Property) -> bool;
+    fn clone_box(&self) -> Box<dyn Property>;
+}
+
+impl Clone for Box<dyn Property> {
+    fn clone(&self) -> Box<dyn Property> {
+        self.clone_box()
+    }
 }
 
 impl PartialEq for dyn Property {
