@@ -7,4 +7,5 @@ pub enum PropertyValue {
     SetNumberValue(Number),
     IncrementNumberValue(Number),
     DecrementNumberValue(Number),
+    SetColor(String),
 }

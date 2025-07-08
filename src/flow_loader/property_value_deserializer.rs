@@ -31,6 +31,16 @@ impl<'de> Deserialize<'de> for PropertyValue {
                 let value = value.index_mut("value").as_number().ok_or_missing("value", "number")?;
                 Ok(PropertyValue::DecrementNumberValue(value.into()))
             }
+            "color" => {
+                let value = value.index_mut("value").as_str().ok_or_missing("value", "color")?.trim();
+                let hex = &value[1..];
+
+                if !value.starts_with("#") || hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(Error::custom("invalid hex color string value, expected '#000000'"));
+                }
+
+                Ok(PropertyValue::SetColor(format!("#{}", hex.to_lowercase())))
+            }
             _ => Err(Error::custom(format!("unknown property type '{}'", kind))),
         }
     }
@@ -160,5 +170,26 @@ mod tests {
         let response = serde_json::from_str::<PropertyValue>(&json);
         assert!(response.is_ok());
         assert_eq!(response.unwrap(), PropertyValue::DecrementNumberValue(expected_number));
+    }
+
+    #[rstest]
+    #[case::valid_hex("#000000", Ok(PropertyValue::SetColor("#000000".to_string())))]
+    #[case::valid_hex_mixed_case("#8A7b4C", Ok(PropertyValue::SetColor("#8a7b4c".to_string())))]
+    #[case::invalid_hex("#000", Err(Error::custom("invalid hex color string value, expected '#000000'")))]
+    #[case::invalid_hex("#00000Z", Err(Error::custom("invalid hex color string value, expected '#000000'")))]
+    #[case::invalid("000000", Err(Error::custom("invalid hex color string value, expected '#000000'")))]
+    fn deserialize_color_values(#[case] json_value: String, #[case] expected: serde_json::Result<PropertyValue>) {
+        let json = format!(
+            r#"{{
+                "type": "color",
+                "value": "{}"
+            }}"#,
+            json_value
+        );
+
+        let response = serde_json::from_str::<PropertyValue>(&json);
+
+        // As serde_json::Error does not implement PartialEq, use debug print for comparison
+        assert_eq!(format!("{:#?}", response), format!("{:#?}", expected));
     }
 }
