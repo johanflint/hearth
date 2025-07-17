@@ -85,6 +85,14 @@ impl CartesianCoordinate {
     pub fn new(x: f64, y: f64) -> Self {
         CartesianCoordinate { x, y }
     }
+
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    pub fn y(&self) -> f64 {
+        self.y
+    }
 }
 
 #[derive(Clone, PartialEq, Debug)]
