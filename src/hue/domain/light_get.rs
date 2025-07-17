@@ -17,13 +17,15 @@ pub struct LightGet {
 pub struct LightRequest {
     pub on: Option<On>,
     pub dimming: Option<SetDimming>,
+    pub color: Option<SetColor>,
 }
 
 impl LightRequest {
-    pub fn new(on: Option<On>, dimming: Option<f64>) -> Self {
+    pub fn new(on: Option<On>, dimming: Option<f64>, color: Option<CartesianCoordinate>) -> Self {
         LightRequest {
             on,
             dimming: dimming.map(|brightness| SetDimming { brightness }),
+            color: color.map(|c| SetColor { xy: Xy { x: c.x(), y: c.y() } }),
         }
     }
 }
@@ -42,6 +44,11 @@ pub struct Dimming {
 #[derive(Debug, Serialize)]
 pub struct SetDimming {
     pub brightness: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetColor {
+    pub xy: Xy,
 }
 
 #[allow(dead_code)]
@@ -66,7 +73,7 @@ pub struct Color {
     pub gamut_type: GamutType,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Xy {
     pub x: f64,
     pub y: f64,

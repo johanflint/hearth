@@ -35,6 +35,10 @@ impl ColorProperty {
 
         Ok(())
     }
+
+    pub fn gamut(&self) -> Option<&Gamut> {
+        self.gamut.as_ref()
+    }
 }
 
 impl Property for ColorProperty {
@@ -105,5 +109,17 @@ pub struct Gamut {
 impl Gamut {
     pub fn new(red: CartesianCoordinate, green: CartesianCoordinate, blue: CartesianCoordinate) -> Self {
         Gamut { red, green, blue }
+    }
+
+    pub fn red(&self) -> &CartesianCoordinate {
+        &self.red
+    }
+
+    pub fn green(&self) -> &CartesianCoordinate {
+        &self.green
+    }
+
+    pub fn blue(&self) -> &CartesianCoordinate {
+        &self.blue
     }
 }

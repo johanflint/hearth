@@ -1,4 +1,5 @@
 mod client;
+mod clip_to_gamut;
 mod controller;
 mod discoverer;
 mod domain;

@@ -1,10 +1,12 @@
 use crate::app_config::AppConfig;
 use crate::domain::Number;
+use crate::domain::color::Color;
 use crate::domain::commands::Command;
 use crate::domain::controller::Controller;
 use crate::domain::device::DeviceType;
-use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
+use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
 use crate::flow_engine::property_value::PropertyValue;
+use crate::hue::clip_to_gamut::clip_to_gamut;
 use crate::hue::domain::{LightRequest, On};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -76,7 +78,27 @@ impl Controller for HueController {
                             })
                     });
 
-                    let request = LightRequest::new(on, brightness);
+                    let color = device.get_property_of_type::<ColorProperty>(PropertyType::Color).and_then(|color_property| {
+                        property
+                            .get(color_property.name())
+                            .and_then(|pv| match pv {
+                                PropertyValue::SetColor(color) => Some(color),
+                                _ => None,
+                            })
+                            .map(|color| match Color::Hex(color.to_string()).to_cie_xyY() {
+                                Ok(x) => Some(x),
+                                Err(error) => {
+                                    warn!("🌈 Color value is invalid: {}", error);
+                                    None
+                                }
+                            })
+                            .and_then(|color| match color {
+                                Some(Color::CIE_xyY { xy, brightness: _ }) => color_property.gamut().map(|gamut| clip_to_gamut(xy.clone(), gamut)).or(Some(xy)),
+                                _ => None,
+                            })
+                    });
+
+                    let request = LightRequest::new(on, brightness, color);
                     let request_result = self
                         .client
                         .put(format!("{}/clip/v2/resource/light/{}", self.config.hue().url(), on_property.external_id().expect("")))
