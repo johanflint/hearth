@@ -5,7 +5,7 @@ use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::LightChanged;
 
 pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
-    let mut events = Vec::<Event>::with_capacity(3);
+    let mut events = Vec::<Event>::with_capacity(4);
     if let Some(on) = property.on {
         events.push(Event::BooleanPropertyChanged {
             device_id: property.owner.rid.to_string(),
@@ -23,11 +23,14 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
     }
 
     if let Some(color_temperature) = property.color_temperature {
-        events.push(Event::NumberPropertyChanged {
-            device_id: property.owner.rid.to_string(),
-            property_id: "colorTemperature".to_string(),
-            value: Number::PositiveInt(color_temperature.mirek.mirek_to_kelvin()),
-        });
+        // This ignores mirek values that are not in the CT spectrum, but it should be handled
+        if let Some(mirek) = color_temperature.mirek {
+            events.push(Event::NumberPropertyChanged {
+                device_id: property.owner.rid.to_string(),
+                property_id: "colorTemperature".to_string(),
+                value: Number::PositiveInt(mirek.mirek_to_kelvin()),
+            });
+        }
     }
 
     if let Some(color) = property.color {
@@ -134,7 +137,7 @@ mod tests {
             },
             on: None,
             dimming: None,
-            color_temperature: Some(ChangedColorTemperature { mirek: 153, mirek_valid: true }),
+            color_temperature: Some(ChangedColorTemperature { mirek: Some(153), mirek_valid: true }),
             color: None,
         };
 

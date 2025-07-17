@@ -108,7 +108,7 @@ pub struct LightChanged {
 
 #[derive(Debug, Deserialize)]
 pub struct ChangedColorTemperature {
-    pub mirek: u64, // >= 153 && <= 500, color temperature in mirek or null when the light color is not in the ct spectrum
+    pub mirek: Option<u64>, // >= 153 && <= 500, color temperature in mirek or null when the light color is not in the ct spectrum
     pub mirek_valid: bool,
 }
 
