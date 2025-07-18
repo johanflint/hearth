@@ -79,23 +79,17 @@ impl Controller for HueController {
                     });
 
                     let color = device.get_property_of_type::<ColorProperty>(PropertyType::Color).and_then(|color_property| {
-                        property
-                            .get(color_property.name())
-                            .and_then(|pv| match pv {
-                                PropertyValue::SetColor(color) => Some(color),
-                                _ => None,
-                            })
-                            .map(|color| match Color::Hex(color.to_string()).to_cie_xyY() {
-                                Ok(x) => Some(x),
+                        property.get(color_property.name()).and_then(|pv| match pv {
+                            PropertyValue::SetColor(color) => match color.clone().to_cie_xyY() {
+                                Ok(Color::CIE_xyY { xy, brightness: _ }) => color_property.gamut().map(|gamut| clip_to_gamut(xy.clone(), gamut)).or(Some(xy)),
                                 Err(error) => {
                                     warn!("🌈 Color value is invalid: {}", error);
                                     None
                                 }
-                            })
-                            .and_then(|color| match color {
-                                Some(Color::CIE_xyY { xy, brightness: _ }) => color_property.gamut().map(|gamut| clip_to_gamut(xy.clone(), gamut)).or(Some(xy)),
                                 _ => None,
-                            })
+                            },
+                            _ => None,
+                        })
                     });
 
                     let request = LightRequest::new(on, brightness, color);

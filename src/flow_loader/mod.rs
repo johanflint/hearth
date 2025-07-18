@@ -1,3 +1,4 @@
+mod color_deserializer;
 mod factory;
 mod loader;
 mod property_value_deserializer;

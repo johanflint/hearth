@@ -1,9 +1,10 @@
 use crate::domain::Number;
+use crate::domain::color::Color;
 use crate::flow_engine::property_value::PropertyValue;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use serde_json::Number as JsonNumber;
-use std::ops::IndexMut;
+use std::ops::{Index, IndexMut};
 
 impl<'de> Deserialize<'de> for PropertyValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -32,16 +33,10 @@ impl<'de> Deserialize<'de> for PropertyValue {
                 Ok(PropertyValue::DecrementNumberValue(value.into()))
             }
             "color" => {
-                let value = value.index_mut("value").as_str().ok_or_missing("value", "color")?.trim();
-                let hex = &value[1..];
-
-                if !value.starts_with("#") || hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-                    return Err(Error::custom("invalid hex color string value, expected '#000000'"));
-                }
-
-                Ok(PropertyValue::SetColor(format!("#{}", hex.to_lowercase())))
+                let color = Color::deserialize(value.index("value")).map_err(|e| Error::custom(e.to_string()))?;
+                Ok(PropertyValue::SetColor(color))
             }
-            _ => Err(Error::custom(format!("unknown property type '{}'", kind))),
+            _ => Err(Error::unknown_variant(&kind, &["boolean", "toggle", "number", "increment", "decrement", "color"])),
         }
     }
 }
@@ -173,11 +168,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::valid_hex("#000000", Ok(PropertyValue::SetColor("#000000".to_string())))]
-    #[case::valid_hex_mixed_case("#8A7b4C", Ok(PropertyValue::SetColor("#8a7b4c".to_string())))]
-    #[case::invalid_hex("#000", Err(Error::custom("invalid hex color string value, expected '#000000'")))]
-    #[case::invalid_hex("#00000Z", Err(Error::custom("invalid hex color string value, expected '#000000'")))]
-    #[case::invalid("000000", Err(Error::custom("invalid hex color string value, expected '#000000'")))]
+    #[case::valid_hex("#000000", Ok(PropertyValue::SetColor(Color::Hex("#000000".to_string()))))]
+    #[case::invalid_hex("#000", Err(Error::custom("invalid value: string \"#000\", expected a 6-digit hex color")))]
+    #[case::invalid_hex("#00000Z", Err(Error::custom("invalid value: string \"#00000Z\", expected a 6-digit hex color")))]
     fn deserialize_color_values(#[case] json_value: String, #[case] expected: serde_json::Result<PropertyValue>) {
         let json = format!(
             r#"{{
