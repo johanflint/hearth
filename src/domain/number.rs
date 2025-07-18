@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::fmt::Display;
 use std::ops::{Add, Sub};
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum Number {
     PositiveInt(u64),
     NegativeInt(i64),

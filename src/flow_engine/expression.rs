@@ -86,7 +86,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             match property.property_type() {
                 PropertyType::Brightness => {
                     let value = property.as_any().downcast_ref::<NumberProperty>().unwrap();
-                    Ok(Value::Number(value.value()))
+                    Ok(Value::Number(value.value().ok_or_else(|| ExpressionError::NoneValue)?))
                 }
                 PropertyType::Color => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
@@ -131,6 +131,8 @@ pub enum ExpressionError {
     UnsupportedPropertyType(PropertyType),
     #[error("unable to compare given Numbers {actual_lhs} and {actual_rhs}")]
     ComparisonFailed { actual_lhs: String, actual_rhs: String },
+    #[error("value is None")]
+    NoneValue,
 }
 
 #[cfg(test)]

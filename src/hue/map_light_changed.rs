@@ -18,19 +18,16 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
         events.push(Event::NumberPropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: "brightness".to_string(),
-            value: Number::Float(dimming.brightness),
+            value: Some(Number::Float(dimming.brightness)),
         });
     }
 
     if let Some(color_temperature) = property.color_temperature {
-        // This ignores mirek values that are not in the CT spectrum, but it should be handled
-        if let Some(mirek) = color_temperature.mirek {
-            events.push(Event::NumberPropertyChanged {
-                device_id: property.owner.rid.to_string(),
-                property_id: "colorTemperature".to_string(),
-                value: Number::PositiveInt(mirek.mirek_to_kelvin()),
-            });
-        }
+        events.push(Event::NumberPropertyChanged {
+            device_id: property.owner.rid.to_string(),
+            property_id: "colorTemperature".to_string(),
+            value: color_temperature.mirek.map(|m| Number::PositiveInt(m.mirek_to_kelvin())),
+        });
     }
 
     if let Some(color) = property.color {
@@ -122,7 +119,7 @@ mod tests {
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
                 property_id: "brightness".to_string(),
-                value: Float(20.8),
+                value: Some(Float(20.8)),
             }
         );
     }
@@ -148,7 +145,7 @@ mod tests {
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
                 property_id: "colorTemperature".to_string(),
-                value: PositiveInt(6535)
+                value: Some(PositiveInt(6535))
             }
         );
     }

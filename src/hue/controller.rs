@@ -51,8 +51,8 @@ impl Controller for HueController {
                             .get(brightness_property.name())
                             .and_then(|pv| match pv {
                                 PropertyValue::SetNumberValue(value) => value.as_f64(),
-                                PropertyValue::IncrementNumberValue(value) => (brightness_property.value() + value.clone()).as_f64(),
-                                PropertyValue::DecrementNumberValue(value) => (brightness_property.value() - value.clone()).as_f64(),
+                                PropertyValue::IncrementNumberValue(value) => (brightness_property.value().unwrap_or(Number::PositiveInt(0)) + value.clone()).as_f64(),
+                                PropertyValue::DecrementNumberValue(value) => (brightness_property.value() .unwrap_or(Number::PositiveInt(0)) - value.clone()).as_f64(),
                                 _ => None,
                             })
                             .and_then(|brightness| match brightness_property.validate_value(Number::Float(brightness)) {
