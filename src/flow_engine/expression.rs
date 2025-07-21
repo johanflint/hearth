@@ -31,6 +31,7 @@ pub enum Expression {
 pub enum Value {
     Boolean(bool),
     Number(Number),
+    None,
 }
 
 pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, ExpressionError> {
@@ -47,6 +48,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         EqualTo { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
+            (Value::None, Value::None) => Ok(Value::Boolean(true)),
             _ => Err(ExpressionError::OperandTypeMismatch {
                 operand: "EqualTo",
                 expected: "Boolean|Number",
@@ -57,6 +59,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         NotEqualTo { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(!a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a != b)),
+            (Value::None, Value::None) => Ok(Value::Boolean(false)),
             _ => Err(ExpressionError::OperandTypeMismatch {
                 operand: "NotEqualTo",
                 expected: "Boolean|Number",
@@ -85,8 +88,8 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
 
             match property.property_type() {
                 PropertyType::Brightness => {
-                    let value = property.as_any().downcast_ref::<NumberProperty>().unwrap();
-                    Ok(Value::Number(value.value().ok_or_else(|| ExpressionError::NoneValue)?))
+                    let number_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
+                    Ok(number_property.value().map(Value::Number).unwrap_or(Value::None))
                 }
                 PropertyType::Color => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
@@ -131,8 +134,6 @@ pub enum ExpressionError {
     UnsupportedPropertyType(PropertyType),
     #[error("unable to compare given Numbers {actual_lhs} and {actual_rhs}")]
     ComparisonFailed { actual_lhs: String, actual_rhs: String },
-    #[error("value is None")]
-    NoneValue,
 }
 
 #[cfg(test)]
@@ -141,6 +142,7 @@ mod tests {
     use crate::domain::device::{Device, DeviceType};
     use crate::domain::property::{CartesianCoordinate, ColorProperty, Gamut, Property, Unit};
     use crate::flow_engine::expression::Expression::*;
+    use crate::flow_engine::expression::ExpressionError::OperandTypeMismatch;
     use crate::store::{DeviceMap, StoreSnapshot};
     use rstest::rstest;
     use std::collections::HashMap;
@@ -323,6 +325,21 @@ mod tests {
     }
 
     #[rstest]
+    #[case(Value::None, Value::None, true)]
+    fn equal_to_none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
+        let result = evaluate(
+            &EqualTo {
+                lhs: Box::new(Literal { value: lhs }),
+                rhs: Box::new(Literal { value: rhs }),
+            },
+            &context(),
+        )
+        .unwrap();
+
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
     #[case(true, true, true)]
     #[case(true, false, false)]
     #[case(false, true, false)]
@@ -340,10 +357,16 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), ExpressionError::OperandTypeMismatch {
+    #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
                 operand: "EqualTo",
                 expected: "Boolean|Number",
                 actual_lhs: "Literal { value: Boolean(true) }".to_string(),
+                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+        })]
+    #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
+                operand: "EqualTo",
+                expected: "Boolean|Number",
+                actual_lhs: "Literal { value: None }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
         })]
     fn equal_to_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
@@ -382,6 +405,21 @@ mod tests {
     }
 
     #[rstest]
+    #[case(Value::None, Value::None, false)]
+    fn not_equal_to_none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
+        let result = evaluate(
+            &NotEqualTo {
+                lhs: Box::new(Literal { value: lhs }),
+                rhs: Box::new(Literal { value: rhs }),
+            },
+            &context(),
+        )
+        .unwrap();
+
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
     #[case(true, true, false)]
     #[case(true, false, true)]
     #[case(false, true, true)]
@@ -399,10 +437,16 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), ExpressionError::OperandTypeMismatch {
+    #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
                 operand: "NotEqualTo",
                 expected: "Boolean|Number",
                 actual_lhs: "Literal { value: Boolean(true) }".to_string(),
+                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+        })]
+    #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
+                operand: "NotEqualTo",
+                expected: "Boolean|Number",
+                actual_lhs: "Literal { value: None }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
         })]
     fn not_equal_to_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
