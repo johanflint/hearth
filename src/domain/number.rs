@@ -10,6 +10,14 @@ pub enum Number {
 }
 
 impl Number {
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            Number::PositiveInt(value) => Some(value.clone()),
+            Number::NegativeInt(value) if value.is_positive() => Some(value.clone() as u64),
+            _ => None,
+        }
+    }
+
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Number::PositiveInt(n) => Some(n.clone() as f64),

@@ -17,14 +17,17 @@ pub struct LightGet {
 pub struct LightRequest {
     pub on: Option<On>,
     pub dimming: Option<SetDimming>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_temperature: Option<SetColorTemperature>,
     pub color: Option<SetColor>,
 }
 
 impl LightRequest {
-    pub fn new(on: Option<On>, dimming: Option<f64>, color: Option<CartesianCoordinate>) -> Self {
+    pub fn new(on: Option<On>, dimming: Option<f64>, color_temperature: Option<u64>, color: Option<CartesianCoordinate>) -> Self {
         LightRequest {
             on,
             dimming: dimming.map(|brightness| SetDimming { brightness }),
+            color_temperature: color_temperature.map(|c| SetColorTemperature { mirek: c }),
             color: color.map(|c| SetColor { xy: Xy { x: c.x(), y: c.y() } }),
         }
     }
@@ -44,6 +47,11 @@ pub struct Dimming {
 #[derive(Debug, Serialize)]
 pub struct SetDimming {
     pub brightness: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetColorTemperature {
+    pub mirek: u64,
 }
 
 #[derive(Debug, Serialize)]
