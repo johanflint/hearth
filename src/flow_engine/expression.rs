@@ -22,6 +22,7 @@ pub enum Expression {
 
     // Logic
     And { lhs: Box<Expression>, rhs: Box<Expression> },
+    Or { lhs: Box<Expression>, rhs: Box<Expression> },
 
     // Literal
     Literal { value: Value },
@@ -76,6 +77,15 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a && b)),
             _ => Err(ExpressionError::OperandTypeMismatch {
                 operand: "And",
+                expected: "Boolean",
+                actual_lhs: format!("{:?}", lhs),
+                actual_rhs: format!("{:?}", rhs),
+            }),
+        },
+        Or { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
+            (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a || b)),
+            _ => Err(ExpressionError::OperandTypeMismatch {
+                operand: "Or",
                 expected: "Boolean",
                 actual_lhs: format!("{:?}", lhs),
                 actual_rhs: format!("{:?}", rhs),
@@ -514,6 +524,54 @@ mod tests {
     fn and_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
         let result = evaluate(
             &And {
+                lhs: Box::new(Literal { value: lhs }),
+                rhs: Box::new(Literal { value: rhs }),
+            },
+            &context(),
+        )
+        .unwrap_err();
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(true, true, true)]
+    #[case(true, false, true)]
+    #[case(false, true, true)]
+    #[case(false, false, false)]
+    fn or(#[case] lhs: bool, #[case] rhs: bool, #[case] expected: bool) {
+        let result = evaluate(
+            &Or {
+                lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
+                rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
+            },
+            &context(),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
+    #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
+                operand: "Or",
+                expected: "Boolean",
+                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
+                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+        })]
+    #[case(Value::Boolean(false), Value::None, OperandTypeMismatch {
+                operand: "Or",
+                expected: "Boolean",
+                actual_lhs: "Literal { value: Boolean(false) }".to_string(),
+                actual_rhs: "Literal { value: None }".to_string(),
+        })]
+    #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
+                operand: "Or",
+                expected: "Boolean",
+                actual_lhs: "Literal { value: None }".to_string(),
+                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+        })]
+    fn or_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
+        let result = evaluate(
+            &Or {
                 lhs: Box::new(Literal { value: lhs }),
                 rhs: Box::new(Literal { value: rhs }),
             },
