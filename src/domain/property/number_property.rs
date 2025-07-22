@@ -10,7 +10,7 @@ pub struct NumberProperty {
     readonly: bool,
     external_id: Option<String>,
     unit: Unit,
-    value: Number,
+    value: Option<Number>,
     minimum: Option<Number>,
     maximum: Option<Number>,
 }
@@ -21,14 +21,14 @@ impl NumberProperty {
     }
 
     pub fn as_u64(&self) -> Option<u64> {
-        match self.value {
+        match self.value? {
             Number::PositiveInt(value) => Some(value),
             Number::NegativeInt(_) | Number::Float(_) => None,
         }
     }
 
     pub fn as_i64(&self) -> Option<i64> {
-        match self.value {
+        match self.value? {
             Number::PositiveInt(n) => {
                 if n <= i64::MAX as u64 {
                     Some(n as i64)
@@ -42,14 +42,14 @@ impl NumberProperty {
     }
 
     pub fn as_f64(&self) -> Option<f64> {
-        match self.value {
+        match self.value? {
             Number::PositiveInt(n) => Some(n as f64),
             Number::NegativeInt(n) => Some(n as f64),
             Number::Float(n) => Some(n),
         }
     }
 
-    pub fn value(&self) -> Number {
+    pub fn value(&self) -> Option<Number> {
         self.value.clone()
     }
 
@@ -75,7 +75,7 @@ impl NumberProperty {
 
     // This function does not validate the value as the value comes from an observer and the system
     // must be in sync with the observed system.
-    pub fn set_value(&mut self, value: Number) -> Result<(), PropertyError> {
+    pub fn set_value(&mut self, value: Option<Number>) -> Result<(), PropertyError> {
         if self.readonly {
             return Err(PropertyError::ReadOnly);
         }
@@ -110,7 +110,7 @@ impl Property for NumberProperty {
     }
 
     fn value_string(&self) -> String {
-        self.value.to_string()
+        self.value.map(|v| v.to_string()).unwrap_or(String::new())
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -136,7 +136,7 @@ pub struct NumberPropertyBuilder {
     readonly: bool,
     external_id: Option<String>,
     unit: Unit,
-    value: Number,
+    value: Option<Number>,
     minimum: Option<Number>,
     maximum: Option<Number>,
 }
@@ -149,7 +149,7 @@ impl NumberPropertyBuilder {
             readonly,
             external_id: None,
             unit: Unit::Percentage,
-            value: Number::PositiveInt(0),
+            value: Some(Number::PositiveInt(0)),
             minimum: None,
             maximum: None,
         }
@@ -166,21 +166,21 @@ impl NumberPropertyBuilder {
     }
 
     pub fn positive_int(mut self, value: u64, minimum: Option<u64>, maximum: Option<u64>) -> Self {
-        self.value = Number::PositiveInt(value);
+        self.value = Some(Number::PositiveInt(value));
         self.minimum = minimum.map(|v| Number::PositiveInt(v));
         self.maximum = maximum.map(|v| Number::PositiveInt(v));
         self
     }
 
     pub fn negative_int(mut self, value: i64, minimum: Option<i64>, maximum: Option<i64>) -> Self {
-        self.value = Number::NegativeInt(value);
+        self.value = Some(Number::NegativeInt(value));
         self.minimum = minimum.map(|v| Number::NegativeInt(v));
         self.maximum = maximum.map(|v| Number::NegativeInt(v));
         self
     }
 
     pub fn float(mut self, value: f64, minimum: Option<f64>, maximum: Option<f64>) -> Self {
-        self.value = Number::Float(value);
+        self.value = Some(Number::Float(value));
         self.minimum = minimum.map(|v| Number::Float(v));
         self.maximum = maximum.map(|v| Number::Float(v));
         self

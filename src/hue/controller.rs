@@ -1,10 +1,13 @@
 use crate::app_config::AppConfig;
 use crate::domain::Number;
+use crate::domain::color::Color;
 use crate::domain::commands::Command;
 use crate::domain::controller::Controller;
 use crate::domain::device::DeviceType;
-use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
+use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
+use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::flow_engine::property_value::PropertyValue;
+use crate::hue::clip_to_gamut::clip_to_gamut;
 use crate::hue::domain::{LightRequest, On};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -49,8 +52,8 @@ impl Controller for HueController {
                             .get(brightness_property.name())
                             .and_then(|pv| match pv {
                                 PropertyValue::SetNumberValue(value) => value.as_f64(),
-                                PropertyValue::IncrementNumberValue(value) => (brightness_property.value() + value.clone()).as_f64(),
-                                PropertyValue::DecrementNumberValue(value) => (brightness_property.value() - value.clone()).as_f64(),
+                                PropertyValue::IncrementNumberValue(value) => (brightness_property.value().unwrap_or(Number::PositiveInt(0)) + value.clone()).as_f64(),
+                                PropertyValue::DecrementNumberValue(value) => (brightness_property.value() .unwrap_or(Number::PositiveInt(0)) - value.clone()).as_f64(),
                                 _ => None,
                             })
                             .and_then(|brightness| match brightness_property.validate_value(Number::Float(brightness)) {
@@ -76,7 +79,54 @@ impl Controller for HueController {
                             })
                     });
 
-                    let request = LightRequest::new(on, brightness);
+                    let color_temperature = device
+                        .get_property_of_type::<NumberProperty>(PropertyType::ColorTemperature)
+                        .and_then(|color_temperature_property| {
+                            property
+                                .get(color_temperature_property.name())
+                                .and_then(|pv| match pv {
+                                    PropertyValue::SetNumberValue(value) => value.as_u64(),
+                                    _ => None,
+                                })
+                                .and_then(|color_temperature| match color_temperature_property.validate_value(Number::PositiveInt(color_temperature)) {
+                                    ValidatedValue::Valid(value) => value.as_u64(),
+                                    ValidatedValue::Clamped(value, PropertyError::ValueTooSmall) => {
+                                        #[rustfmt::skip]
+                                        warn!(device_id = device.id, ?color_temperature_property, "🌈 Color temperature value of '{}K' is too small, clamped to the minimum valid value of '{}K'", color_temperature, value);
+                                        value.as_u64()
+                                    }
+                                    ValidatedValue::Clamped(value, PropertyError::ValueTooLarge) => {
+                                        #[rustfmt::skip]
+                                        warn!(device_id = device.id, ?color_temperature_property, "🌈 Color temperature value of '{}K' is too large, clamped to the maximim valid value of '{}K'", color_temperature, value);
+                                        value.as_u64()
+                                    }
+                                    ValidatedValue::Clamped(value, error) => {
+                                        warn!("🌈 Color temperature value of '{}K' is invalid, clamped to {}K", error, value);
+                                        value.as_u64()
+                                    }
+                                    ValidatedValue::Invalid(error) => {
+                                        warn!("🌈 Color temperature value is invalid: {}", error);
+                                        None
+                                    }
+                                })
+                                .map(|color_temperature| color_temperature.kelvin_to_mirek())
+                        });
+
+                    let color = device.get_property_of_type::<ColorProperty>(PropertyType::Color).and_then(|color_property| {
+                        property.get(color_property.name()).and_then(|pv| match pv {
+                            PropertyValue::SetColor(color) => match color.clone().to_cie_xyY() {
+                                Ok(Color::CIE_xyY { xy, brightness: _ }) => color_property.gamut().map(|gamut| clip_to_gamut(xy.clone(), gamut)).or(Some(xy)),
+                                Err(error) => {
+                                    warn!("🌈 Color value is invalid: {}", error);
+                                    None
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        })
+                    });
+
+                    let request = LightRequest::new(on, brightness, color_temperature, color);
                     let request_result = self
                         .client
                         .put(format!("{}/clip/v2/resource/light/{}", self.config.hue().url(), on_property.external_id().expect("")))

@@ -13,7 +13,7 @@ pub enum Event {
     NumberPropertyChanged {
         device_id: String,
         property_id: String,
-        value: Number,
+        value: Option<Number>,
     },
     ColorPropertyChanged {
         device_id: String,

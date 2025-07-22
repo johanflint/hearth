@@ -17,13 +17,18 @@ pub struct LightGet {
 pub struct LightRequest {
     pub on: Option<On>,
     pub dimming: Option<SetDimming>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_temperature: Option<SetColorTemperature>,
+    pub color: Option<SetColor>,
 }
 
 impl LightRequest {
-    pub fn new(on: Option<On>, dimming: Option<f64>) -> Self {
+    pub fn new(on: Option<On>, dimming: Option<f64>, color_temperature: Option<u64>, color: Option<CartesianCoordinate>) -> Self {
         LightRequest {
             on,
             dimming: dimming.map(|brightness| SetDimming { brightness }),
+            color_temperature: color_temperature.map(|c| SetColorTemperature { mirek: c }),
+            color: color.map(|c| SetColor { xy: Xy { x: c.x(), y: c.y() } }),
         }
     }
 }
@@ -42,6 +47,16 @@ pub struct Dimming {
 #[derive(Debug, Serialize)]
 pub struct SetDimming {
     pub brightness: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetColorTemperature {
+    pub mirek: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetColor {
+    pub xy: Xy,
 }
 
 #[allow(dead_code)]
@@ -66,7 +81,7 @@ pub struct Color {
     pub gamut_type: GamutType,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Xy {
     pub x: f64,
     pub y: f64,
@@ -108,7 +123,7 @@ pub struct LightChanged {
 
 #[derive(Debug, Deserialize)]
 pub struct ChangedColorTemperature {
-    pub mirek: u64, // >= 153 && <= 500, color temperature in mirek or null when the light color is not in the ct spectrum
+    pub mirek: Option<u64>, // >= 153 && <= 500, color temperature in mirek or null when the light color is not in the ct spectrum
     pub mirek_valid: bool,
 }
 

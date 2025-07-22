@@ -5,7 +5,7 @@ use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::LightChanged;
 
 pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
-    let mut events = Vec::<Event>::with_capacity(3);
+    let mut events = Vec::<Event>::with_capacity(4);
     if let Some(on) = property.on {
         events.push(Event::BooleanPropertyChanged {
             device_id: property.owner.rid.to_string(),
@@ -18,7 +18,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
         events.push(Event::NumberPropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: "brightness".to_string(),
-            value: Number::Float(dimming.brightness),
+            value: Some(Number::Float(dimming.brightness)),
         });
     }
 
@@ -26,7 +26,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
         events.push(Event::NumberPropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: "colorTemperature".to_string(),
-            value: Number::PositiveInt(color_temperature.mirek.mirek_to_kelvin()),
+            value: color_temperature.mirek.map(|m| Number::PositiveInt(m.mirek_to_kelvin())),
         });
     }
 
@@ -119,7 +119,7 @@ mod tests {
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
                 property_id: "brightness".to_string(),
-                value: Float(20.8),
+                value: Some(Float(20.8)),
             }
         );
     }
@@ -134,7 +134,7 @@ mod tests {
             },
             on: None,
             dimming: None,
-            color_temperature: Some(ChangedColorTemperature { mirek: 153, mirek_valid: true }),
+            color_temperature: Some(ChangedColorTemperature { mirek: Some(153), mirek_valid: true }),
             color: None,
         };
 
@@ -145,7 +145,7 @@ mod tests {
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
                 property_id: "colorTemperature".to_string(),
-                value: PositiveInt(6535)
+                value: Some(PositiveInt(6535))
             }
         );
     }

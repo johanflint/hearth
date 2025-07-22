@@ -1,9 +1,10 @@
 use crate::domain::Number;
+use crate::domain::color::Color;
 use crate::flow_engine::property_value::PropertyValue;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use serde_json::Number as JsonNumber;
-use std::ops::IndexMut;
+use std::ops::{Index, IndexMut};
 
 impl<'de> Deserialize<'de> for PropertyValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -31,7 +32,11 @@ impl<'de> Deserialize<'de> for PropertyValue {
                 let value = value.index_mut("value").as_number().ok_or_missing("value", "number")?;
                 Ok(PropertyValue::DecrementNumberValue(value.into()))
             }
-            _ => Err(Error::custom(format!("unknown property type '{}'", kind))),
+            "color" => {
+                let color = Color::deserialize(value.index("value")).map_err(|e| Error::custom(e.to_string()))?;
+                Ok(PropertyValue::SetColor(color))
+            }
+            _ => Err(Error::unknown_variant(&kind, &["boolean", "toggle", "number", "increment", "decrement", "color"])),
         }
     }
 }
@@ -160,5 +165,24 @@ mod tests {
         let response = serde_json::from_str::<PropertyValue>(&json);
         assert!(response.is_ok());
         assert_eq!(response.unwrap(), PropertyValue::DecrementNumberValue(expected_number));
+    }
+
+    #[rstest]
+    #[case::valid_hex("#000000", Ok(PropertyValue::SetColor(Color::Hex("#000000".to_string()))))]
+    #[case::invalid_hex("#000", Err(Error::custom("invalid value: string \"#000\", expected a 6-digit hex color")))]
+    #[case::invalid_hex("#00000Z", Err(Error::custom("invalid value: string \"#00000Z\", expected a 6-digit hex color")))]
+    fn deserialize_color_values(#[case] json_value: String, #[case] expected: serde_json::Result<PropertyValue>) {
+        let json = format!(
+            r#"{{
+                "type": "color",
+                "value": "{}"
+            }}"#,
+            json_value
+        );
+
+        let response = serde_json::from_str::<PropertyValue>(&json);
+
+        // As serde_json::Error does not implement PartialEq, use debug print for comparison
+        assert_eq!(format!("{:#?}", response), format!("{:#?}", expected));
     }
 }
