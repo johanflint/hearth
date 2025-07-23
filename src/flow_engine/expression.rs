@@ -23,6 +23,7 @@ pub enum Expression {
     // Logic
     And { lhs: Box<Expression>, rhs: Box<Expression> },
     Or { lhs: Box<Expression>, rhs: Box<Expression> },
+    Not { expression: Box<Expression> },
 
     // Literal
     Literal { value: Value },
@@ -91,6 +92,14 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 actual_rhs: format!("{:?}", rhs),
             }),
         },
+        Not { expression } => match (evaluate(expression, context)?) {
+            Value::Boolean(b) => Ok(Value::Boolean(!b)),
+            _ => Err(ExpressionError::UnaryOperandTypeMismatch {
+                operand: "Not",
+                expected: "Boolean",
+                actual: format!("{:?}", expression),
+            }),
+        },
 
         // Literal
         Literal { value } => Ok(value.clone()),
@@ -143,13 +152,15 @@ fn compare(lhs: &Expression, rhs: &Expression, cmp: fn(Ordering) -> bool, contex
 
 #[derive(Error, PartialEq, Debug)]
 pub enum ExpressionError {
-    #[error("operand type mismatch for operand {operand}")]
+    #[error("operand type mismatch for operand {operand}, expected {expected}, but got {actual_lhs} and {actual_rhs}")]
     OperandTypeMismatch {
         operand: &'static str,
         expected: &'static str,
         actual_lhs: String,
         actual_rhs: String,
     },
+    #[error("operand type mismatch for operand {operand}, expected {expected} but got {actual}")]
+    UnaryOperandTypeMismatch { operand: &'static str, expected: &'static str, actual: String },
     #[error("unknown device '{0}'")]
     UnknownDevice(String),
     #[error("unknown property '{property_id}' for device '{device_id}'")]
@@ -166,7 +177,7 @@ mod tests {
     use crate::domain::device::{Device, DeviceType};
     use crate::domain::property::{CartesianCoordinate, ColorProperty, Gamut, Property, Unit};
     use crate::flow_engine::expression::Expression::*;
-    use crate::flow_engine::expression::ExpressionError::OperandTypeMismatch;
+    use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
     use crate::store::{DeviceMap, StoreSnapshot};
     use rstest::rstest;
     use std::collections::HashMap;
@@ -574,6 +585,42 @@ mod tests {
             &Or {
                 lhs: Box::new(Literal { value: lhs }),
                 rhs: Box::new(Literal { value: rhs }),
+            },
+            &context(),
+        )
+        .unwrap_err();
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(true, false)]
+    #[case(false, true)]
+    fn not(#[case] value: bool, #[case] expected: bool) {
+        let result = evaluate(
+            &Not {
+                expression: Box::new(Literal { value: Value::Boolean(value) }),
+            },
+            &context(),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
+    #[case(Value::None, UnaryOperandTypeMismatch {
+                operand: "Not",
+                expected: "Boolean",
+                actual: "Literal { value: None }".to_string(),
+        })]
+    #[case(Value::Number(Number::PositiveInt(2)), UnaryOperandTypeMismatch {
+                operand: "Not",
+                expected: "Boolean",
+                actual: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+        })]
+    fn not_mismatch(#[case] value: Value, #[case] expected: ExpressionError) {
+        let result = evaluate(
+            &Not {
+                expression: Box::new(Literal { value }),
             },
             &context(),
         )
