@@ -71,26 +71,26 @@ where
     }
 
     let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut buffer: Vec<u8> = Vec::new();
 
     loop {
         let event = timeout(config.stale_connection_timeout_ms, stream.next()).await;
         match event {
             Ok(Some(Ok(chunk))) => {
-                match String::from_utf8(chunk.to_vec()) {
-                    Ok(string) => buffer.push_str(&string),
-                    Err(e) => {
-                        error!("❌ SSE UTF-8 decode error: {}", e);
-                        return Err(Box::new(e));
-                    }
-                }
+                buffer.extend_from_slice(&chunk);
 
-                while let Some(mut raw) = extract_next_event(&mut buffer) {
-                    if raw.ends_with("\r\n\r\n") {
-                        raw.truncate(raw.len() - 4);
-                    } else if raw.ends_with("\n\n") {
-                        raw.truncate(raw.len() - 2);
-                    }
+                while let Some((idx, separator_length)) = find_separator(&buffer) {
+                    // Drain including separator, then strip it
+                    let mut event = buffer.drain(..idx + separator_length).collect::<Vec<u8>>();
+                    event.truncate(event.len() - separator_length);
+
+                    let raw = match String::from_utf8(event) {
+                        Ok(string) => string,
+                        Err(e) => {
+                            error!("❌ SSE UTF-8 decode error: {}", e);
+                            continue;
+                        }
+                    };
 
                     let event = ServerSentEvent::<T>::from_str(&raw)?;
                     debug!(event = raw.trim(), "🔸 Received event: {:?}", event);
@@ -120,16 +120,13 @@ where
     }
 }
 
-// Function to extract next framed SSE event (supports CRLF and LF)
-fn extract_next_event(buffer: &mut String) -> Option<String> {
-    if let Some(idx) = buffer.find("\r\n\r\n") {
-        let event = buffer.drain(..idx + 4).collect::<String>();
-        return Some(event);
+fn find_separator(buf: &[u8]) -> Option<(usize, usize)> {
+    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+        return Some((i, 4));
     }
 
-    if let Some(idx) = buffer.find("\n\n") {
-        let event = buffer.drain(..idx + 2).collect::<String>();
-        return Some(event);
+    if let Some(i) = buf.windows(2).position(|w| w == b"\n\n") {
+        return Some((i, 2));
     }
 
     None
