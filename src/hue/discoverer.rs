@@ -17,7 +17,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| DiscoverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
+        .map_err(to_discover_error)?;
 
     let hue_response = response.json::<HueResponse<DeviceGet>>().await?;
     info!("Retrieving Hue devices... OK, {} found", hue_response.data.len());
@@ -27,7 +27,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
         .send()
         .await?
         .error_for_status()
-        .map_err(|e| DiscoverError::UnexpectedResponse(e.status().unwrap(), e.url().unwrap().to_string()))?;
+        .map_err(to_discover_error)?;
 
     let light_response = response.json::<HueResponse<LightGet>>().await?;
     info!("Retrieving lights... OK, {} found", light_response.data.len());
@@ -40,6 +40,14 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     }
 
     Ok(devices)
+}
+
+fn to_discover_error(e: reqwest::Error) -> DiscoverError {
+    if let (Some(status), Some(url)) = (e.status(), e.url()) {
+        DiscoverError::UnexpectedResponse(status, url.to_string())
+    } else {
+        DiscoverError::ClientError(e)
+    }
 }
 
 #[instrument(skip_all)]
