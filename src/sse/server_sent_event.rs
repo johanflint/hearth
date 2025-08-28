@@ -18,9 +18,10 @@ where
         let mut event = None;
         let mut retry = None;
         let mut comment = None;
-        let mut data = None;
+        let mut data_lines = Vec::new();
 
         for line in s.lines() {
+            let line = line.strip_suffix('\r').unwrap_or(line);
             if line.starts_with("id:") {
                 id = Some(line["id:".len()..].trim().to_string());
             } else if line.starts_with("event:") {
@@ -28,20 +29,23 @@ where
             } else if line.starts_with("retry:") {
                 retry = line["retry:".len()..].trim().parse::<usize>().ok();
             } else if line.starts_with(":") {
-                comment = Some(line[":".len()..].trim().to_string());
+                let c = line[1..].trim();
+                if !c.is_empty() {
+                    comment = Some(c.to_string());
+                }
             } else if line.starts_with("data:") {
-                let data_str = line["data:".len()..].trim().to_string();
-                data = Some(serde_json::from_str(&data_str)?);
+                data_lines.push(line["data:".len()..].trim().to_string());
             }
         }
 
-        Ok(ServerSentEvent {
-            id,
-            event,
-            retry,
-            comment,
-            data,
-        })
+        let data = if data_lines.is_empty() {
+            None
+        } else {
+            let joined = data_lines.join("\n");
+            Some(serde_json::from_str(&joined)?)
+        };
+
+        Ok(ServerSentEvent { id, event, retry, comment, data })
     }
 }
 
