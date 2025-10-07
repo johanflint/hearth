@@ -5,6 +5,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct SerializedFlow {
     pub(crate) name: String,
+    pub(crate) schedule: Option<String>,
     pub(crate) trigger: Option<Expression>,
     pub(crate) nodes: Vec<SerializedFlowNode>,
 }
@@ -70,6 +71,7 @@ mod tests {
         let flow = serde_json::from_str::<SerializedFlow>(json).unwrap();
         let expected = SerializedFlow {
             name: "logFlow".to_string(),
+            schedule: None,
             trigger: None,
             nodes: vec![
                 SerializedFlowNode::StartNode(SerializedStartFlowNode {
@@ -104,5 +106,15 @@ mod tests {
         };
 
         assert_eq!(flow.trigger, Some(expected));
+        assert_eq!(flow.schedule, None);
+    }
+
+    #[tokio::test]
+    async fn test_serialized_flow_with_schedule() {
+        let json = include_str!("../../tests/resources/flows/logFlowWithSchedule.json");
+
+        let flow = serde_json::from_str::<SerializedFlow>(json).unwrap();
+        assert_eq!(flow.schedule, Some("*/5 * * * * *".to_string()));
+        assert_eq!(flow.trigger, None);
     }
 }

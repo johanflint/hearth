@@ -1,0 +1,24 @@
+{
+  "name": "logFlowWithSchedule",
+  "schedule": "*/5 * * * * *",
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "logNode"
+    },
+    {
+      "id": "logNode",
+      "type": "actionNode",
+      "outgoingNode": "endNode",
+      "action": {
+        "type": "log",
+        "message": "Action is triggered"
+      }
+    },
+    {
+      "id": "endNode",
+      "type": "endNode"
+    }
+  ]
+}
