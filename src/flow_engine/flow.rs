@@ -36,6 +36,10 @@ impl Flow {
     pub fn trigger(&self) -> &Expression {
         &self.trigger
     }
+
+    pub fn schedule(&self) -> Option<&str> {
+        self.schedule.as_deref()
+    }
 }
 
 #[derive(Debug)]
