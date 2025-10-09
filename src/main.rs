@@ -11,6 +11,7 @@ use tracing::{error, info, trace};
 
 mod app_config;
 mod domain;
+mod execute_flows;
 mod extensions;
 mod flow_engine;
 mod flow_loader;
@@ -34,12 +35,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (scheduled_flows, reactive_flows): (Vec<_>, Vec<_>) = flows.into_iter().partition(|flow| flow.schedule().is_some());
     info!("✅  Loaded flows");
 
-    let (tx, rx) = mpsc::channel::<SchedulerCommand>(32);
+    let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
+    let mut store = Store::new(rx);
+
+    let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
+    let store_rx = store.notifier();
     task::spawn(async move {
-        scheduler(rx).await;
+        scheduler(scheduler_rx, store_rx).await;
     });
     for scheduled_flow in scheduled_flows {
-        tx.send(SchedulerCommand::Schedule(scheduled_flow)).await?;
+        scheduler_tx.send(SchedulerCommand::Schedule(scheduled_flow)).await?;
     }
     info!("✅  Scheduled flows");
 
@@ -48,12 +53,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     controller_registry::register(Arc::new(hue_controller));
     info!("✅  Initialized controllers");
 
-    let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
-    let mut store = Store::new(rx);
-    let notifier_rx = store.notifier();
-
+    let store_rx = store.notifier();
     task::spawn(async move {
-        store_listener(notifier_rx, reactive_flows).await;
+        store_listener(store_rx, reactive_flows).await;
     });
     info!("✅  Initialized store listener");
 
