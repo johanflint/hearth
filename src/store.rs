@@ -77,6 +77,7 @@ impl Store {
                 devices: Arc::new(self.devices.clone()),
             };
             self.notifier_tx.send(snapshot).unwrap_or_default();
+            info!("🔄 Updated store");
         }
     }
 }

@@ -7,15 +7,17 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct Flow {
     name: String,
+    schedule: Option<String>,
     trigger: Expression,
     start_node: FlowNode,
 }
 
 impl Flow {
-    pub fn new(name: String, trigger: Option<Expression>, start_node: FlowNode) -> Result<Self, String> {
+    pub fn new(name: String, schedule: Option<String>, trigger: Option<Expression>, start_node: FlowNode) -> Result<Self, String> {
         match start_node.kind {
             FlowNodeKind::Start => Ok(Flow {
                 name,
+                schedule,
                 trigger: trigger.unwrap_or(Literal { value: Value::Boolean(true) }),
                 start_node,
             }),
@@ -33,6 +35,10 @@ impl Flow {
 
     pub fn trigger(&self) -> &Expression {
         &self.trigger
+    }
+
+    pub fn schedule(&self) -> Option<&str> {
+        self.schedule.as_deref()
     }
 }
 

@@ -93,7 +93,8 @@ mod tests {
 
     #[tokio::test]
     async fn list_files_returns_all_relevant_files() -> io::Result<()> {
-        let temp_dir = temp_dir();
+        let temp_dir = temp_dir().join("hearth");
+        fs::create_dir_all(&temp_dir).await?;
 
         let file1 = temp_dir.join("flow.json");
         let file2 = temp_dir.join("no_flow.txt");
@@ -106,6 +107,7 @@ mod tests {
         let mut files = list_files(temp_dir.to_string_lossy().as_ref(), "json").await?;
         files.sort();
         let string_file_names = files.iter().map(|e| e.to_string_lossy()).collect::<Vec<_>>();
+        fs::remove_dir_all(&temp_dir).await?;
 
         assert_eq!(string_file_names, vec![file1.to_string_lossy().into_owned(), file3.to_string_lossy().into_owned(),]);
 

@@ -63,7 +63,7 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
         });
     }
 
-    let flow = Flow::new(flow.name, flow.trigger, start_node.ok_or_else(|| FlowFactoryError::MissingStartNode)?).expect("Flow creation failed");
+    let flow = Flow::new(flow.name, flow.schedule, flow.trigger, start_node.ok_or_else(|| FlowFactoryError::MissingStartNode)?).expect("Flow creation failed");
     Ok(flow)
 }
 
@@ -189,7 +189,7 @@ mod tests {
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(end_node), None)], FlowNodeKind::Start);
 
-        let expected = Flow::new("emptyFlow".to_string(), None, start_node).unwrap();
+        let expected = Flow::new("emptyFlow".to_string(), None, None, start_node).unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
     }
 
@@ -208,7 +208,7 @@ mod tests {
 
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
 
-        let expected = Flow::new("logFlow".to_string(), None, start_node).unwrap();
+        let expected = Flow::new("logFlow".to_string(), None, None, start_node).unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
     }
 
@@ -230,7 +230,7 @@ mod tests {
 
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
 
-        let expected = Flow::new("controlDeviceFlow".to_string(), None, start_node).unwrap();
+        let expected = Flow::new("controlDeviceFlow".to_string(), None, None, start_node).unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
     }
 }
