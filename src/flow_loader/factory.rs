@@ -32,6 +32,7 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
             SerializedFlowNode::StartNode(node) => node.outgoing_node == serialized_node.id(),
             SerializedFlowNode::EndNode(_) => false,
             SerializedFlowNode::ActionNode(node) => node.outgoing_node == serialized_node.id(),
+            SerializedFlowNode::SleepNode(node) => node.outgoing_node == serialized_node.id(),
         });
 
         if !matches!(serialized_node, SerializedFlowNode::StartNode(_)) && incoming_nodes.is_empty() {
@@ -86,6 +87,7 @@ fn to_flow_node(serialized_node: SerializedFlowNode, outgoing_nodes: Vec<FlowLin
         SerializedFlowNode::StartNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Start),
         SerializedFlowNode::EndNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::End),
         SerializedFlowNode::ActionNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Action(ActionFlowNode::new(node.action))),
+        SerializedFlowNode::SleepNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Sleep(node.duration)),
     }
 }
 
@@ -138,6 +140,7 @@ mod tests {
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn returns_an_error_if_an_unknown_node_type_is_found() {
@@ -231,6 +234,25 @@ mod tests {
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
 
         let expected = Flow::new("controlDeviceFlow".to_string(), None, None, start_node).unwrap();
+        assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
+    }
+
+    #[tokio::test]
+    async fn creates_a_flow_with_a_sleep_node() {
+        let json = include_str!("../../tests/resources/flows/sleepFlow.json");
+        let flow = from_json(json).unwrap();
+
+        let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
+
+        let sleep_node = FlowNode::new(
+            "sleepNode".to_string(),
+            vec![FlowLink::new(Arc::new(end_node), None)],
+            FlowNodeKind::Sleep(Duration::from_secs(3907)),
+        );
+
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), None)], FlowNodeKind::Start);
+
+        let expected = Flow::new("sleepFlow".to_string(), None, None, start_node).unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
     }
 }

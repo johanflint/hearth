@@ -1,0 +1,20 @@
+{
+  "name": "sleepFlow",
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "sleepNode"
+    },
+    {
+      "id": "sleepNode",
+      "type": "sleepNode",
+      "outgoingNode": "endNode",
+      "duration": "1h5m7s"
+    },
+    {
+      "id": "endNode",
+      "type": "endNode"
+    }
+  ]
+}

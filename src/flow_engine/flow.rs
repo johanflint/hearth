@@ -3,6 +3,7 @@ use crate::flow_engine::action::Action;
 use crate::flow_engine::{Expression, Value};
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub struct Flow {
@@ -89,6 +90,7 @@ pub enum FlowNodeKind {
     Start,
     End,
     Action(ActionFlowNode),
+    Sleep(Duration),
 }
 
 #[derive(Debug)]
