@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store_rx = store.notifier();
     let registry_clone = flow_registry.clone();
     task::spawn(async move {
-        scheduler(scheduler_tx_clone.clone(), scheduler_rx, store_rx, registry_clone).await;
+        scheduler(scheduler_tx_clone, scheduler_rx, store_rx, registry_clone).await;
     });
     info!("✅  Started scheduler");
 
@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let store_rx = store.notifier();
     task::spawn(async move {
-        store_listener(store_rx, flow_registry, scheduler_tx.clone()).await;
+        store_listener(store_rx, flow_registry, scheduler_tx).await;
     });
     info!("✅  Initialized store listener");
 
@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Discovered all devices");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
 
-    hue::observe(tx.clone(), &hue_client, &config).await?;
+    hue::observe(tx, &hue_client, &config).await?;
 
     match signal::ctrl_c().await {
         Ok(()) => {}

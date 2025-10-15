@@ -75,7 +75,7 @@ async fn execute_node<'a>(node: &'a FlowNode, context: &Context, scope: &mut Sco
 
     if let FlowNodeKind::Sleep(duration) = node.kind() {
         return Ok(Sleep {
-            duration: duration.clone(),
+            duration: *duration,
             next: next_node,
         });
     }
