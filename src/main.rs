@@ -1,7 +1,7 @@
 use crate::app_config::AppConfig;
 use crate::domain::controller_registry;
 use crate::domain::events::Event;
-use crate::scheduler::{SchedulerCommand, scheduler};
+use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use std::sync::Arc;
@@ -17,7 +17,6 @@ mod flow_engine;
 mod flow_loader;
 mod hue;
 mod property_changed_reducer;
-mod scheduler;
 mod sse;
 mod store;
 mod store_listener;
