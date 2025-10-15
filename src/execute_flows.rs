@@ -16,7 +16,7 @@ use tracing::{instrument, warn};
 type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
 
 #[instrument(skip_all)]
-pub async fn execute_flows(flows: &[Flow], snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>) {
+pub async fn execute_flows(flows: Vec<Arc<Flow>>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>) {
     let context = Context::new(snapshot.clone());
     let results = FuturesUnordered::from_iter(flows.iter().map(|flow| async { flow_engine::execute(flow, &context, tx.clone()).await }))
         .collect::<Vec<_>>()

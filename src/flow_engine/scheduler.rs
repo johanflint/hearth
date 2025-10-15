@@ -1,9 +1,10 @@
 use crate::execute_flows::execute_flows;
-use crate::flow_engine::flow::Flow;
+use crate::flow_registry::FlowRegistry;
 use crate::store::StoreSnapshot;
 use chrono::Utc;
 use cron::Schedule;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch::Receiver as WatchReceiver;
@@ -12,17 +13,27 @@ use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Debug)]
 pub enum SchedulerCommand {
-    Schedule(Flow),
+    Schedule { flow_id: String },
     ScheduleOnce { flow_name: String, node_id: String, delay: Duration },
 }
 
 #[instrument(skip_all)]
-pub async fn scheduler(tx: Sender<SchedulerCommand>, mut rx: Receiver<SchedulerCommand>, notifier_rx: WatchReceiver<StoreSnapshot>) {
+pub async fn scheduler(tx: Sender<SchedulerCommand>, mut rx: Receiver<SchedulerCommand>, notifier_rx: WatchReceiver<StoreSnapshot>, flow_registry: Arc<FlowRegistry>) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
-            SchedulerCommand::Schedule(flow) if flow.schedule().is_some() => {
+            SchedulerCommand::Schedule { flow_id } => {
+                let Some(flow) = flow_registry.by_id(&flow_id) else {
+                    warn!("🕗 Scheduling flow '{}'... failed, flow not found", flow_id);
+                    continue;
+                };
+
                 let flow_name = flow.name().to_string();
                 debug!("🕗 Scheduling flow '{}'...", flow_name);
+
+                if flow.schedule().is_none() {
+                    error!("🕗 Scheduling flow '{}'... failed, not a scheduled flow", flow.name());
+                    continue;
+                }
 
                 let cron = flow.schedule().unwrap().to_string(); // Safe because of the match guard
                 let schedule = match Schedule::from_str(&cron) {
@@ -48,13 +59,10 @@ pub async fn scheduler(tx: Sender<SchedulerCommand>, mut rx: Receiver<SchedulerC
 
                         debug!(cron, "🕗 Running scheduled flow '{}'...", flow.name());
                         let snapshot = notifier_rx_clone.borrow().clone();
-                        execute_flows(std::slice::from_ref(&flow), snapshot, tx_clone.clone()).await;
+                        execute_flows(vec![flow.clone()], snapshot, tx_clone.clone()).await;
                     }
                 });
                 info!("🕗 Scheduling flow '{}'... OK", flow_name);
-            }
-            SchedulerCommand::Schedule(flow) => {
-                error!("🕗 Scheduling flow '{}'... failed, not a scheduled flow", flow.name());
             }
             SchedulerCommand::ScheduleOnce {
                 flow_name: flow,
