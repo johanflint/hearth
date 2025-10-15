@@ -1,4 +1,5 @@
 {
+  "id": "01K7KK75QJTCKQFD9VYGEDA5P6",
   "name": "logFlowWithTrigger",
   "trigger": {
     "type": "equalTo",

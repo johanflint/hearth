@@ -7,6 +7,7 @@ use std::time::Duration;
 
 #[derive(Debug)]
 pub struct Flow {
+    id: String,
     name: String,
     schedule: Option<String>,
     trigger: Expression,
@@ -14,9 +15,10 @@ pub struct Flow {
 }
 
 impl Flow {
-    pub fn new(name: String, schedule: Option<String>, trigger: Option<Expression>, start_node: FlowNode) -> Result<Self, String> {
+    pub fn new(id: String, name: String, schedule: Option<String>, trigger: Option<Expression>, start_node: FlowNode) -> Result<Self, String> {
         match start_node.kind {
             FlowNodeKind::Start => Ok(Flow {
+                id,
                 name,
                 schedule,
                 trigger: trigger.unwrap_or(Literal { value: Value::Boolean(true) }),
@@ -24,6 +26,10 @@ impl Flow {
             }),
             _ => Err("start_node must be of type FlowNodeKind::Start".to_string()),
         }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
     }
 
     pub fn name(&self) -> &str {

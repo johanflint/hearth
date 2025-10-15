@@ -5,6 +5,7 @@ use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 pub struct SerializedFlow {
+    pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) schedule: Option<String>,
     pub(crate) trigger: Option<Expression>,
@@ -83,6 +84,7 @@ mod tests {
 
         let flow = serde_json::from_str::<SerializedFlow>(json).unwrap();
         let expected = SerializedFlow {
+            id: "01K7KK6H5R7Y72QJEJSJQCKMRQ".to_string(),
             name: "logFlow".to_string(),
             schedule: None,
             trigger: None,
@@ -128,6 +130,7 @@ mod tests {
 
         let flow = serde_json::from_str::<SerializedFlow>(json).unwrap();
         let expected = SerializedFlow {
+            id: "01K7KK7E6GG26XZZDXSGFZCWQ4".to_string(),
             name: "sleepFlow".to_string(),
             schedule: None,
             trigger: None,
