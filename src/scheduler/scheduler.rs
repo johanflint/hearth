@@ -5,7 +5,7 @@ use chrono::Utc;
 use cron::Schedule;
 use std::str::FromStr;
 use std::time::Duration;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch::Receiver as WatchReceiver;
 use tokio::time::{Instant, sleep_until};
 use tracing::{debug, error, info, instrument, warn};
@@ -13,10 +13,11 @@ use tracing::{debug, error, info, instrument, warn};
 #[derive(Debug)]
 pub enum SchedulerCommand {
     Schedule(Flow),
+    ScheduleOnce { flow_name: String, node_id: String, delay: Duration },
 }
 
 #[instrument(skip_all)]
-pub async fn scheduler(mut rx: Receiver<SchedulerCommand>, notifier_rx: WatchReceiver<StoreSnapshot>) {
+pub async fn scheduler(tx: Sender<SchedulerCommand>, mut rx: Receiver<SchedulerCommand>, notifier_rx: WatchReceiver<StoreSnapshot>) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             SchedulerCommand::Schedule(flow) if flow.schedule().is_some() => {
@@ -34,6 +35,7 @@ pub async fn scheduler(mut rx: Receiver<SchedulerCommand>, notifier_rx: WatchRec
 
                 // Job loop
                 let notifier_rx_clone = notifier_rx.clone();
+                let tx_clone = tx.clone();
                 tokio::spawn(async move {
                     for datetime in schedule.upcoming(Utc) {
                         let duration = datetime.signed_duration_since(Utc::now());
@@ -46,13 +48,20 @@ pub async fn scheduler(mut rx: Receiver<SchedulerCommand>, notifier_rx: WatchRec
 
                         debug!(cron, "🕗 Running scheduled flow '{}'...", flow.name());
                         let snapshot = notifier_rx_clone.borrow().clone();
-                        execute_flows(std::slice::from_ref(&flow), snapshot).await;
+                        execute_flows(std::slice::from_ref(&flow), snapshot, tx_clone.clone()).await;
                     }
                 });
                 info!("🕗 Scheduling flow '{}'... OK", flow_name);
             }
             SchedulerCommand::Schedule(flow) => {
                 error!("🕗 Scheduling flow '{}'... failed, not a scheduled flow", flow.name());
+            }
+            SchedulerCommand::ScheduleOnce {
+                flow_name: flow,
+                node_id: node,
+                delay,
+            } => {
+                info!("🕗 Scheduling flow '{}' to run node '{}' after {:?}... OK", flow, node, delay);
             }
         }
     }

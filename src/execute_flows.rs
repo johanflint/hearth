@@ -4,19 +4,21 @@ use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_value::PropertyValue;
 use crate::flow_engine::{Context, FlowEngineError, FlowExecutionReport};
+use crate::scheduler::SchedulerCommand;
 use crate::store::StoreSnapshot;
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc::Sender;
 use tracing::{instrument, warn};
 
 type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
 
 #[instrument(skip_all)]
-pub async fn execute_flows(flows: &[Flow], snapshot: StoreSnapshot) {
+pub async fn execute_flows(flows: &[Flow], snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>) {
     let context = Context::new(snapshot.clone());
-    let results = FuturesUnordered::from_iter(flows.iter().map(|flow| async { flow_engine::execute(flow, &context).await }))
+    let results = FuturesUnordered::from_iter(flows.iter().map(|flow| async { flow_engine::execute(flow, &context, tx.clone()).await }))
         .collect::<Vec<_>>()
         .await;
 

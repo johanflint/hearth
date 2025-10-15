@@ -40,8 +40,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let store_rx = store.notifier();
+    let scheduler_tx_clone = scheduler_tx.clone();
     task::spawn(async move {
-        scheduler(scheduler_rx, store_rx).await;
+        scheduler(scheduler_tx_clone.clone(), scheduler_rx, store_rx).await;
     });
     for scheduled_flow in scheduled_flows {
         scheduler_tx.send(SchedulerCommand::Schedule(scheduled_flow)).await?;
@@ -55,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let store_rx = store.notifier();
     task::spawn(async move {
-        store_listener(store_rx, reactive_flows).await;
+        store_listener(store_rx, reactive_flows, scheduler_tx.clone()).await;
     });
     info!("✅  Initialized store listener");
 
