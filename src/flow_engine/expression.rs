@@ -92,7 +92,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 actual_rhs: format!("{:?}", rhs),
             }),
         },
-        Not { expression } => match (evaluate(expression, context)?) {
+        Not { expression } => match evaluate(expression, context)? {
             Value::Boolean(b) => Ok(Value::Boolean(!b)),
             _ => Err(ExpressionError::UnaryOperandTypeMismatch {
                 operand: "Not",
