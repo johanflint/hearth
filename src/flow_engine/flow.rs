@@ -1,21 +1,30 @@
 use crate::flow_engine::Expression::Literal;
 use crate::flow_engine::action::Action;
 use crate::flow_engine::{Expression, Value};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Debug)]
+#[cfg_attr(not(test), derive(Debug))]
 pub struct Flow {
     id: String,
     name: String,
     schedule: Option<String>,
     trigger: Expression,
-    start_node: FlowNode,
+    start_node: Arc<FlowNode>,
+    nodes_by_id: HashMap<String, Arc<FlowNode>>,
 }
 
 impl Flow {
-    pub fn new(id: String, name: String, schedule: Option<String>, trigger: Option<Expression>, start_node: FlowNode) -> Result<Self, String> {
+    pub fn new(
+        id: String,
+        name: String,
+        schedule: Option<String>,
+        trigger: Option<Expression>,
+        start_node: Arc<FlowNode>,
+        nodes_by_id: HashMap<String, Arc<FlowNode>>,
+    ) -> Result<Self, String> {
         match start_node.kind {
             FlowNodeKind::Start => Ok(Flow {
                 id,
@@ -23,6 +32,7 @@ impl Flow {
                 schedule,
                 trigger: trigger.unwrap_or(Literal { value: Value::Boolean(true) }),
                 start_node,
+                nodes_by_id,
             }),
             _ => Err("start_node must be of type FlowNodeKind::Start".to_string()),
         }
@@ -46,6 +56,10 @@ impl Flow {
 
     pub fn schedule(&self) -> Option<&str> {
         self.schedule.as_deref()
+    }
+
+    pub fn node_by_id(&self, id: &str) -> Option<&FlowNode> {
+        self.nodes_by_id.get(id).map(|node| node.as_ref())
     }
 }
 

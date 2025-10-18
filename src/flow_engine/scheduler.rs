@@ -1,4 +1,4 @@
-use crate::execute_flows::execute_flows;
+use crate::execute_flows::{execute_flow, execute_flows};
 use crate::flow_registry::FlowRegistry;
 use crate::store::StoreSnapshot;
 use chrono::Utc;
@@ -14,7 +14,7 @@ use tracing::{debug, error, info, instrument, warn};
 #[derive(Debug)]
 pub enum SchedulerCommand {
     Schedule { flow_id: String },
-    ScheduleOnce { flow_name: String, node_id: String, delay: Duration },
+    ScheduleOnce { flow_id: String, node_id: String, delay: Duration },
 }
 
 #[instrument(skip_all)]
@@ -64,12 +64,23 @@ pub async fn scheduler(tx: Sender<SchedulerCommand>, mut rx: Receiver<SchedulerC
                 });
                 info!("🕗 Scheduling flow '{}'... OK", flow_name);
             }
-            SchedulerCommand::ScheduleOnce {
-                flow_name: flow,
-                node_id: node,
-                delay,
-            } => {
-                info!("🕗 Scheduling flow '{}' to run node '{}' after {:?}... OK", flow, node, delay);
+            SchedulerCommand::ScheduleOnce { flow_id, node_id, delay } => {
+                let Some(flow) = flow_registry.by_id(&flow_id) else {
+                    warn!("🕗 Scheduling flow '{}'... failed, flow not found", flow_id);
+                    return;
+                };
+
+                debug!("🕗 Scheduling flow '{}' to run node '{}' after {:?}... OK", flow_id, node_id, delay);
+                let notifier_rx_clone = notifier_rx.clone();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    let scheduled_instant = Instant::now() + Duration::from_millis(delay.as_millis() as u64);
+                    sleep_until(scheduled_instant).await;
+
+                    debug!("🕗 Waking up flow '{}'...", flow.name());
+                    let snapshot = notifier_rx_clone.borrow().clone();
+                    execute_flow(flow, Some(node_id), snapshot, tx_clone.clone()).await;
+                });
             }
         }
     }

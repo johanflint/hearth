@@ -14,7 +14,7 @@ use tokio::time::Instant;
 use tracing::{debug, info, instrument, trace, warn};
 
 #[instrument(fields(flow = flow.name()), skip_all)]
-pub async fn execute(flow: &Flow, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
+pub async fn execute(flow: &Flow, node_id: Option<String>, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
     debug!("⚖️ Evaluating trigger condition for flow...");
     let result = evaluate(flow.trigger(), context);
     match result {
@@ -33,14 +33,23 @@ pub async fn execute(flow: &Flow, context: &Context, tx: Sender<SchedulerCommand
     let start = Instant::now();
 
     let mut scope = Scope::new();
-    let mut next_node = Some(flow.start_node());
+
+    let start_node = if let Some(node_id) = node_id {
+        let node = flow.node_by_id(&node_id).ok_or_else(|| FlowEngineError::MissingProvidedStartNode(node_id))?;
+        // Passed node_id may point to an end node if it follows a sleep node
+        if matches!(node.kind(), FlowNodeKind::End) { None } else { Some(node) }
+    } else {
+        Some(flow.start_node())
+    };
+
+    let mut next_node = start_node;
     while let Some(node) = next_node {
         next_node = match execute_node(node, context, &mut scope).await? {
             Next(node) => Some(node),
             End => None,
             Sleep { duration, next } => {
                 tx.send(SchedulerCommand::ScheduleOnce {
-                    flow_name: flow.name().to_string(),
+                    flow_id: flow.id().to_string(),
                     node_id: next.id().to_string(),
                     delay: duration,
                 })
@@ -100,6 +109,8 @@ pub enum FlowEngineError {
     FailedTriggerEvaluation(ExpressionError),
     #[error(transparent)]
     FailedScheduleSleepCommand(#[from] SendError<SchedulerCommand>),
+    #[error("missing provided start node '{0}'")]
+    MissingProvidedStartNode(String),
 }
 
 pub struct FlowExecutionReport {
@@ -155,10 +166,10 @@ mod tests {
         );
 
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(log_node), None)], FlowNodeKind::Start);
-        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node).unwrap();
+        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, &Context::default(), scheduler_tx).await;
+        let result = execute(&flow, None, &Context::default(), scheduler_tx).await;
         assert!(result.is_ok());
     }
 
@@ -170,12 +181,13 @@ mod tests {
             "flow".to_string(),
             None,
             Some(Expression::Literal { value: Value::Boolean(false) }),
-            start_node,
+            Arc::new(start_node),
+            HashMap::new(),
         )
         .unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, &Context::default(), scheduler_tx).await;
+        let result = execute(&flow, None, &Context::default(), scheduler_tx).await;
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.scope.is_empty());
@@ -183,12 +195,22 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn fails_if_an_outgoing_node_is_missing() {
+    async fn fails_if_the_start_node_id_cannot_be_found() {
         let start_node = FlowNode::new("startNode".to_string(), vec![], FlowNodeKind::Start);
-        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node).unwrap();
+        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, &Context::default(), scheduler_tx).await;
+        let result = execute(&flow, Some("unknown".to_string()), &Context::default(), scheduler_tx).await;
+        assert!(matches!(result, Err(FlowEngineError::MissingProvidedStartNode(_))));
+    }
+
+    #[test(tokio::test)]
+    async fn fails_if_an_outgoing_node_is_missing() {
+        let start_node = FlowNode::new("startNode".to_string(), vec![], FlowNodeKind::Start);
+        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
+
+        let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
+        let result = execute(&flow, None, &Context::default(), scheduler_tx).await;
         assert!(matches!(result, Err(FlowEngineError::MissingOutgoingNode(_))));
     }
 
@@ -203,18 +225,44 @@ mod tests {
         );
 
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), None)], FlowNodeKind::Start);
-        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node).unwrap();
+        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
 
-        execute(&flow, &Context::default(), scheduler_tx).await.unwrap();
+        execute(&flow, None, &Context::default(), scheduler_tx).await.unwrap();
         let received_command = scheduler_rx.recv().await;
-        if let Some(SchedulerCommand::ScheduleOnce { flow_name, node_id, delay }) = received_command {
-            assert_eq!(flow_name, "flow");
+        if let Some(SchedulerCommand::ScheduleOnce { flow_id, node_id, delay }) = received_command {
+            assert_eq!(flow_id, "id");
             assert_eq!(node_id, "end_node");
             assert_eq!(delay, Duration::from_secs(42));
         } else {
             panic!("Expected ScheduleOnce command");
         }
+    }
+
+    #[test(tokio::test)]
+    async fn resumes_execution_at_the_specified_node_id() {
+        let end_node = Arc::new(FlowNode::new("end_node".to_string(), vec![], FlowNodeKind::End));
+
+        let sleep_node = Arc::new(FlowNode::new(
+            "sleep_node".to_string(),
+            vec![FlowLink::new(end_node.clone(), None)],
+            FlowNodeKind::Sleep(Duration::from_secs(42)),
+        ));
+
+        let start_node = Arc::new(FlowNode::new("startNode".to_string(), vec![FlowLink::new(sleep_node.clone(), None)], FlowNodeKind::Start));
+        let nodes_by_id = HashMap::from([
+            (start_node.id().to_string(), start_node.clone()),
+            (sleep_node.id().to_string(), sleep_node.clone()),
+            (end_node.id().to_string(), end_node.clone()),
+        ]);
+        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node, nodes_by_id).unwrap();
+
+        let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
+        let result = execute(&flow, Some("end_node".to_string()), &Context::default(), scheduler_tx).await.unwrap();
+
+        // Ensure that nothing was scheduled
+        assert!(scheduler_rx.try_recv().is_err(), "Expected no scheduler commands to be sent");
+        assert!(result.scope.is_empty());
     }
 }
