@@ -2,7 +2,7 @@ use crate::domain::Number;
 use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
-use chrono::Datelike;
+use chrono::{Datelike, NaiveTime};
 use serde::Deserialize;
 use std::cmp::Ordering;
 use thiserror::Error;
@@ -47,6 +47,8 @@ pub enum Value {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum TemporalExpression {
     IsToday { day: Weekday },
+    IsBeforeTime { time: Time },
+    IsAfterTime { time: Time },
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -71,6 +73,18 @@ impl Weekday {
             Weekday::Saturday => chrono::Weekday::Sat,
             Weekday::Sunday => chrono::Weekday::Sun,
         }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct Time {
+    hour: u8,
+    minute: u8,
+}
+
+impl Time {
+    pub fn new(hour: u8, minute: u8) -> Self {
+        Self { hour, minute }
     }
 }
 
@@ -174,6 +188,16 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
 
             match expression {
                 TemporalExpression::IsToday { day } => Ok(Value::Boolean(day.to_chrono_weekday() == now.weekday())),
+                TemporalExpression::IsBeforeTime { time } => Ok(Value::Boolean(
+                    NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, 0)
+                        .map(|target| now.time() < target)
+                        .unwrap_or(false),
+                )),
+                TemporalExpression::IsAfterTime { time } => Ok(Value::Boolean(
+                    NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, 0)
+                        .map(|target| now.time() > target)
+                        .unwrap_or(false),
+                )),
             }
         }
     }
