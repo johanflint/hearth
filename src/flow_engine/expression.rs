@@ -2,6 +2,7 @@ use crate::domain::Number;
 use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
+use chrono::Datelike;
 use serde::Deserialize;
 use std::cmp::Ordering;
 use thiserror::Error;
@@ -30,6 +31,9 @@ pub enum Expression {
 
     // Property
     PropertyValue { device_id: String, property_id: String },
+
+    // Temporal
+    Temporal { expression: TemporalExpression },
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -37,6 +41,37 @@ pub enum Value {
     Boolean(bool),
     Number(Number),
     None,
+}
+
+#[derive(PartialEq, Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TemporalExpression {
+    IsToday { day: Weekday },
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum Weekday {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
+impl Weekday {
+    fn to_chrono_weekday(&self) -> chrono::Weekday {
+        match self {
+            Weekday::Monday => chrono::Weekday::Mon,
+            Weekday::Tuesday => chrono::Weekday::Tue,
+            Weekday::Wednesday => chrono::Weekday::Wed,
+            Weekday::Thursday => chrono::Weekday::Thu,
+            Weekday::Friday => chrono::Weekday::Fri,
+            Weekday::Saturday => chrono::Weekday::Sat,
+            Weekday::Sunday => chrono::Weekday::Sun,
+        }
+    }
 }
 
 pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, ExpressionError> {
@@ -132,6 +167,15 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 }
             }
         }
+
+        // Temporal
+        Temporal { expression } => {
+            let now = context.now();
+
+            match expression {
+                TemporalExpression::IsToday { day } => Ok(Value::Boolean(day.to_chrono_weekday() == now.weekday())),
+            }
+        }
     }
 }
 
@@ -178,7 +222,9 @@ mod tests {
     use crate::domain::property::{CartesianCoordinate, ColorProperty, Gamut, Property, Unit};
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
+    use crate::flow_engine::expression::TemporalExpression::IsToday;
     use crate::store::{DeviceMap, StoreSnapshot};
+    use chrono::{Local, TimeZone};
     use rstest::rstest;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -653,5 +699,25 @@ mod tests {
         );
 
         assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(Weekday::Monday, false)]
+    #[case(Weekday::Tuesday, false)]
+    #[case(Weekday::Wednesday, false)]
+    #[case(Weekday::Thursday, false)]
+    #[case(Weekday::Friday, true)]
+    #[case(Weekday::Saturday, false)]
+    #[case(Weekday::Sunday, false)]
+    fn is_today(#[case] weekday: Weekday, #[case] expected: bool) {
+        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap(); // A Friday
+        let result = evaluate(
+            &Temporal {
+                expression: IsToday { day: weekday },
+            },
+            &Context::new_with_now(StoreSnapshot::default(), fixed_date_time),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
     }
 }
