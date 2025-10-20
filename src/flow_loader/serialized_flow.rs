@@ -1,9 +1,11 @@
 use crate::flow_engine::Expression;
 use crate::flow_engine::action::Action;
 use serde::Deserialize;
+use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 pub struct SerializedFlow {
+    pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) schedule: Option<String>,
     pub(crate) trigger: Option<Expression>,
@@ -16,6 +18,7 @@ pub enum SerializedFlowNode {
     StartNode(SerializedStartFlowNode),
     EndNode(SerializedEndFlowNode),
     ActionNode(SerializedActionFlowNode),
+    SleepNode(SerializedSleepFlowNode),
 }
 
 impl SerializedFlowNode {
@@ -24,6 +27,7 @@ impl SerializedFlowNode {
             SerializedFlowNode::StartNode(node) => &node.id,
             SerializedFlowNode::EndNode(node) => &node.id,
             SerializedFlowNode::ActionNode(node) => &node.id,
+            SerializedFlowNode::SleepNode(node) => &node.id,
         }
     }
 
@@ -32,6 +36,7 @@ impl SerializedFlowNode {
             SerializedFlowNode::StartNode(node) => Some(&node.outgoing_node),
             SerializedFlowNode::EndNode(_) => None,
             SerializedFlowNode::ActionNode(node) => Some(&node.outgoing_node),
+            SerializedFlowNode::SleepNode(node) => Some(&node.outgoing_node),
         }
     }
 }
@@ -56,6 +61,15 @@ pub struct SerializedActionFlowNode {
     pub(crate) action: Box<dyn Action>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub struct SerializedSleepFlowNode {
+    pub(crate) id: String,
+    pub(crate) outgoing_node: String,
+    #[serde(with = "humantime_serde")]
+    pub(crate) duration: Duration,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +84,7 @@ mod tests {
 
         let flow = serde_json::from_str::<SerializedFlow>(json).unwrap();
         let expected = SerializedFlow {
+            id: "01K7KK6H5R7Y72QJEJSJQCKMRQ".to_string(),
             name: "logFlow".to_string(),
             schedule: None,
             trigger: None,
@@ -110,11 +125,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_serialized_flow_with_schedule() {
-        let json = include_str!("../../tests/resources/flows/logFlowWithSchedule.json");
+    async fn test_serialized_flow_with_sleep_node() {
+        let json = include_str!("../../tests/resources/flows/sleepFlow.json");
 
         let flow = serde_json::from_str::<SerializedFlow>(json).unwrap();
-        assert_eq!(flow.schedule, Some("*/5 * * * * *".to_string()));
-        assert_eq!(flow.trigger, None);
+        let expected = SerializedFlow {
+            id: "01K7KK7E6GG26XZZDXSGFZCWQ4".to_string(),
+            name: "sleepFlow".to_string(),
+            schedule: None,
+            trigger: None,
+            nodes: vec![
+                SerializedFlowNode::StartNode(SerializedStartFlowNode {
+                    id: "startNode".to_string(),
+                    outgoing_node: "sleepNode".to_string(),
+                }),
+                SerializedFlowNode::SleepNode(SerializedSleepFlowNode {
+                    id: "sleepNode".to_string(),
+                    outgoing_node: "endNode".to_string(),
+                    duration: Duration::from_secs(3907),
+                }),
+                SerializedFlowNode::EndNode(SerializedEndFlowNode { id: "endNode".to_string() }),
+            ],
+        };
+
+        // As ActionFlowNode's action cannot implement PartialEq, use debug print for comparison
+        assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
+        println!("{:?}", flow);
     }
 }

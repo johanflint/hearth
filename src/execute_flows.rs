@@ -4,36 +4,35 @@ use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_value::PropertyValue;
 use crate::flow_engine::{Context, FlowEngineError, FlowExecutionReport};
+use crate::scheduler::SchedulerCommand;
 use crate::store::StoreSnapshot;
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc::Sender;
 use tracing::{instrument, warn};
 
 type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
 
-#[instrument(skip_all)]
-pub async fn execute_flows(flows: &[Flow], snapshot: StoreSnapshot) {
+#[instrument(skip_all, fields(flow = flow.name(), node_id = node_id.as_deref().unwrap_or("<start>")))]
+pub async fn execute_flow(flow: Arc<Flow>, node_id: Option<String>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>) {
     let context = Context::new(snapshot.clone());
-    let results = FuturesUnordered::from_iter(flows.iter().map(|flow| async { flow_engine::execute(flow, &context).await }))
+    let result = flow_engine::execute(&flow, node_id, &context, tx).await;
+
+    let command_map = merge_command_maps(vec![result]);
+    dispatch_commands(&snapshot, command_map).await;
+}
+
+#[instrument(skip_all)]
+pub async fn execute_flows(flows: Vec<Arc<Flow>>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>) {
+    let context = Context::new(snapshot.clone());
+    let results = FuturesUnordered::from_iter(flows.iter().map(|flow| async { flow_engine::execute(flow, None, &context, tx.clone()).await }))
         .collect::<Vec<_>>()
         .await;
 
     let command_map = merge_command_maps(results);
-    for (device_id, properties) in command_map {
-        if let Some(device) = snapshot.devices.get(&device_id) {
-            if let Some(controller) = device.controller_id.and_then(|controller_id| controller_registry::get(controller_id)) {
-                let command = Command::ControlDevice {
-                    device: device.clone(),
-                    property: Arc::new(properties),
-                };
-                controller.execute(command).await;
-            } else {
-                warn!(device_id, "⚠️ Device '{}' is not tied to a controller", device.name);
-            }
-        }
-    }
+    dispatch_commands(&snapshot, command_map).await;
 }
 
 fn merge_command_maps(reports: Vec<Result<FlowExecutionReport, FlowEngineError>>) -> CommandMap {
@@ -49,6 +48,22 @@ fn merge_command_maps(reports: Vec<Result<FlowExecutionReport, FlowEngineError>>
     }
 
     merged_map
+}
+
+async fn dispatch_commands(snapshot: &StoreSnapshot, command_map: CommandMap) {
+    for (device_id, properties) in command_map {
+        if let Some(device) = snapshot.devices.get(&device_id) {
+            if let Some(controller) = device.controller_id.and_then(|controller_id| controller_registry::get(controller_id)) {
+                let command = Command::ControlDevice {
+                    device: device.clone(),
+                    property: Arc::new(properties),
+                };
+                controller.execute(command).await;
+            } else {
+                warn!(device_id, "⚠️ Device '{}' is not tied to a controller", device.name);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

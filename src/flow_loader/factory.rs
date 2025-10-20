@@ -25,13 +25,14 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
     nodes_to_visit.reserve(nodes.len()); // Reserve capacity to avoid multiple reallocations
 
     let mut flow_node_map: HashMap<String, Arc<FlowNode>> = HashMap::new();
-    let mut start_node: Option<FlowNode> = None;
+    let mut start_node: Option<Arc<FlowNode>> = None;
 
     while let Some(serialized_node) = nodes_to_visit.pop_back() {
         let incoming_nodes: Vec<SerializedFlowNode> = nodes._extract_if(|node| match node {
             SerializedFlowNode::StartNode(node) => node.outgoing_node == serialized_node.id(),
             SerializedFlowNode::EndNode(_) => false,
             SerializedFlowNode::ActionNode(node) => node.outgoing_node == serialized_node.id(),
+            SerializedFlowNode::SleepNode(node) => node.outgoing_node == serialized_node.id(),
         });
 
         if !matches!(serialized_node, SerializedFlowNode::StartNode(_)) && incoming_nodes.is_empty() {
@@ -49,12 +50,14 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
         let outgoing_nodes = map_outgoing_nodes(&serialized_node, &flow_node_map)?;
         let node = to_flow_node(serialized_node, outgoing_nodes);
 
-        if matches!(node.kind(), FlowNodeKind::Start) {
-            // Take ownership of the node as the start node is the last node to traverse
-            start_node = Some(node);
-        } else {
-            flow_node_map.insert(node.id().to_owned(), Arc::new(node));
+        let node_id = node.id().to_owned();
+        let node_arc = Arc::new(node);
+
+        if matches!(node_arc.kind(), FlowNodeKind::Start) {
+            start_node = Some(node_arc.clone());
         }
+
+        flow_node_map.insert(node_id, node_arc);
     }
 
     if !nodes.is_empty() {
@@ -63,7 +66,15 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
         });
     }
 
-    let flow = Flow::new(flow.name, flow.schedule, flow.trigger, start_node.ok_or_else(|| FlowFactoryError::MissingStartNode)?).expect("Flow creation failed");
+    let flow = Flow::new(
+        flow.id,
+        flow.name,
+        flow.schedule,
+        flow.trigger,
+        start_node.ok_or_else(|| FlowFactoryError::MissingStartNode)?,
+        flow_node_map,
+    )
+    .expect("Flow creation failed");
     Ok(flow)
 }
 
@@ -86,6 +97,7 @@ fn to_flow_node(serialized_node: SerializedFlowNode, outgoing_nodes: Vec<FlowLin
         SerializedFlowNode::StartNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Start),
         SerializedFlowNode::EndNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::End),
         SerializedFlowNode::ActionNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Action(ActionFlowNode::new(node.action))),
+        SerializedFlowNode::SleepNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Sleep(node.duration)),
     }
 }
 
@@ -138,6 +150,7 @@ mod tests {
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn returns_an_error_if_an_unknown_node_type_is_found() {
@@ -148,7 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_an_error_if_no_start_node_is_found() {
-        let json = r#"{ "name": "flow", "nodes": [] }"#;
+        let json = r#"{ "id": "id", "name": "flow", "nodes": [] }"#;
         let result = from_json(json);
         assert!(matches!(result, Err(FlowFactoryError::MissingStartNode)));
     }
@@ -189,7 +202,15 @@ mod tests {
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(end_node), None)], FlowNodeKind::Start);
 
-        let expected = Flow::new("emptyFlow".to_string(), None, None, start_node).unwrap();
+        let expected = Flow::new(
+            "01K7KK65D87SZGGZE7VB8QYT20".to_string(),
+            "emptyFlow".to_string(),
+            None,
+            None,
+            Arc::new(start_node),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
     }
 
@@ -208,7 +229,15 @@ mod tests {
 
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
 
-        let expected = Flow::new("logFlow".to_string(), None, None, start_node).unwrap();
+        let expected = Flow::new(
+            "01K7KK6H5R7Y72QJEJSJQCKMRQ".to_string(),
+            "logFlow".to_string(),
+            None,
+            None,
+            Arc::new(start_node),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
     }
 
@@ -230,7 +259,56 @@ mod tests {
 
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
 
-        let expected = Flow::new("controlDeviceFlow".to_string(), None, None, start_node).unwrap();
+        let expected = Flow::new(
+            "01K7KK5FC54SN8D4QYVNEGFYG4".to_string(),
+            "controlDeviceFlow".to_string(),
+            None,
+            None,
+            Arc::new(start_node),
+            HashMap::new(),
+        )
+        .unwrap();
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
+    }
+
+    #[tokio::test]
+    async fn creates_a_flow_with_a_sleep_node() {
+        let json = include_str!("../../tests/resources/flows/sleepFlow.json");
+        let flow = from_json(json).unwrap();
+
+        let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
+
+        let sleep_node = FlowNode::new(
+            "sleepNode".to_string(),
+            vec![FlowLink::new(Arc::new(end_node), None)],
+            FlowNodeKind::Sleep(Duration::from_secs(3907)),
+        );
+
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), None)], FlowNodeKind::Start);
+
+        let expected = Flow::new(
+            "01K7KK7E6GG26XZZDXSGFZCWQ4".to_string(),
+            "sleepFlow".to_string(),
+            None,
+            None,
+            Arc::new(start_node),
+            HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
+    }
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for Flow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Ignores the nodes_by_id field as the order is not deterministic and all nodes are reachable by start node
+        f.debug_struct("Flow")
+            .field("id", &self.id())
+            .field("name", &self.name())
+            .field("schedule", &self.schedule())
+            .field("trigger", &self.trigger())
+            .field("start_node", &self.start_node())
+            .finish()
     }
 }

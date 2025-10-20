@@ -1,3 +1,6 @@
 .idea/
 /target
 config_local.json5
+
+# MacOS
+.DS_Store
