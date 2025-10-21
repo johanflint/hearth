@@ -1,5 +1,5 @@
 use crate::domain::commands::Command;
-use crate::domain::controller_registry;
+use crate::domain::{GeoLocation, controller_registry};
 use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_value::PropertyValue;
@@ -16,8 +16,8 @@ use tracing::{instrument, warn};
 type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
 
 #[instrument(skip_all, fields(flow = flow.name(), node_id = node_id.as_deref().unwrap_or("<start>")))]
-pub async fn execute_flow(flow: Arc<Flow>, node_id: Option<String>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>) {
-    let context = Context::new(snapshot.clone());
+pub async fn execute_flow(flow: Arc<Flow>, node_id: Option<String>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
+    let context = Context::new(snapshot.clone(), geo_location);
     let result = flow_engine::execute(&flow, node_id, &context, tx).await;
 
     let command_map = merge_command_maps(vec![result]);
@@ -25,8 +25,8 @@ pub async fn execute_flow(flow: Arc<Flow>, node_id: Option<String>, snapshot: St
 }
 
 #[instrument(skip_all)]
-pub async fn execute_flows(flows: Vec<Arc<Flow>>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>) {
-    let context = Context::new(snapshot.clone());
+pub async fn execute_flows(flows: Vec<Arc<Flow>>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
+    let context = Context::new(snapshot.clone(), geo_location);
     let results = FuturesUnordered::from_iter(flows.iter().map(|flow| async { flow_engine::execute(flow, None, &context, tx.clone()).await }))
         .collect::<Vec<_>>()
         .await;

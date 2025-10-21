@@ -11,5 +11,10 @@
     retry_max_delay_ms: 30000,
     stale_connection_timeout_ms: 60000,
     application_key: "Hue application key"
+  },
+  "location": {
+    "latitude": 51.9244,
+    "longitude": 4.4777,
+    "altitude_m": 0.0,
   }
 }

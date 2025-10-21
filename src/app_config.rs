@@ -1,3 +1,4 @@
+use crate::domain::GeoLocation;
 use config::Config;
 use serde::Deserialize;
 use std::time::Duration;
@@ -7,6 +8,7 @@ pub struct AppConfig {
     core: Core,
     flows: Flows,
     hue: Hue,
+    location: GeoLocation,
 }
 
 impl AppConfig {
@@ -31,6 +33,10 @@ impl AppConfig {
 
     pub fn hue(&self) -> &Hue {
         &self.hue
+    }
+
+    pub fn geo_location(&self) -> &GeoLocation {
+        &self.location
     }
 }
 
@@ -98,15 +104,18 @@ impl AppConfigBuilder {
         AppConfigBuilder {
             config: AppConfig {
                 core: Core { store_buffer_size: 1 },
-                flows: Flows {
-                    directory: "flows".to_string(),
-                },
+                flows: Flows { directory: "flows".to_string() },
                 hue: Hue {
                     url: "https://hue.url/".to_string(),
                     retry_ms: 100,
                     retry_max_delay_ms: 200,
                     stale_connection_timeout_ms: 30_000,
                     application_key: "key".to_string(),
+                },
+                location: GeoLocation {
+                    latitude: 51.8615899,
+                    longitude: 4.3580323,
+                    altitude: 0.0,
                 },
             },
         }

@@ -49,6 +49,10 @@ pub enum TemporalExpression {
     IsToday { day: Weekday },
     IsBeforeTime { time: Time },
     IsAfterTime { time: Time },
+    HasSunRisen, // Now >= sunrise
+    HasSunSet,   // Now >= sunset
+    IsDaytime,   // Now between sunrise and sunset
+    IsNighttime, // Now < sunrise or now > sunset
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -198,6 +202,16 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                         .map(|target| now.time() > target)
                         .unwrap_or(false),
                 )),
+                TemporalExpression::HasSunRisen => Ok(Value::Boolean(now.time() >= context.sunrise().time())),
+                TemporalExpression::HasSunSet => Ok(Value::Boolean(now.time() >= context.sunset().time())),
+                TemporalExpression::IsDaytime => {
+                    let is_daytime = now.time() >= context.sunrise().time() && now.time() < context.sunset().time();
+                    Ok(Value::Boolean(is_daytime))
+                }
+                TemporalExpression::IsNighttime => {
+                    let is_nighttime = now.time() < context.sunrise().time() || now.time() >= context.sunset().time();
+                    Ok(Value::Boolean(is_nighttime))
+                }
             }
         }
     }
@@ -242,11 +256,12 @@ pub enum ExpressionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::GeoLocation;
     use crate::domain::device::{Device, DeviceType};
     use crate::domain::property::{CartesianCoordinate, ColorProperty, Gamut, Property, Unit};
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
-    use crate::flow_engine::expression::TemporalExpression::IsToday;
+    use crate::flow_engine::expression::TemporalExpression::{HasSunRisen, HasSunSet, IsAfterTime, IsBeforeTime, IsDaytime, IsNighttime, IsToday};
     use crate::store::{DeviceMap, StoreSnapshot};
     use chrono::{Local, TimeZone};
     use rstest::rstest;
@@ -254,7 +269,7 @@ mod tests {
     use std::sync::Arc;
 
     fn context() -> Context {
-        Context::new(StoreSnapshot::default())
+        Context::default()
     }
 
     fn device() -> Device {
@@ -719,7 +734,7 @@ mod tests {
                 device_id: device_id.to_string(),
                 property_id: property_id.to_string(),
             },
-            &Context::new(snapshot),
+            &Context::new(snapshot, GeoLocation::default()),
         );
 
         assert_eq!(result, expected);
@@ -739,7 +754,131 @@ mod tests {
             &Temporal {
                 expression: IsToday { day: weekday },
             },
-            &Context::new_with_now(StoreSnapshot::default(), fixed_date_time),
+            &Context::new_with_now(StoreSnapshot::default(), fixed_date_time, GeoLocation::default()),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
+    #[case::midnight(Time::new(0, 0), false)]
+    #[case::before_time(Time::new(11, 59), false)]
+    #[case::same_time(Time::new(12, 0), false)]
+    #[case::after_time(Time::new(12, 1), true)]
+    #[case::before_midnight(Time::new(23, 59), true)]
+    fn is_before_time(#[case] time: Time, #[case] expected: bool) {
+        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap();
+        let result = evaluate(
+            &Temporal { expression: IsBeforeTime { time } },
+            &Context::new_with_now(StoreSnapshot::default(), fixed_date_time, GeoLocation::default()),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
+    #[case::midnight(Time::new(0, 0), true)]
+    #[case::before_time(Time::new(11, 59), true)]
+    #[case::same_time(Time::new(12, 0), false)]
+    #[case::after_time(Time::new(12, 1), false)]
+    #[case::before_midnight(Time::new(23, 59), false)]
+    fn is_after_time(#[case] time: Time, #[case] expected: bool) {
+        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap();
+        let result = evaluate(
+            &Temporal { expression: IsAfterTime { time } },
+            &Context::new_with_now(StoreSnapshot::default(), fixed_date_time, GeoLocation::default()),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
+    #[case(Time::new(0, 0), false)]
+    #[case(Time::new(14, 0), true)]
+    #[case(Time::new(23, 0), true)]
+    fn has_sun_risen(#[case] time: Time, #[case] expected: bool) {
+        // Sunrise at given location and date: 2000-08-04T06:09:31+02:00
+        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
+        let result = evaluate(
+            &Temporal { expression: HasSunRisen },
+            &Context::new_with_now(
+                StoreSnapshot::default(),
+                fixed_date_time,
+                GeoLocation {
+                    latitude: 51.9244,
+                    longitude: 4.4777,
+                    altitude: 0.0,
+                },
+            ),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
+    #[case(Time::new(0, 0), false)]
+    #[case(Time::new(14, 0), false)]
+    #[case(Time::new(23, 0), true)]
+    fn has_sun_set(#[case] time: Time, #[case] expected: bool) {
+        // Sunset at given location and date: 2000-08-04T21:26:42+02:00
+        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
+        let result = evaluate(
+            &Temporal { expression: HasSunSet },
+            &Context::new_with_now(
+                StoreSnapshot::default(),
+                fixed_date_time,
+                GeoLocation {
+                    latitude: 51.9244,
+                    longitude: 4.4777,
+                    altitude: 0.0,
+                },
+            ),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
+    #[case(Time::new(0, 0), false)]
+    #[case(Time::new(14, 0), true)]
+    #[case(Time::new(23, 0), false)]
+    fn is_daytime(#[case] time: Time, #[case] expected: bool) {
+        // Sunrise and sunset at given location and date: 2000-08-04T06:09:31+02:00 and 2000-08-04T21:26:42+02:00
+        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
+        let result = evaluate(
+            &Temporal { expression: IsDaytime },
+            &Context::new_with_now(
+                StoreSnapshot::default(),
+                fixed_date_time,
+                GeoLocation {
+                    latitude: 51.9244,
+                    longitude: 4.4777,
+                    altitude: 0.0,
+                },
+            ),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
+    #[case(Time::new(0, 0), true)]
+    #[case(Time::new(14, 0), false)]
+    #[case(Time::new(23, 0), true)]
+    fn is_nighttime(#[case] time: Time, #[case] expected: bool) {
+        // Sunrise and sunset at given location and date: 2000-08-04T06:09:31+02:00 and 2000-08-04T21:26:42+02:00
+        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
+        let result = evaluate(
+            &Temporal { expression: IsNighttime },
+            &Context::new_with_now(
+                StoreSnapshot::default(),
+                fixed_date_time,
+                GeoLocation {
+                    latitude: 51.9244,
+                    longitude: 4.4777,
+                    altitude: 0.0,
+                },
+            ),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));

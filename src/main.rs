@@ -17,6 +17,7 @@ mod extensions;
 mod flow_engine;
 mod flow_loader;
 mod flow_registry;
+mod geo_location_deserializer;
 mod hue;
 mod property_changed_reducer;
 mod sse;
@@ -43,8 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scheduler_tx_clone = scheduler_tx.clone();
     let store_rx = store.notifier();
     let registry_clone = flow_registry.clone();
+    let geo_location_clone = config.geo_location().clone();
     task::spawn(async move {
-        scheduler(scheduler_tx_clone, scheduler_rx, store_rx, registry_clone).await;
+        scheduler(scheduler_tx_clone, scheduler_rx, store_rx, registry_clone, geo_location_clone).await;
     });
     info!("✅  Started scheduler");
 
@@ -63,8 +65,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Initialized controllers");
 
     let store_rx = store.notifier();
+    let geo_location = config.geo_location().clone();
     task::spawn(async move {
-        store_listener(store_rx, flow_registry, scheduler_tx).await;
+        store_listener(store_rx, flow_registry, scheduler_tx, geo_location).await;
     });
     info!("✅  Initialized store listener");
 
