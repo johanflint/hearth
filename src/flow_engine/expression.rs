@@ -2,7 +2,8 @@ use crate::domain::Number;
 use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
-use chrono::{Datelike, NaiveTime};
+use Weekday::*;
+use chrono::{Datelike, NaiveTime, TimeZone};
 use serde::Deserialize;
 use std::cmp::Ordering;
 use thiserror::Error;
@@ -46,7 +47,7 @@ pub enum Value {
 #[derive(PartialEq, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum TemporalExpression {
-    IsToday { day: Weekday },
+    IsToday { when: WeekdayCondition },
     IsBeforeTime { time: Time },
     IsAfterTime { time: Time },
     HasSunRisen, // Now >= sunrise
@@ -55,7 +56,34 @@ pub enum TemporalExpression {
     IsNighttime, // Now < sunrise or now > sunset
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug)]
+pub enum WeekdayCondition {
+    Specific(Weekday),
+    Range { start: Weekday, end: Weekday },
+    Set(Vec<Weekday>),
+    Weekdays,
+    Weekend,
+}
+
+impl WeekdayCondition {
+    fn included_days(&self) -> Vec<Weekday> {
+        match self {
+            WeekdayCondition::Specific(day) => vec![day.clone()],
+            WeekdayCondition::Range { start, end } => {
+                let all = Weekday::all();
+                let start_index = start.as_index();
+                let end_index = end.as_index();
+
+                all[start_index..=end_index].to_vec()
+            }
+            WeekdayCondition::Set(days) => days.clone(),
+            WeekdayCondition::Weekdays => vec![Monday, Tuesday, Wednesday, Thursday, Friday],
+            WeekdayCondition::Weekend => vec![Saturday, Sunday],
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub enum Weekday {
     Monday,
     Tuesday,
@@ -67,15 +95,37 @@ pub enum Weekday {
 }
 
 impl Weekday {
-    fn to_chrono_weekday(&self) -> chrono::Weekday {
+    pub fn as_index(&self) -> usize {
         match self {
-            Weekday::Monday => chrono::Weekday::Mon,
-            Weekday::Tuesday => chrono::Weekday::Tue,
-            Weekday::Wednesday => chrono::Weekday::Wed,
-            Weekday::Thursday => chrono::Weekday::Thu,
-            Weekday::Friday => chrono::Weekday::Fri,
-            Weekday::Saturday => chrono::Weekday::Sat,
-            Weekday::Sunday => chrono::Weekday::Sun,
+            Monday => 0,
+            Tuesday => 1,
+            Wednesday => 2,
+            Thursday => 3,
+            Friday => 4,
+            Saturday => 5,
+            Sunday => 6,
+        }
+    }
+
+    pub fn all() -> [Weekday; 7] {
+        [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
+    }
+}
+
+trait ToWeekday {
+    fn to_weekday(&self) -> Weekday;
+}
+
+impl<Tz: TimeZone> ToWeekday for chrono::DateTime<Tz> {
+    fn to_weekday(&self) -> Weekday {
+        match self.weekday() {
+            chrono::Weekday::Mon => Monday,
+            chrono::Weekday::Tue => Tuesday,
+            chrono::Weekday::Wed => Wednesday,
+            chrono::Weekday::Thu => Thursday,
+            chrono::Weekday::Fri => Friday,
+            chrono::Weekday::Sat => Saturday,
+            chrono::Weekday::Sun => Sunday,
         }
     }
 }
@@ -191,7 +241,11 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             let now = context.now();
 
             match expression {
-                TemporalExpression::IsToday { day } => Ok(Value::Boolean(day.to_chrono_weekday() == now.weekday())),
+                TemporalExpression::IsToday { when } => {
+                    let included_days = when.included_days();
+                    let matches = included_days.contains(&now.to_weekday());
+                    Ok(Value::Boolean(matches))
+                }
                 TemporalExpression::IsBeforeTime { time } => Ok(Value::Boolean(
                     NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, 0)
                         .map(|target| now.time() < target)
@@ -741,18 +795,20 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Weekday::Monday, false)]
-    #[case(Weekday::Tuesday, false)]
-    #[case(Weekday::Wednesday, false)]
-    #[case(Weekday::Thursday, false)]
-    #[case(Weekday::Friday, true)]
-    #[case(Weekday::Saturday, false)]
-    #[case(Weekday::Sunday, false)]
+    #[case(Monday, false)]
+    #[case(Tuesday, false)]
+    #[case(Wednesday, false)]
+    #[case(Thursday, false)]
+    #[case(Friday, true)]
+    #[case(Saturday, false)]
+    #[case(Sunday, false)]
     fn is_today(#[case] weekday: Weekday, #[case] expected: bool) {
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap(); // A Friday
         let result = evaluate(
             &Temporal {
-                expression: IsToday { day: weekday },
+                expression: IsToday {
+                    when: WeekdayCondition::Specific(weekday),
+                },
             },
             &Context::new_with_now(StoreSnapshot::default(), fixed_date_time, GeoLocation::default()),
         )
