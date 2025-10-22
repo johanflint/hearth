@@ -19,6 +19,7 @@ async-trait = "0.1"
 cron = "0.15.0"
 chrono = "0.4"
 humantime-serde = "1.1.1"
+sunrise = "2.1"
 
 # Action macros
 action_macros = { path = "action_macros" }
