@@ -5,6 +5,7 @@ mod engine;
 mod expression;
 pub mod flow;
 pub mod property_value;
+mod schedule;
 pub mod scheduler;
 mod scope;
 
@@ -13,4 +14,5 @@ pub use engine::FlowEngineError;
 pub use engine::FlowExecutionReport;
 pub use engine::execute;
 pub use expression::{Expression, Time, Value, Weekday, WeekdayCondition};
+pub use schedule::Schedule;
 pub use scheduler::{SchedulerCommand, scheduler};
