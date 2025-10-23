@@ -56,7 +56,7 @@ pub enum TemporalExpression {
     IsNighttime, // Now < sunrise or now > sunset
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum WeekdayCondition {
     Specific(Weekday),
     Range { start: Weekday, end: Weekday },
@@ -66,7 +66,7 @@ pub enum WeekdayCondition {
 }
 
 impl WeekdayCondition {
-    fn included_days(&self) -> Vec<Weekday> {
+    pub fn included_days(&self) -> Vec<Weekday> {
         match self {
             WeekdayCondition::Specific(day) => vec![day.clone()],
             WeekdayCondition::Range { start, end } => {
@@ -112,7 +112,7 @@ impl Weekday {
     }
 }
 
-trait ToWeekday {
+pub trait ToWeekday {
     fn to_weekday(&self) -> Weekday;
 }
 
