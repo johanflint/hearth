@@ -1,7 +1,8 @@
 use crate::flow_engine::{Schedule, WeekdayCondition};
-use serde::de::Error;
+use serde::de::{Error, Unexpected};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
+use std::str::FromStr;
 
 impl<'de> Deserialize<'de> for Schedule {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -11,7 +12,13 @@ impl<'de> Deserialize<'de> for Schedule {
         let value = Value::deserialize(deserializer)?;
 
         match value {
-            Value::String(s) => Ok(Schedule::Cron(s)),
+            Value::String(cron) => {
+                // Validate the cron expression
+                match cron::Schedule::from_str(&cron) {
+                    Ok(_) => Ok(Schedule::Cron(cron)),
+                    Err(_e) => Err(Error::invalid_value(Unexpected::Str(&cron), &"a valid cron expression")),
+                }
+            }
             Value::Object(map) => {
                 let event = map.get("event").and_then(|v| v.as_str()).ok_or_else(|| Error::custom("missing or invalid field 'event'"))?;
                 let when_value = map.get("when").ok_or_else(|| Error::custom("missing or invalid field 'when'"))?;
@@ -39,15 +46,24 @@ mod tests {
 
     #[test]
     fn deserializes_a_cron_expression() {
-        let parsed: Schedule = serde_json::from_value(json!("0 12 * * *")).unwrap();
-        let expected = Schedule::Cron("0 12 * * *".to_string());
+        let parsed: Schedule = serde_json::from_value(json!("0 12 * * * *")).unwrap();
+        let expected = Schedule::Cron("0 12 * * * *".to_string());
         assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn deserialize_fails_on_invalid_cron_expression() {
+        let parsed = serde_json::from_value::<Schedule>(json!("0 12 * * *"));
+        let err = parsed.expect_err("expected an error but got Ok");
+        let msg = err.to_string();
+        let expected_message = "expected a valid cron expression";
+        assert!(msg.contains(expected_message), "Expected error message to contain '{expected_message}', but got '{msg}'");
     }
 
     #[rstest]
     #[case::with_cron_expression(
-        json!("0 12 * * *"),
-        Schedule::Cron("0 12 * * *".to_string())
+        json!("0 12 * * * *"),
+        Schedule::Cron("0 12 * * * *".to_string())
     )]
     #[case::with_offset(
         json!({

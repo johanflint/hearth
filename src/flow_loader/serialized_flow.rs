@@ -1,5 +1,5 @@
-use crate::flow_engine::Expression;
 use crate::flow_engine::action::Action;
+use crate::flow_engine::{Expression, Schedule};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -7,7 +7,7 @@ use std::time::Duration;
 pub struct SerializedFlow {
     pub(crate) id: String,
     pub(crate) name: String,
-    pub(crate) schedule: Option<String>,
+    pub(crate) schedule: Option<Schedule>,
     pub(crate) trigger: Option<Expression>,
     pub(crate) nodes: Vec<SerializedFlowNode>,
 }

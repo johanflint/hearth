@@ -2,6 +2,7 @@ use crate::domain::GeoLocation;
 use crate::flow_engine::WeekdayCondition;
 use crate::flow_engine::expression::ToWeekday;
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
+use std::fmt::{Display, Formatter};
 use std::ops::Add;
 use std::str::FromStr;
 use sunrise::{Coordinates, SolarDay};
@@ -11,6 +12,22 @@ pub enum Schedule {
     Cron(String),
     Sunrise { when: WeekdayCondition, offset: i64 },
     Sunset { when: WeekdayCondition, offset: i64 },
+}
+
+impl Display for Schedule {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Schedule::Cron(expression) => {
+                write!(f, "cron expression '{}'", expression)
+            }
+            Schedule::Sunrise { when, offset } => {
+                write!(f, "sunrise on {:?}, offset {}", when.included_days(), offset)
+            }
+            Schedule::Sunset { when, offset } => {
+                write!(f, "sunset on {:?}, offset {}", when.included_days(), offset)
+            }
+        }
+    }
 }
 
 #[derive(Debug)]

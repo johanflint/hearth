@@ -1,6 +1,6 @@
 use crate::flow_engine::Expression::Literal;
 use crate::flow_engine::action::Action;
-use crate::flow_engine::{Expression, Value};
+use crate::flow_engine::{Expression, Schedule, Value};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use std::time::Duration;
 pub struct Flow {
     id: String,
     name: String,
-    schedule: Option<String>,
+    schedule: Option<Schedule>,
     trigger: Expression,
     start_node: Arc<FlowNode>,
     nodes_by_id: HashMap<String, Arc<FlowNode>>,
@@ -20,7 +20,7 @@ impl Flow {
     pub fn new(
         id: String,
         name: String,
-        schedule: Option<String>,
+        schedule: Option<Schedule>,
         trigger: Option<Expression>,
         start_node: Arc<FlowNode>,
         nodes_by_id: HashMap<String, Arc<FlowNode>>,
@@ -54,8 +54,8 @@ impl Flow {
         &self.trigger
     }
 
-    pub fn schedule(&self) -> Option<&str> {
-        self.schedule.as_deref()
+    pub fn schedule(&self) -> Option<Schedule> {
+        self.schedule.clone()
     }
 
     pub fn node_by_id(&self, id: &str) -> Option<&FlowNode> {
