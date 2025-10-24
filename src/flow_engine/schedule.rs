@@ -125,7 +125,7 @@ where
             .with_altitude(self.altitude)
             .event_time(event)
             .with_timezone(&self.current.timezone())
-            .add(Duration::seconds(self.offset))
+            .add(Duration::minutes(self.offset))
     }
 }
 
