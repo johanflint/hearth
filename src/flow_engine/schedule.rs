@@ -17,13 +17,21 @@ impl Display for Schedule {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Schedule::Cron(expression) => {
-                write!(f, "cron expression '{}'", expression)
+                write!(f, "cron '{}'", expression)
             }
             Schedule::Sunrise { when, offset } => {
-                write!(f, "sunrise on {:?}, offset {}", when.included_days(), offset)
+                if offset == &0 {
+                    write!(f, "sunrise on {}", when)
+                } else {
+                    write!(f, "sunrise on {}, offset {}m", when, offset)
+                }
             }
             Schedule::Sunset { when, offset } => {
-                write!(f, "sunset on {:?}, offset {}", when.included_days(), offset)
+                if offset == &0 {
+                    write!(f, "sunset on {}", when)
+                } else {
+                    write!(f, "sunset on {}, offset {}m", when, offset)
+                }
             }
         }
     }
