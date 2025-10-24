@@ -2,7 +2,7 @@ use crate::domain::GeoLocation;
 use crate::execute_flows::{execute_flow, execute_flows};
 use crate::flow_registry::FlowRegistry;
 use crate::store::StoreSnapshot;
-use chrono::Utc;
+use chrono::Local;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -48,8 +48,8 @@ pub async fn scheduler(
                 let tx_clone = tx.clone();
                 let geo_location_clone = geo_location.clone();
                 tokio::spawn(async move {
-                    for datetime in schedule.upcoming(Utc, geo_location_clone.clone()) {
-                        let duration = datetime.signed_duration_since(Utc::now());
+                    for datetime in schedule.upcoming(Local, geo_location_clone.clone()) {
+                        let duration = datetime.signed_duration_since(Local::now());
                         if duration.num_milliseconds() < 0 {
                             continue; // Already passed
                         }
