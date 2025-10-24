@@ -1,9 +1,8 @@
 use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
-use crate::domain::{Number, Weekday, WeekdayCondition};
+use crate::domain::{Number, Time, WeekdayCondition};
 use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
-use Weekday::*;
 use chrono::NaiveTime;
 use serde::Deserialize;
 use std::cmp::Ordering;
@@ -55,18 +54,6 @@ pub enum TemporalExpression {
     HasSunSet,   // Now >= sunset
     IsDaytime,   // Now between sunrise and sunset
     IsNighttime, // Now < sunrise or now > sunset
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct Time {
-    hour: u8,
-    minute: u8,
-}
-
-impl Time {
-    pub fn new(hour: u8, minute: u8) -> Self {
-        Self { hour, minute }
-    }
 }
 
 pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, ExpressionError> {
@@ -237,9 +224,10 @@ pub enum ExpressionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::GeoLocation;
+    use crate::domain::Weekday::*;
     use crate::domain::device::{Device, DeviceType};
     use crate::domain::property::{CartesianCoordinate, ColorProperty, Gamut, Property, Unit};
+    use crate::domain::{GeoLocation, Weekday};
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
     use crate::flow_engine::expression::TemporalExpression::{HasSunRisen, HasSunSet, IsAfterTime, IsBeforeTime, IsDaytime, IsNighttime, IsToday};
@@ -744,11 +732,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::midnight(Time::new(0, 0), false)]
-    #[case::before_time(Time::new(11, 59), false)]
-    #[case::same_time(Time::new(12, 0), false)]
-    #[case::after_time(Time::new(12, 1), true)]
-    #[case::before_midnight(Time::new(23, 59), true)]
+    #[case::midnight(Time { hour: 0, minute: 0 }, false)]
+    #[case::before_time(Time { hour: 11, minute: 59 }, false)]
+    #[case::same_time(Time { hour: 12, minute: 0 }, false)]
+    #[case::after_time(Time { hour: 12, minute: 1 }, true)]
+    #[case::before_midnight(Time { hour: 23, minute: 59 }, true)]
     fn is_before_time(#[case] time: Time, #[case] expected: bool) {
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap();
         let result = evaluate(
@@ -760,11 +748,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::midnight(Time::new(0, 0), true)]
-    #[case::before_time(Time::new(11, 59), true)]
-    #[case::same_time(Time::new(12, 0), false)]
-    #[case::after_time(Time::new(12, 1), false)]
-    #[case::before_midnight(Time::new(23, 59), false)]
+    #[case::midnight(Time { hour: 0, minute: 0 }, true)]
+    #[case::before_time(Time { hour: 11, minute: 59 }, true)]
+    #[case::same_time(Time { hour: 12, minute: 0 }, false)]
+    #[case::after_time(Time { hour: 12, minute: 1 }, false)]
+    #[case::before_midnight(Time { hour: 23, minute: 59 }, false)]
     fn is_after_time(#[case] time: Time, #[case] expected: bool) {
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap();
         let result = evaluate(
@@ -776,9 +764,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Time::new(0, 0), false)]
-    #[case(Time::new(14, 0), true)]
-    #[case(Time::new(23, 0), true)]
+    #[case(Time { hour: 0, minute: 0 }, false)]
+    #[case(Time { hour: 14, minute: 0 }, true)]
+    #[case(Time { hour: 23, minute: 0 }, true)]
     fn has_sun_risen(#[case] time: Time, #[case] expected: bool) {
         // Sunrise at given location and date: 2000-08-04T06:09:31+02:00
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
@@ -799,9 +787,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Time::new(0, 0), false)]
-    #[case(Time::new(14, 0), false)]
-    #[case(Time::new(23, 0), true)]
+    #[case(Time { hour: 0, minute: 0 }, false)]
+    #[case(Time { hour: 14, minute: 0 }, false)]
+    #[case(Time { hour: 23, minute: 0 }, true)]
     fn has_sun_set(#[case] time: Time, #[case] expected: bool) {
         // Sunset at given location and date: 2000-08-04T21:26:42+02:00
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
@@ -822,9 +810,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Time::new(0, 0), false)]
-    #[case(Time::new(14, 0), true)]
-    #[case(Time::new(23, 0), false)]
+    #[case(Time { hour: 0, minute: 0 }, false)]
+    #[case(Time { hour: 14, minute: 0 }, true)]
+    #[case(Time { hour: 23, minute: 0 }, false)]
     fn is_daytime(#[case] time: Time, #[case] expected: bool) {
         // Sunrise and sunset at given location and date: 2000-08-04T06:09:31+02:00 and 2000-08-04T21:26:42+02:00
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
@@ -845,9 +833,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Time::new(0, 0), true)]
-    #[case(Time::new(14, 0), false)]
-    #[case(Time::new(23, 0), true)]
+    #[case(Time { hour: 0, minute: 0 }, true)]
+    #[case(Time { hour: 14, minute: 0 }, false)]
+    #[case(Time { hour: 23, minute: 0 }, true)]
     fn is_nighttime(#[case] time: Time, #[case] expected: bool) {
         // Sunrise and sunset at given location and date: 2000-08-04T06:09:31+02:00 and 2000-08-04T21:26:42+02:00
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
