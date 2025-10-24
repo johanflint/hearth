@@ -1,9 +1,10 @@
 use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
 use crate::domain::{Number, Weekday};
+use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
 use Weekday::*;
-use chrono::{Datelike, NaiveTime, TimeZone};
+use chrono::NaiveTime;
 use serde::Deserialize;
 use std::cmp::Ordering;
 use thiserror::Error;
@@ -79,24 +80,6 @@ impl WeekdayCondition {
             WeekdayCondition::Set(days) => days.clone(),
             WeekdayCondition::Weekdays => vec![Monday, Tuesday, Wednesday, Thursday, Friday],
             WeekdayCondition::Weekend => vec![Saturday, Sunday],
-        }
-    }
-}
-
-pub trait ToWeekday {
-    fn to_weekday(&self) -> Weekday;
-}
-
-impl<Tz: TimeZone> ToWeekday for chrono::DateTime<Tz> {
-    fn to_weekday(&self) -> Weekday {
-        match self.weekday() {
-            chrono::Weekday::Mon => Monday,
-            chrono::Weekday::Tue => Tuesday,
-            chrono::Weekday::Wed => Wednesday,
-            chrono::Weekday::Thu => Thursday,
-            chrono::Weekday::Fri => Friday,
-            chrono::Weekday::Sat => Saturday,
-            chrono::Weekday::Sun => Sunday,
         }
     }
 }
