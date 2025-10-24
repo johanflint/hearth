@@ -1,4 +1,5 @@
-use crate::flow_engine::{Schedule, WeekdayCondition};
+use crate::domain::WeekdayCondition;
+use crate::flow_engine::Schedule;
 use serde::de::{Error, Unexpected};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;

@@ -1,6 +1,5 @@
-use crate::domain::GeoLocation;
+use crate::domain::{GeoLocation, WeekdayCondition};
 use crate::extensions::date_time_ext::ToWeekday;
-use crate::flow_engine::WeekdayCondition;
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use std::fmt::{Display, Formatter};
 use std::ops::Add;

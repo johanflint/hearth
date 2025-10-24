@@ -8,7 +8,9 @@ mod geo_location;
 mod number;
 pub mod property;
 mod weekday;
+mod weekday_condition;
 
 pub use geo_location::GeoLocation;
 pub use number::Number;
 pub use weekday::Weekday;
+pub use weekday_condition::WeekdayCondition;
