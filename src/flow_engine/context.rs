@@ -11,16 +11,8 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(snapshot: StoreSnapshot, location: GeoLocation) -> Self {
-        Context {
-            snapshot,
-            now: Local::now(),
-            location,
-        }
-    }
-
-    pub fn new_with_now(snapshot: StoreSnapshot, now: DateTime<Local>, location: GeoLocation) -> Self {
-        Context { snapshot, now, location }
+    pub fn builder() -> ContextBuilder {
+        ContextBuilder::default()
     }
 
     pub fn snapshot(&self) -> &StoreSnapshot {
@@ -48,5 +40,37 @@ impl Context {
             .with_altitude(self.location.altitude)
             .event_time(event)
             .with_timezone(&Local)
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct ContextBuilder {
+    snapshot: Option<StoreSnapshot>,
+    now: Option<DateTime<Local>>,
+    location: Option<GeoLocation>,
+}
+
+impl ContextBuilder {
+    pub fn snapshot(mut self, snapshot: StoreSnapshot) -> Self {
+        self.snapshot = Some(snapshot);
+        self
+    }
+
+    pub fn now(mut self, now: DateTime<Local>) -> Self {
+        self.now = Some(now);
+        self
+    }
+
+    pub fn location(mut self, location: GeoLocation) -> Self {
+        self.location = Some(location);
+        self
+    }
+
+    pub fn build(self) -> Context {
+        Context {
+            snapshot: self.snapshot.unwrap_or_default(),
+            now: self.now.unwrap_or_else(Local::now),
+            location: self.location.unwrap_or_default(),
+        }
     }
 }
