@@ -7,6 +7,8 @@ pub mod events;
 mod geo_location;
 mod number;
 pub mod property;
+mod weekday;
 
 pub use geo_location::GeoLocation;
 pub use number::Number;
+pub use weekday::Weekday;

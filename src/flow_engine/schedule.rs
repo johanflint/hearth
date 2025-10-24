@@ -152,7 +152,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flow_engine::Weekday::*;
+    use crate::domain::Weekday::*;
     use chrono::{Datelike, NaiveDate};
     use pretty_assertions::assert_eq;
 

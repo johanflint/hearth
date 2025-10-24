@@ -1,4 +1,5 @@
-use crate::flow_engine::{Weekday, WeekdayCondition};
+use crate::domain::Weekday;
+use crate::flow_engine::WeekdayCondition;
 use serde::de::{SeqAccess, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, de};
 use std::fmt::Formatter;

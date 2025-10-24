@@ -13,6 +13,6 @@ pub use context::Context;
 pub use engine::FlowEngineError;
 pub use engine::FlowExecutionReport;
 pub use engine::execute;
-pub use expression::{Expression, Time, Value, Weekday, WeekdayCondition};
+pub use expression::{Expression, Time, Value, WeekdayCondition};
 pub use schedule::Schedule;
 pub use scheduler::{SchedulerCommand, scheduler};

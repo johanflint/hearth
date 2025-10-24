@@ -39,7 +39,7 @@ impl<'de> Deserialize<'de> for Schedule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flow_engine::Weekday::*;
+    use crate::domain::Weekday::*;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use serde_json::json;
