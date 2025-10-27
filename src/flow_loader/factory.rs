@@ -29,10 +29,10 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
 
     while let Some(serialized_node) = nodes_to_visit.pop_back() {
         let incoming_nodes: Vec<SerializedFlowNode> = nodes._extract_if(|node| match node {
-            SerializedFlowNode::StartNode(node) => node.outgoing_node == serialized_node.id(),
+            SerializedFlowNode::StartNode(node) => node.outgoing_node.node_id == serialized_node.id(),
             SerializedFlowNode::EndNode(_) => false,
-            SerializedFlowNode::ActionNode(node) => node.outgoing_node == serialized_node.id(),
-            SerializedFlowNode::SleepNode(node) => node.outgoing_node == serialized_node.id(),
+            SerializedFlowNode::ActionNode(node) => node.outgoing_node.node_id == serialized_node.id(),
+            SerializedFlowNode::SleepNode(node) => node.outgoing_node.node_id == serialized_node.id(),
         });
 
         if !matches!(serialized_node, SerializedFlowNode::StartNode(_)) && incoming_nodes.is_empty() {
@@ -79,16 +79,18 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
 }
 
 fn map_outgoing_nodes(serialized_node: &SerializedFlowNode, flow_node_map: &HashMap<String, Arc<FlowNode>>) -> Result<Vec<FlowLink>, FlowFactoryError> {
-    if let Some(outgoing_node_id) = serialized_node.outgoing_nodes() {
-        let node = flow_node_map.get(outgoing_node_id).ok_or_else(|| FlowFactoryError::MissingNode {
-            node_id: serialized_node.id().to_owned(),
-            outgoing_node_id: outgoing_node_id.to_owned(),
-        })?;
+    serialized_node
+        .outgoing_nodes()
+        .iter()
+        .map(|&flow_link| {
+            let node = flow_node_map.get(&flow_link.node_id).ok_or_else(|| FlowFactoryError::MissingNode {
+                node_id: serialized_node.id().to_owned(),
+                outgoing_node_id: flow_link.node_id.clone(),
+            })?;
 
-        return Ok(vec![FlowLink::new(node.clone(), None)]);
-    }
-
-    Ok(Vec::new())
+            Ok(FlowLink::new(node.clone(), None))
+        })
+        .collect()
 }
 
 // Must own serialized_node so the contents can be moved to avoid copying data
