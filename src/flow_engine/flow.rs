@@ -91,12 +91,11 @@ impl FlowNode {
 #[derive(Debug)]
 pub struct FlowLink {
     node: Arc<FlowNode>,
-    #[allow(dead_code)]
-    value: Option<String>,
+    value: Value,
 }
 
 impl FlowLink {
-    pub fn new(node: Arc<FlowNode>, value: Option<String>) -> Self {
+    pub fn new(node: Arc<FlowNode>, value: Value) -> Self {
         FlowLink { node, value }
     }
 

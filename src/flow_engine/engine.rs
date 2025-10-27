@@ -161,11 +161,11 @@ mod tests {
         let action = LogAction::new("Hello".to_string());
         let log_node = FlowNode::new(
             "log_node".to_string(),
-            vec![FlowLink::new(Arc::new(end_node), None)],
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(action))),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(log_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(log_node), Value::None)], FlowNodeKind::Start);
         let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
@@ -220,11 +220,11 @@ mod tests {
 
         let sleep_node = FlowNode::new(
             "sleep_node".to_string(),
-            vec![FlowLink::new(Arc::new(end_node), None)],
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Sleep(Duration::from_secs(42)),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), Value::None)], FlowNodeKind::Start);
         let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
@@ -246,11 +246,15 @@ mod tests {
 
         let sleep_node = Arc::new(FlowNode::new(
             "sleep_node".to_string(),
-            vec![FlowLink::new(end_node.clone(), None)],
+            vec![FlowLink::new(end_node.clone(), Value::None)],
             FlowNodeKind::Sleep(Duration::from_secs(42)),
         ));
 
-        let start_node = Arc::new(FlowNode::new("startNode".to_string(), vec![FlowLink::new(sleep_node.clone(), None)], FlowNodeKind::Start));
+        let start_node = Arc::new(FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(sleep_node.clone(), Value::None)],
+            FlowNodeKind::Start,
+        ));
         let nodes_by_id = HashMap::from([
             (start_node.id().to_string(), start_node.clone()),
             (sleep_node.id().to_string(), sleep_node.clone()),

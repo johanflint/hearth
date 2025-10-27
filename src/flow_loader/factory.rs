@@ -88,7 +88,7 @@ fn map_outgoing_nodes(serialized_node: &SerializedFlowNode, flow_node_map: &Hash
                 outgoing_node_id: flow_link.node_id.clone(),
             })?;
 
-            Ok(FlowLink::new(node.clone(), None))
+            Ok(FlowLink::new(node.clone(), flow_link.value.clone()))
         })
         .collect()
 }
@@ -149,6 +149,7 @@ pub enum FlowFactoryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
     use pretty_assertions::assert_eq;
@@ -202,7 +203,7 @@ mod tests {
         let flow = from_json(json).unwrap();
 
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(end_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(end_node), Value::None)], FlowNodeKind::Start);
 
         let expected = Flow::new(
             "01K7KK65D87SZGGZE7VB8QYT20".to_string(),
@@ -225,11 +226,11 @@ mod tests {
 
         let action_node = FlowNode::new(
             "logNode".to_string(),
-            vec![FlowLink::new(Arc::new(end_node), None)],
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(LogAction::new("Action is triggered".to_string())))),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), Value::None)], FlowNodeKind::Start);
 
         let expected = Flow::new(
             "01K7KK6H5R7Y72QJEJSJQCKMRQ".to_string(),
@@ -252,14 +253,14 @@ mod tests {
 
         let action_node = FlowNode::new(
             "controlNode".to_string(),
-            vec![FlowLink::new(Arc::new(end_node), None)],
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(
                 "42".to_string(),
                 HashMap::from([("fan".to_string(), SetBooleanValue(true))]),
             )))),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), Value::None)], FlowNodeKind::Start);
 
         let expected = Flow::new(
             "01K7KK5FC54SN8D4QYVNEGFYG4".to_string(),
@@ -282,11 +283,11 @@ mod tests {
 
         let sleep_node = FlowNode::new(
             "sleepNode".to_string(),
-            vec![FlowLink::new(Arc::new(end_node), None)],
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Sleep(Duration::from_secs(3907)),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), Value::None)], FlowNodeKind::Start);
 
         let expected = Flow::new(
             "01K7KK7E6GG26XZZDXSGFZCWQ4".to_string(),
