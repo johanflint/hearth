@@ -22,8 +22,11 @@ impl<'de> Deserialize<'de> for Schedule {
             }
             Value::Object(map) => {
                 let event = map.get("event").and_then(|v| v.as_str()).ok_or_else(|| Error::custom("missing or invalid field 'event'"))?;
-                let when_value = map.get("when").ok_or_else(|| Error::custom("missing or invalid field 'when'"))?;
-                let when = WeekdayCondition::deserialize(when_value).map_err(Error::custom)?;
+                let when_value = map.get("when");
+                let when = match when_value {
+                    Some(v) => WeekdayCondition::deserialize(v).map_err(Error::custom)?,
+                    None => WeekdayCondition::Any,
+                };
                 let offset = map.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
 
                 match event {
@@ -90,6 +93,12 @@ mod tests {
         }),
         Schedule::Sunrise { when: WeekdayCondition::Range { start: Wednesday, end: Saturday }, offset: 0 }
     )]
+    #[case::without_when(
+        json!({
+            "event": "sunrise"
+        }),
+        Schedule::Sunrise { when: WeekdayCondition::Any, offset: 0 }
+    )]
     fn deserializes_valid_values(#[case] json: Value, #[case] expected: Schedule) {
         let parsed: Schedule = serde_json::from_value(json).unwrap();
         assert_eq!(parsed, expected);
@@ -101,12 +110,6 @@ mod tests {
             "when": "Wednesday-Saturday"
         }),
         "missing or invalid field 'event'"
-    )]
-    #[case::no_when(
-        json!({
-            "event": "sunrise",
-        }),
-        "missing or invalid field 'when'"
     )]
     #[case::unknown_event(
         json!({

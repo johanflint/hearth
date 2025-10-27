@@ -9,6 +9,7 @@ pub enum WeekdayCondition {
     Set(Vec<Weekday>),
     Weekdays,
     Weekend,
+    Any,
 }
 
 impl WeekdayCondition {
@@ -25,6 +26,7 @@ impl WeekdayCondition {
             WeekdayCondition::Set(days) => days.clone(),
             WeekdayCondition::Weekdays => vec![Monday, Tuesday, Wednesday, Thursday, Friday],
             WeekdayCondition::Weekend => vec![Saturday, Sunday],
+            WeekdayCondition::Any => vec![Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday],
         }
     }
 }
@@ -48,6 +50,9 @@ impl Display for WeekdayCondition {
             WeekdayCondition::Weekend => {
                 write!(f, "weekend")
             }
+            WeekdayCondition::Any => {
+                write!(f, "any")
+            }
         }
     }
 }
@@ -70,6 +75,7 @@ mod tests {
     #[case::set(WeekdayCondition::Set(vec![Tuesday, Wednesday, Friday]), "Tuesday, Wednesday, Friday")]
     #[case::weekdays(WeekdayCondition::Weekdays, "weekdays")]
     #[case::weekend(WeekdayCondition::Weekend, "weekend")]
+    #[case::weekend(WeekdayCondition::Any, "any")]
     fn test_display(#[case] condition: WeekdayCondition, #[case] expected: &str) {
         assert_eq!(format!("{}", condition), expected);
     }
