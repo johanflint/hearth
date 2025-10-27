@@ -1,9 +1,9 @@
-use crate::domain::Number;
 use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
+use crate::domain::{Number, Time, WeekdayCondition};
+use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
-use Weekday::*;
-use chrono::{Datelike, NaiveTime, TimeZone};
+use chrono::NaiveTime;
 use serde::Deserialize;
 use std::cmp::Ordering;
 use thiserror::Error;
@@ -54,92 +54,6 @@ pub enum TemporalExpression {
     HasSunSet,   // Now >= sunset
     IsDaytime,   // Now between sunrise and sunset
     IsNighttime, // Now < sunrise or now > sunset
-}
-
-#[derive(PartialEq, Debug)]
-pub enum WeekdayCondition {
-    Specific(Weekday),
-    Range { start: Weekday, end: Weekday },
-    Set(Vec<Weekday>),
-    Weekdays,
-    Weekend,
-}
-
-impl WeekdayCondition {
-    fn included_days(&self) -> Vec<Weekday> {
-        match self {
-            WeekdayCondition::Specific(day) => vec![day.clone()],
-            WeekdayCondition::Range { start, end } => {
-                let all = Weekday::all();
-                let start_index = start.as_index();
-                let end_index = end.as_index();
-
-                all[start_index..=end_index].to_vec()
-            }
-            WeekdayCondition::Set(days) => days.clone(),
-            WeekdayCondition::Weekdays => vec![Monday, Tuesday, Wednesday, Thursday, Friday],
-            WeekdayCondition::Weekend => vec![Saturday, Sunday],
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, Debug, Clone)]
-pub enum Weekday {
-    Monday,
-    Tuesday,
-    Wednesday,
-    Thursday,
-    Friday,
-    Saturday,
-    Sunday,
-}
-
-impl Weekday {
-    pub fn as_index(&self) -> usize {
-        match self {
-            Monday => 0,
-            Tuesday => 1,
-            Wednesday => 2,
-            Thursday => 3,
-            Friday => 4,
-            Saturday => 5,
-            Sunday => 6,
-        }
-    }
-
-    pub fn all() -> [Weekday; 7] {
-        [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
-    }
-}
-
-trait ToWeekday {
-    fn to_weekday(&self) -> Weekday;
-}
-
-impl<Tz: TimeZone> ToWeekday for chrono::DateTime<Tz> {
-    fn to_weekday(&self) -> Weekday {
-        match self.weekday() {
-            chrono::Weekday::Mon => Monday,
-            chrono::Weekday::Tue => Tuesday,
-            chrono::Weekday::Wed => Wednesday,
-            chrono::Weekday::Thu => Thursday,
-            chrono::Weekday::Fri => Friday,
-            chrono::Weekday::Sat => Saturday,
-            chrono::Weekday::Sun => Sunday,
-        }
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct Time {
-    hour: u8,
-    minute: u8,
-}
-
-impl Time {
-    pub fn new(hour: u8, minute: u8) -> Self {
-        Self { hour, minute }
-    }
 }
 
 pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, ExpressionError> {
@@ -310,9 +224,11 @@ pub enum ExpressionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::GeoLocation;
+    use crate::domain::Weekday::*;
     use crate::domain::device::{Device, DeviceType};
     use crate::domain::property::{CartesianCoordinate, ColorProperty, Gamut, Property, Unit};
+    use crate::domain::{GeoLocation, Weekday};
+    use crate::flow_engine::context::ContextBuilder;
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
     use crate::flow_engine::expression::TemporalExpression::{HasSunRisen, HasSunSet, IsAfterTime, IsBeforeTime, IsDaytime, IsNighttime, IsToday};
@@ -322,8 +238,12 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    fn context() -> Context {
-        Context::default()
+    fn context_with_location() -> ContextBuilder {
+        Context::builder().location(GeoLocation {
+            latitude: 51.9244,
+            longitude: 4.4777,
+            altitude: 0.0,
+        })
     }
 
     fn device() -> Device {
@@ -400,7 +320,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Number(lhs) }),
                 rhs: Box::new(Literal { value: Value::Number(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -423,7 +343,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Number(lhs) }),
                 rhs: Box::new(Literal { value: Value::Number(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -446,7 +366,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Number(lhs) }),
                 rhs: Box::new(Literal { value: Value::Number(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -469,7 +389,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Number(lhs) }),
                 rhs: Box::new(Literal { value: Value::Number(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -492,7 +412,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Number(lhs) }),
                 rhs: Box::new(Literal { value: Value::Number(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -506,7 +426,7 @@ mod tests {
                 lhs: Box::new(Literal { value: lhs }),
                 rhs: Box::new(Literal { value: rhs }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
 
@@ -524,7 +444,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
                 rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -549,7 +469,7 @@ mod tests {
                 lhs: Box::new(Literal { value: lhs }),
                 rhs: Box::new(Literal { value: rhs }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap_err();
         assert_eq!(result, expected);
@@ -572,7 +492,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Number(lhs) }),
                 rhs: Box::new(Literal { value: Value::Number(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -586,7 +506,7 @@ mod tests {
                 lhs: Box::new(Literal { value: lhs }),
                 rhs: Box::new(Literal { value: rhs }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
 
@@ -604,7 +524,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
                 rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -629,7 +549,7 @@ mod tests {
                 lhs: Box::new(Literal { value: lhs }),
                 rhs: Box::new(Literal { value: rhs }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap_err();
         assert_eq!(result, expected);
@@ -646,7 +566,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
                 rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -677,7 +597,7 @@ mod tests {
                 lhs: Box::new(Literal { value: lhs }),
                 rhs: Box::new(Literal { value: rhs }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap_err();
         assert_eq!(result, expected);
@@ -694,7 +614,7 @@ mod tests {
                 lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
                 rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -725,7 +645,7 @@ mod tests {
                 lhs: Box::new(Literal { value: lhs }),
                 rhs: Box::new(Literal { value: rhs }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap_err();
         assert_eq!(result, expected);
@@ -739,7 +659,7 @@ mod tests {
             &Not {
                 expression: Box::new(Literal { value: Value::Boolean(value) }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -761,7 +681,7 @@ mod tests {
             &Not {
                 expression: Box::new(Literal { value }),
             },
-            &context(),
+            &Context::default(),
         )
         .unwrap_err();
         assert_eq!(result, expected);
@@ -788,7 +708,7 @@ mod tests {
                 device_id: device_id.to_string(),
                 property_id: property_id.to_string(),
             },
-            &Context::new(snapshot, GeoLocation::default()),
+            &Context::builder().snapshot(snapshot).build(),
         );
 
         assert_eq!(result, expected);
@@ -810,133 +730,83 @@ mod tests {
                     when: WeekdayCondition::Specific(weekday),
                 },
             },
-            &Context::new_with_now(StoreSnapshot::default(), fixed_date_time, GeoLocation::default()),
+            &Context::builder().now(fixed_date_time).build(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
     #[rstest]
-    #[case::midnight(Time::new(0, 0), false)]
-    #[case::before_time(Time::new(11, 59), false)]
-    #[case::same_time(Time::new(12, 0), false)]
-    #[case::after_time(Time::new(12, 1), true)]
-    #[case::before_midnight(Time::new(23, 59), true)]
+    #[case::midnight(Time { hour: 0, minute: 0 }, false)]
+    #[case::before_time(Time { hour: 11, minute: 59 }, false)]
+    #[case::same_time(Time { hour: 12, minute: 0 }, false)]
+    #[case::after_time(Time { hour: 12, minute: 1 }, true)]
+    #[case::before_midnight(Time { hour: 23, minute: 59 }, true)]
     fn is_before_time(#[case] time: Time, #[case] expected: bool) {
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap();
-        let result = evaluate(
-            &Temporal { expression: IsBeforeTime { time } },
-            &Context::new_with_now(StoreSnapshot::default(), fixed_date_time, GeoLocation::default()),
-        )
-        .unwrap();
+        let context = &context_with_location().now(fixed_date_time).build();
+        let result = evaluate(&Temporal { expression: IsBeforeTime { time } }, &context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
     #[rstest]
-    #[case::midnight(Time::new(0, 0), true)]
-    #[case::before_time(Time::new(11, 59), true)]
-    #[case::same_time(Time::new(12, 0), false)]
-    #[case::after_time(Time::new(12, 1), false)]
-    #[case::before_midnight(Time::new(23, 59), false)]
+    #[case::midnight(Time { hour: 0, minute: 0 }, true)]
+    #[case::before_time(Time { hour: 11, minute: 59 }, true)]
+    #[case::same_time(Time { hour: 12, minute: 0 }, false)]
+    #[case::after_time(Time { hour: 12, minute: 1 }, false)]
+    #[case::before_midnight(Time { hour: 23, minute: 59 }, false)]
     fn is_after_time(#[case] time: Time, #[case] expected: bool) {
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap();
-        let result = evaluate(
-            &Temporal { expression: IsAfterTime { time } },
-            &Context::new_with_now(StoreSnapshot::default(), fixed_date_time, GeoLocation::default()),
-        )
-        .unwrap();
+        let context = &context_with_location().now(fixed_date_time).build();
+        let result = evaluate(&Temporal { expression: IsAfterTime { time } }, &context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
     #[rstest]
-    #[case(Time::new(0, 0), false)]
-    #[case(Time::new(14, 0), true)]
-    #[case(Time::new(23, 0), true)]
+    #[case(Time { hour: 0, minute: 0 }, false)]
+    #[case(Time { hour: 14, minute: 0 }, true)]
+    #[case(Time { hour: 23, minute: 0 }, true)]
     fn has_sun_risen(#[case] time: Time, #[case] expected: bool) {
         // Sunrise at given location and date: 2000-08-04T06:09:31+02:00
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
-        let result = evaluate(
-            &Temporal { expression: HasSunRisen },
-            &Context::new_with_now(
-                StoreSnapshot::default(),
-                fixed_date_time,
-                GeoLocation {
-                    latitude: 51.9244,
-                    longitude: 4.4777,
-                    altitude: 0.0,
-                },
-            ),
-        )
-        .unwrap();
+        let context = &context_with_location().now(fixed_date_time).build();
+        let result = evaluate(&Temporal { expression: HasSunRisen }, &context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
     #[rstest]
-    #[case(Time::new(0, 0), false)]
-    #[case(Time::new(14, 0), false)]
-    #[case(Time::new(23, 0), true)]
+    #[case(Time { hour: 0, minute: 0 }, false)]
+    #[case(Time { hour: 14, minute: 0 }, false)]
+    #[case(Time { hour: 23, minute: 0 }, true)]
     fn has_sun_set(#[case] time: Time, #[case] expected: bool) {
         // Sunset at given location and date: 2000-08-04T21:26:42+02:00
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
-        let result = evaluate(
-            &Temporal { expression: HasSunSet },
-            &Context::new_with_now(
-                StoreSnapshot::default(),
-                fixed_date_time,
-                GeoLocation {
-                    latitude: 51.9244,
-                    longitude: 4.4777,
-                    altitude: 0.0,
-                },
-            ),
-        )
-        .unwrap();
+        let context = &context_with_location().now(fixed_date_time).build();
+        let result = evaluate(&Temporal { expression: HasSunSet }, &context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
     #[rstest]
-    #[case(Time::new(0, 0), false)]
-    #[case(Time::new(14, 0), true)]
-    #[case(Time::new(23, 0), false)]
+    #[case(Time { hour: 0, minute: 0 }, false)]
+    #[case(Time { hour: 14, minute: 0 }, true)]
+    #[case(Time { hour: 23, minute: 0 }, false)]
     fn is_daytime(#[case] time: Time, #[case] expected: bool) {
         // Sunrise and sunset at given location and date: 2000-08-04T06:09:31+02:00 and 2000-08-04T21:26:42+02:00
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
-        let result = evaluate(
-            &Temporal { expression: IsDaytime },
-            &Context::new_with_now(
-                StoreSnapshot::default(),
-                fixed_date_time,
-                GeoLocation {
-                    latitude: 51.9244,
-                    longitude: 4.4777,
-                    altitude: 0.0,
-                },
-            ),
-        )
-        .unwrap();
+        let context = &context_with_location().now(fixed_date_time).build();
+        let result = evaluate(&Temporal { expression: IsDaytime }, &context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
     #[rstest]
-    #[case(Time::new(0, 0), true)]
-    #[case(Time::new(14, 0), false)]
-    #[case(Time::new(23, 0), true)]
+    #[case(Time { hour: 0, minute: 0 }, true)]
+    #[case(Time { hour: 14, minute: 0 }, false)]
+    #[case(Time { hour: 23, minute: 0 }, true)]
     fn is_nighttime(#[case] time: Time, #[case] expected: bool) {
         // Sunrise and sunset at given location and date: 2000-08-04T06:09:31+02:00 and 2000-08-04T21:26:42+02:00
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
-        let result = evaluate(
-            &Temporal { expression: IsNighttime },
-            &Context::new_with_now(
-                StoreSnapshot::default(),
-                fixed_date_time,
-                GeoLocation {
-                    latitude: 51.9244,
-                    longitude: 4.4777,
-                    altitude: 0.0,
-                },
-            ),
-        )
-        .unwrap();
+        let context = &context_with_location().now(fixed_date_time).build();
+        let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 }

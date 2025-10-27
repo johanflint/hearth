@@ -1,4 +1,4 @@
-use crate::flow_engine::Time;
+use crate::domain::Time;
 use serde::de::{Error, Unexpected};
 use serde::{Deserialize, Deserializer};
 
@@ -34,7 +34,7 @@ impl<'de> Deserialize<'de> for Time {
             return Err(Error::invalid_value(Unexpected::Str(parts[0]), &"a valid minute between 0 and 59"));
         }
 
-        Ok(Time::new(hour, minute))
+        Ok(Time { hour, minute })
     }
 }
 
@@ -45,10 +45,10 @@ mod tests {
     use serde_json::json;
 
     #[rstest]
-    #[case("0:00", Time::new(0, 0))]
-    #[case("00:00", Time::new(0, 0))]
-    #[case("20:00", Time::new(20, 0))]
-    #[case("23:59", Time::new(23, 59))]
+    #[case("0:00", Time { hour: 0, minute: 0 })]
+    #[case("00:00", Time { hour: 0, minute: 0 })]
+    #[case("20:00", Time { hour: 20, minute:0 })]
+    #[case("23:59", Time { hour: 23, minute: 59 })]
     fn deserializes_valid_time(#[case] time: &str, #[case] expected: Time) {
         let result = serde_json::from_value::<Time>(json!(time)).unwrap();
         assert_eq!(result, expected);

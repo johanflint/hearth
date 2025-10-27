@@ -1,4 +1,4 @@
-use crate::flow_engine::{Weekday, WeekdayCondition};
+use crate::domain::{Weekday, WeekdayCondition};
 use serde::de::{SeqAccess, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, de};
 use std::fmt::Formatter;
@@ -25,6 +25,7 @@ impl<'de> Deserialize<'de> for WeekdayCondition {
                 match value.as_str() {
                     "weekdays" => Ok(WeekdayCondition::Weekdays),
                     "weekend" => Ok(WeekdayCondition::Weekend),
+                    "any" => Ok(WeekdayCondition::Any),
                     _ => {
                         // Handle "Mon-Fri" or a single "Mon"
                         if let Some((start, end)) = value.split_once('-') {
@@ -99,6 +100,7 @@ mod tests {
     }
 
     #[rstest]
+    #[case::empty(vec![], WeekdayCondition::Set(vec![]))]
     #[case::two_days(vec!["Mon", "Wed"], WeekdayCondition::Set(vec![Monday, Wednesday]))]
     #[case::duplicates(vec!["Mon", "Wed", "Wed"], WeekdayCondition::Set(vec![Monday, Wednesday]))]
     fn deserialize_set(#[case] json: Vec<&str>, #[case] expected: WeekdayCondition) {

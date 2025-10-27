@@ -1,4 +1,4 @@
-use crate::flow_engine::Weekday;
+use crate::domain::Weekday;
 use serde::{Deserialize, Deserializer};
 
 impl<'de> Deserialize<'de> for Weekday {

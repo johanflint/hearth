@@ -2,9 +2,7 @@ use crate::domain::GeoLocation;
 use crate::execute_flows::{execute_flow, execute_flows};
 use crate::flow_registry::FlowRegistry;
 use crate::store::StoreSnapshot;
-use chrono::Utc;
-use cron::Schedule;
-use std::str::FromStr;
+use chrono::Local;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -38,27 +36,20 @@ pub async fn scheduler(
                 let flow_name = flow.name().to_string();
                 debug!("🕗 Scheduling flow '{}'...", flow_name);
 
-                if flow.schedule().is_none() {
+                let Some(schedule) = flow.schedule() else {
                     error!("🕗 Scheduling flow '{}'... failed, not a scheduled flow", flow.name());
                     continue;
-                }
-
-                let cron = flow.schedule().unwrap().to_string(); // Safe because of the match guard
-                let schedule = match Schedule::from_str(&cron) {
-                    Ok(schedule) => schedule,
-                    Err(_e) => {
-                        warn!("🕗 Scheduling flow '{}'... failed, invalid cron expression '{}'", flow.name(), cron);
-                        continue;
-                    }
                 };
+
+                let schedule_str = schedule.to_string();
 
                 // Job loop
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
                 let geo_location_clone = geo_location.clone();
                 tokio::spawn(async move {
-                    for datetime in schedule.upcoming(Utc) {
-                        let duration = datetime.signed_duration_since(Utc::now());
+                    for datetime in schedule.upcoming(Local, geo_location_clone.clone()) {
+                        let duration = datetime.signed_duration_since(Local::now());
                         if duration.num_milliseconds() < 0 {
                             continue; // Already passed
                         }
@@ -66,12 +57,12 @@ pub async fn scheduler(
                         let scheduled_instant = Instant::now() + Duration::from_millis(duration.num_milliseconds() as u64);
                         sleep_until(scheduled_instant).await;
 
-                        debug!(cron, "🕗 Running scheduled flow '{}'...", flow.name());
+                        debug!("🕗 Running scheduled flow '{}'...", flow.name());
                         let snapshot = notifier_rx_clone.borrow().clone();
                         execute_flows(vec![flow.clone()], snapshot, tx_clone.clone(), geo_location_clone.clone()).await;
                     }
                 });
-                info!("🕗 Scheduling flow '{}'... OK", flow_name);
+                info!(schedule = schedule_str, "🕗 Scheduling flow '{}'... OK", flow_name);
             }
             SchedulerCommand::ScheduleOnce { flow_id, node_id, delay } => {
                 let Some(flow) = flow_registry.by_id(&flow_id) else {

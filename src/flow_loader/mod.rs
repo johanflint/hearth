@@ -2,6 +2,7 @@ mod color_deserializer;
 mod factory;
 mod loader;
 mod property_value_deserializer;
+mod schedule_deserializer;
 pub(in crate::flow_loader) mod serialized_flow;
 mod time_deserializer;
 mod value_deserializer;
