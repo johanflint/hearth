@@ -108,6 +108,7 @@ impl FlowLink {
 pub enum FlowNodeKind {
     Start,
     End,
+    Conditional(Expression),
     Action(ActionFlowNode),
     Sleep(Duration),
 }

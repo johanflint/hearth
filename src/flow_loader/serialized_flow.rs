@@ -17,6 +17,7 @@ pub struct SerializedFlow {
 pub enum SerializedFlowNode {
     StartNode(SerializedStartFlowNode),
     EndNode(SerializedEndFlowNode),
+    ConditionalNode(SerializedConditionalFlowNode),
     ActionNode(SerializedActionFlowNode),
     SleepNode(SerializedSleepFlowNode),
 }
@@ -26,6 +27,7 @@ impl SerializedFlowNode {
         match self {
             SerializedFlowNode::StartNode(node) => &node.id,
             SerializedFlowNode::EndNode(node) => &node.id,
+            SerializedFlowNode::ConditionalNode(node) => &node.id,
             SerializedFlowNode::ActionNode(node) => &node.id,
             SerializedFlowNode::SleepNode(node) => &node.id,
         }
@@ -35,6 +37,7 @@ impl SerializedFlowNode {
         match self {
             SerializedFlowNode::StartNode(node) => vec![&node.outgoing_node],
             SerializedFlowNode::EndNode(_) => vec![],
+            SerializedFlowNode::ConditionalNode(node) => node.outgoing_nodes.iter().collect(),
             SerializedFlowNode::ActionNode(node) => vec![&node.outgoing_node],
             SerializedFlowNode::SleepNode(node) => vec![&node.outgoing_node],
         }
@@ -51,6 +54,14 @@ pub struct SerializedStartFlowNode {
 #[derive(Debug, Deserialize)]
 pub struct SerializedEndFlowNode {
     pub(crate) id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub struct SerializedConditionalFlowNode {
+    pub(crate) id: String,
+    pub(crate) outgoing_nodes: Vec<SerializedFlowLink>,
+    pub(crate) expression: Expression,
 }
 
 #[derive(PartialEq, Debug)]

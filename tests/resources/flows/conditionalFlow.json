@@ -1,0 +1,37 @@
+{
+  "id": "01K8JSTTCC831M6TERRH41D595",
+  "name": "conditionalFlow",
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "conditionalNode"
+    },
+    {
+      "id": "conditionalNode",
+      "type": "conditionalNode",
+      "outgoingNodes": [
+        {
+          "value": true,
+          "node": "endNodeTrue"
+        },
+        {
+          "value": false,
+          "node": "endNodeFalse"
+        }
+      ],
+      "expression": {
+        "type": "literal",
+        "value": 42.0
+      }
+    },
+    {
+      "id": "endNodeTrue",
+      "type": "endNode"
+    },
+    {
+      "id": "endNodeFalse",
+      "type": "endNode"
+    }
+  ]
+}
