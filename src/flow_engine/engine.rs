@@ -11,7 +11,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 #[instrument(fields(flow = flow.name()), skip_all)]
 pub async fn execute(flow: &Flow, node_id: Option<String>, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
@@ -75,6 +75,32 @@ async fn execute_node<'a>(node: &'a FlowNode, context: &Context, scope: &mut Sco
             action_flow_node.action().execute(context, scope).await;
             node.outgoing_nodes().first()
         }
+        FlowNodeKind::Conditional(expression) => {
+            debug!(?expression, "⚖️ Evaluating conditional node '{}'...", node.id());
+            let result = evaluate(expression, context);
+            match result {
+                Ok(value) => {
+                    let flow_link = node.outgoing_nodes().iter().find(|link| *link.value() == value);
+                    if flow_link.is_none() {
+                        error!(expression_result = ?value, "⚖️ Evaluating conditional node '{}'... failed, next node not found", node.id());
+                        return Err(FlowEngineError::NoMatchingFlowLink {
+                            node_id: node.id().to_string(),
+                            evaluated_value: value,
+                        });
+                    }
+
+                    info!(result = ?value, "⚖️ Evaluating conditional node '{}'... OK, link found", node.id());
+                    flow_link
+                }
+                Err(error) => {
+                    warn!("⚖️ Evaluating conditional node '{}'... failed, {}", node.id(), error);
+                    return Err(FlowEngineError::FailedConditionalExpressionEvaluation {
+                        node_id: node.id().to_string(),
+                        error,
+                    });
+                }
+            }
+        }
         _ => node.outgoing_nodes().first(),
     };
 
@@ -107,12 +133,17 @@ pub enum FlowEngineError {
     MissingOutgoingNode(String),
     #[error("evaluation of the flow trigger failed: {0}")]
     FailedTriggerEvaluation(ExpressionError),
+    #[error("evaluation of the expression in the conditional node '{node_id}' failed: {error}")]
+    FailedConditionalExpressionEvaluation { node_id: String, error: ExpressionError },
+    #[error("node '{node_id}' evaluated to '{:?}', but no matching outgoing link was found", evaluated_value)]
+    NoMatchingFlowLink { node_id: String, evaluated_value: Value },
     #[error(transparent)]
     FailedScheduleSleepCommand(#[from] SendError<SchedulerCommand>),
     #[error("missing provided start node '{0}'")]
     MissingProvidedStartNode(String),
 }
 
+#[derive(Debug)]
 pub struct FlowExecutionReport {
     scope: HashMap<String, Box<dyn Any + Send + Sync>>,
     duration: Duration,
@@ -147,7 +178,8 @@ impl FlowExecutionReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flow_engine::Expression;
+    use crate::domain::Number;
+    use crate::flow_engine::Expression::Literal;
     use crate::flow_engine::action::LogAction;
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNodeKind};
     use std::sync::Arc;
@@ -180,7 +212,7 @@ mod tests {
             "id".to_string(),
             "flow".to_string(),
             None,
-            Some(Expression::Literal { value: Value::Boolean(false) }),
+            Some(Literal { value: Value::Boolean(false) }),
             Arc::new(start_node),
             HashMap::new(),
         )
@@ -245,7 +277,7 @@ mod tests {
         let end_node = Arc::new(FlowNode::new("end_node".to_string(), vec![], FlowNodeKind::End));
 
         let sleep_node = Arc::new(FlowNode::new(
-            "sleep_node".to_string(),
+            "sleepNode".to_string(),
             vec![FlowLink::new(end_node.clone(), Value::None)],
             FlowNodeKind::Sleep(Duration::from_secs(42)),
         ));
@@ -268,5 +300,76 @@ mod tests {
         // Ensure that nothing was scheduled
         assert!(scheduler_rx.try_recv().is_err(), "Expected no scheduler commands to be sent");
         assert!(result.scope.is_empty());
+    }
+
+    #[test(tokio::test)]
+    async fn executes_a_conditional_node() {
+        let end_node_true = Arc::new(FlowNode::new("end_node_true".to_string(), vec![], FlowNodeKind::End));
+        let end_node_false = Arc::new(FlowNode::new("end_node_false".to_string(), vec![], FlowNodeKind::End));
+
+        let conditional_node = Arc::new(FlowNode::new(
+            "conditionalNode".to_string(),
+            vec![
+                FlowLink::new(end_node_true.clone(), Value::Boolean(true)),
+                FlowLink::new(end_node_false.clone(), Value::Boolean(false)),
+            ],
+            FlowNodeKind::Conditional(Literal { value: Value::Boolean(true) }),
+        ));
+
+        let start_node = Arc::new(FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(conditional_node.clone(), Value::None)],
+            FlowNodeKind::Start,
+        ));
+        let nodes_by_id = HashMap::from([
+            (start_node.id().to_string(), start_node.clone()),
+            (conditional_node.id().to_string(), conditional_node.clone()),
+            (end_node_true.id().to_string(), end_node_true.clone()),
+            (end_node_false.id().to_string(), end_node_false.clone()),
+        ]);
+        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node, nodes_by_id).unwrap();
+
+        let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
+        let result = execute(&flow, None, &Context::default(), scheduler_tx).await.unwrap();
+
+        assert!(scheduler_rx.try_recv().is_err(), "Expected no scheduler commands to be sent");
+        assert!(result.scope.is_empty());
+        println!("{:?}", result);
+    }
+
+    #[test(tokio::test)]
+    async fn fails_if_a_conditional_node_has_no_matching_link() {
+        let end_node_true = Arc::new(FlowNode::new("end_node_true".to_string(), vec![], FlowNodeKind::End));
+        let end_node_false = Arc::new(FlowNode::new("end_node_false".to_string(), vec![], FlowNodeKind::End));
+
+        let conditional_node = Arc::new(FlowNode::new(
+            "conditionalNode".to_string(),
+            vec![
+                FlowLink::new(end_node_true.clone(), Value::Number(Number::PositiveInt(42))),
+                FlowLink::new(end_node_false.clone(), Value::Boolean(false)),
+            ],
+            FlowNodeKind::Conditional(Literal {
+                value: Value::Number(Number::Float(0.1)),
+            }),
+        ));
+
+        let start_node = Arc::new(FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(conditional_node.clone(), Value::None)],
+            FlowNodeKind::Start,
+        ));
+        let nodes_by_id = HashMap::from([
+            (start_node.id().to_string(), start_node.clone()),
+            (conditional_node.id().to_string(), conditional_node.clone()),
+            (end_node_true.id().to_string(), end_node_true.clone()),
+            (end_node_false.id().to_string(), end_node_false.clone()),
+        ]);
+        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node, nodes_by_id).unwrap();
+
+        let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
+        let result = execute(&flow, None, &Context::default(), scheduler_tx).await;
+
+        assert!(scheduler_rx.try_recv().is_err(), "Expected no scheduler commands to be sent");
+        assert!(matches!(result, Err(FlowEngineError::NoMatchingFlowLink { .. })));
     }
 }

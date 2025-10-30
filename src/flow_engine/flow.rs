@@ -102,6 +102,10 @@ impl FlowLink {
     pub fn node(&self) -> &FlowNode {
         &self.node
     }
+
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
 }
 
 #[derive(Debug)]
