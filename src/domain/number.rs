@@ -13,11 +13,13 @@ pub enum Number {
 
 impl Hash for Number {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            Number::PositiveInt(v) => v.hash(state),
-            Number::NegativeInt(v) => v.hash(state),
-            Number::Float(v) => OrderedFloat(v.clone()).hash(state),
-        }
+        // Need to normalize to treat Number::Float(1.0) and Number::PositiveInt(1) as equal
+        let normalized = match self {
+            Number::PositiveInt(value) => *value as f64,
+            Number::NegativeInt(value) => *value as f64,
+            Number::Float(value) => *value,
+        };
+        OrderedFloat(normalized).hash(state);
     }
 }
 
@@ -119,27 +121,28 @@ impl PartialOrd for Number {
                 }
             }
             // Float vs Anything
-            (Number::Float(a), Number::Float(b)) => a.partial_cmp(b),
-            (Number::Float(a), Number::PositiveInt(b)) => a.partial_cmp(&(*b as f64)),
-            (Number::Float(a), Number::NegativeInt(b)) => a.partial_cmp(&(*b as f64)),
-            (Number::PositiveInt(a), Number::Float(b)) => (*a as f64).partial_cmp(b),
-            (Number::NegativeInt(a), Number::Float(b)) => (*a as f64).partial_cmp(b),
+            (Number::Float(a), Number::Float(b)) => OrderedFloat(*a).partial_cmp(&OrderedFloat(*b)),
+            (Number::Float(a), Number::PositiveInt(b)) => OrderedFloat(*a).partial_cmp(&OrderedFloat(*b as f64)),
+            (Number::Float(a), Number::NegativeInt(b)) => OrderedFloat(*a).partial_cmp(&OrderedFloat(*b as f64)),
+            (Number::PositiveInt(a), Number::Float(b)) => OrderedFloat(*a as f64).partial_cmp(&OrderedFloat(*b)),
+            (Number::NegativeInt(a), Number::Float(b)) => OrderedFloat(*a as f64).partial_cmp(&OrderedFloat(*b)),
         }
     }
 }
 
 impl PartialEq for Number {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Number::PositiveInt(a), Number::PositiveInt(b)) => a == b,
-            (Number::NegativeInt(a), Number::NegativeInt(b)) => a == b,
-            (Number::Float(a), Number::Float(b)) => a == b,
-            (Number::Float(a), Number::PositiveInt(b)) => *a == *b as f64,
-            (Number::Float(a), Number::NegativeInt(b)) => *a == *b as f64,
-            (Number::PositiveInt(a), Number::Float(b)) => *a as f64 == *b,
-            (Number::NegativeInt(a), Number::Float(b)) => *a as f64 == *b,
-            _ => false,
-        }
+        let a = match self {
+            Number::PositiveInt(value) => *value as f64,
+            Number::NegativeInt(value) => *value as f64,
+            Number::Float(value) => *value,
+        };
+        let b = match other {
+            Number::PositiveInt(value) => *value as f64,
+            Number::NegativeInt(value) => *value as f64,
+            Number::Float(value) => *value,
+        };
+        OrderedFloat(a) == OrderedFloat(b)
     }
 }
 
@@ -211,6 +214,20 @@ mod tests {
     #[case(Number::Float(42.7), Number::Float(42.7))]
     fn compare_equals(#[case] a: Number, #[case] b: Number) {
         assert_eq!(a.partial_cmp(&b), Some(Ordering::Equal));
+    }
+
+    #[rstest]
+    #[case(Number::PositiveInt(42), Number::PositiveInt(42))]
+    #[case(Number::PositiveInt(42), Number::NegativeInt(42))]
+    #[case(Number::PositiveInt(42), Number::Float(42.0))]
+    #[case(Number::NegativeInt(42), Number::PositiveInt(42))]
+    #[case(Number::NegativeInt(-42), Number::NegativeInt(-42))]
+    #[case(Number::NegativeInt(42), Number::Float(42.0))]
+    #[case(Number::Float(42.0), Number::PositiveInt(42))]
+    #[case(Number::Float(42.0), Number::NegativeInt(42))]
+    #[case(Number::Float(42.7), Number::Float(42.7))]
+    fn equals(#[case] a: Number, #[case] b: Number) {
+        assert_eq!(a, b);
     }
 
     #[rstest]
