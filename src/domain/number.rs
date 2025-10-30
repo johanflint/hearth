@@ -1,5 +1,7 @@
+use ordered_float::OrderedFloat;
 use std::cmp::Ordering;
 use std::fmt::Display;
+use std::hash::{Hash, Hasher};
 use std::ops::{Add, Sub};
 
 #[derive(Copy, Clone, Debug)]
@@ -8,6 +10,18 @@ pub enum Number {
     NegativeInt(i64),
     Float(f64),
 }
+
+impl Hash for Number {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Number::PositiveInt(v) => v.hash(state),
+            Number::NegativeInt(v) => v.hash(state),
+            Number::Float(v) => OrderedFloat(v.clone()).hash(state),
+        }
+    }
+}
+
+impl Eq for Number {}
 
 impl Number {
     pub fn as_u64(&self) -> Option<u64> {

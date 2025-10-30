@@ -1,3 +1,4 @@
+use crate::flow_engine::Value;
 use crate::flow_engine::flow::{ActionFlowNode, Flow, FlowLink, FlowNode, FlowNodeKind};
 use crate::flow_loader::serialized_flow::{SerializedFlow, SerializedFlowNode};
 use std::collections::{HashMap, VecDeque};
@@ -35,7 +36,11 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
         let out_count = node.outgoing_nodes().len();
         remaining_children.insert(id.clone(), out_count);
 
+        let mut value_to_nodes: HashMap<&Value, Vec<String>> = HashMap::new();
         for link in node.outgoing_nodes().iter() {
+            value_to_nodes.entry(&link.value).or_default().push(link.node_id.clone());
+
+            // Parent linkage check
             if let Some(prev) = child_to_parent.insert(link.node_id.clone(), id.clone()) {
                 // `prev` is the previously registered parent id
                 return Err(FlowFactoryError::TooManyParentNodes {
@@ -43,6 +48,11 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
                     parent_nodes: vec![prev, id.clone()],
                 });
             }
+        }
+
+        let duplicates: Vec<String> = value_to_nodes.values().filter(|node_ids| node_ids.len() > 1).flatten().cloned().collect();
+        if !duplicates.is_empty() {
+            return Err(FlowFactoryError::DuplicateLinkValues { node_id: id.clone(), duplicates });
         }
     }
 
@@ -153,6 +163,8 @@ pub enum FlowFactoryError {
     TooManyParentNodes { node_id: String, parent_nodes: Vec<String> },
     #[error("unused nodes: {}", nodes.join(", "))]
     UnusedNodes { nodes: Vec<String> },
+    #[error("duplicate outgoing link values for node '{node_id}', pointing to {}", duplicates.join(", "))]
+    DuplicateLinkValues { node_id: String, duplicates: Vec<String> },
 }
 
 #[cfg(test)]
@@ -218,6 +230,21 @@ mod tests {
                 assert_eq!(parent_nodes, vec!["conditionalNode", "conditionalNode"]);
             }
             other => panic!("expected FlowFactoryError::TooManyParentNodes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn returns_an_error_if_a_node_has_duplicate_link_values() {
+        assert_eq!(Value::Boolean(true), Value::Boolean(true));
+        let json = include_str!("../../tests/resources/flows/invalid/duplicateLinkValuesFlow.json");
+        let result = from_json(json);
+        match result {
+            Err(FlowFactoryError::DuplicateLinkValues { node_id, duplicates }) => {
+                assert_eq!(node_id, "conditionalNode");
+                println!("{:?}", duplicates);
+                assert_eq!(duplicates, vec!["endNodeTrue", "endNodeFalse", "endNodeFalseAgain"]);
+            }
+            other => panic!("expected FlowFactoryError::DuplicateLinkValues, got {:?}", other),
         }
     }
 
