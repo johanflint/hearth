@@ -1,5 +1,5 @@
 use crate::flow_engine::action::Action;
-use crate::flow_engine::{Expression, Schedule};
+use crate::flow_engine::{Expression, Schedule, Value};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -17,6 +17,7 @@ pub struct SerializedFlow {
 pub enum SerializedFlowNode {
     StartNode(SerializedStartFlowNode),
     EndNode(SerializedEndFlowNode),
+    ConditionalNode(SerializedConditionalFlowNode),
     ActionNode(SerializedActionFlowNode),
     SleepNode(SerializedSleepFlowNode),
 }
@@ -26,17 +27,19 @@ impl SerializedFlowNode {
         match self {
             SerializedFlowNode::StartNode(node) => &node.id,
             SerializedFlowNode::EndNode(node) => &node.id,
+            SerializedFlowNode::ConditionalNode(node) => &node.id,
             SerializedFlowNode::ActionNode(node) => &node.id,
             SerializedFlowNode::SleepNode(node) => &node.id,
         }
     }
 
-    pub fn outgoing_nodes(&self) -> Option<&str> {
+    pub fn outgoing_nodes(&self) -> Vec<&SerializedFlowLink> {
         match self {
-            SerializedFlowNode::StartNode(node) => Some(&node.outgoing_node),
-            SerializedFlowNode::EndNode(_) => None,
-            SerializedFlowNode::ActionNode(node) => Some(&node.outgoing_node),
-            SerializedFlowNode::SleepNode(node) => Some(&node.outgoing_node),
+            SerializedFlowNode::StartNode(node) => vec![&node.outgoing_node],
+            SerializedFlowNode::EndNode(_) => vec![],
+            SerializedFlowNode::ConditionalNode(node) => node.outgoing_nodes.iter().collect(),
+            SerializedFlowNode::ActionNode(node) => vec![&node.outgoing_node],
+            SerializedFlowNode::SleepNode(node) => vec![&node.outgoing_node],
         }
     }
 }
@@ -45,7 +48,7 @@ impl SerializedFlowNode {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub struct SerializedStartFlowNode {
     pub(crate) id: String,
-    pub(crate) outgoing_node: String,
+    pub(crate) outgoing_node: SerializedFlowLink,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,9 +58,23 @@ pub struct SerializedEndFlowNode {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+pub struct SerializedConditionalFlowNode {
+    pub(crate) id: String,
+    pub(crate) outgoing_nodes: Vec<SerializedFlowLink>,
+    pub(crate) expression: Expression,
+}
+
+#[derive(PartialEq, Debug)]
+pub struct SerializedFlowLink {
+    pub(crate) node_id: String,
+    pub(crate) value: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub struct SerializedActionFlowNode {
     pub(crate) id: String,
-    pub(crate) outgoing_node: String,
+    pub(crate) outgoing_node: SerializedFlowLink,
     pub(crate) action: Box<dyn Action>,
 }
 
@@ -65,7 +82,7 @@ pub struct SerializedActionFlowNode {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub struct SerializedSleepFlowNode {
     pub(crate) id: String,
-    pub(crate) outgoing_node: String,
+    pub(crate) outgoing_node: SerializedFlowLink,
     #[serde(with = "humantime_serde")]
     pub(crate) duration: Duration,
 }
@@ -91,12 +108,18 @@ mod tests {
             nodes: vec![
                 SerializedFlowNode::StartNode(SerializedStartFlowNode {
                     id: "startNode".to_string(),
-                    outgoing_node: "logNode".to_string(),
+                    outgoing_node: SerializedFlowLink {
+                        node_id: "logNode".to_string(),
+                        value: Value::None,
+                    },
                 }),
                 SerializedFlowNode::ActionNode(SerializedActionFlowNode {
                     id: "logNode".to_string(),
                     action: Box::new(LogAction::new("Action is triggered".to_string())),
-                    outgoing_node: "endNode".to_string(),
+                    outgoing_node: SerializedFlowLink {
+                        node_id: "endNode".to_string(),
+                        value: Value::None,
+                    },
                 }),
                 SerializedFlowNode::EndNode(SerializedEndFlowNode { id: "endNode".to_string() }),
             ],
@@ -137,11 +160,17 @@ mod tests {
             nodes: vec![
                 SerializedFlowNode::StartNode(SerializedStartFlowNode {
                     id: "startNode".to_string(),
-                    outgoing_node: "sleepNode".to_string(),
+                    outgoing_node: SerializedFlowLink {
+                        node_id: "sleepNode".to_string(),
+                        value: Value::None,
+                    },
                 }),
                 SerializedFlowNode::SleepNode(SerializedSleepFlowNode {
                     id: "sleepNode".to_string(),
-                    outgoing_node: "endNode".to_string(),
+                    outgoing_node: SerializedFlowLink {
+                        node_id: "endNode".to_string(),
+                        value: Value::None,
+                    },
                     duration: Duration::from_secs(3907),
                 }),
                 SerializedFlowNode::EndNode(SerializedEndFlowNode { id: "endNode".to_string() }),

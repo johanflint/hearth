@@ -91,17 +91,20 @@ impl FlowNode {
 #[derive(Debug)]
 pub struct FlowLink {
     node: Arc<FlowNode>,
-    #[allow(dead_code)]
-    value: Option<String>,
+    value: Value,
 }
 
 impl FlowLink {
-    pub fn new(node: Arc<FlowNode>, value: Option<String>) -> Self {
+    pub fn new(node: Arc<FlowNode>, value: Value) -> Self {
         FlowLink { node, value }
     }
 
     pub fn node(&self) -> &FlowNode {
         &self.node
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.value
     }
 }
 
@@ -109,6 +112,7 @@ impl FlowLink {
 pub enum FlowNodeKind {
     Start,
     End,
+    Conditional(Expression),
     Action(ActionFlowNode),
     Sleep(Duration),
 }

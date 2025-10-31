@@ -37,7 +37,7 @@ pub enum Expression {
     Temporal { expression: TemporalExpression },
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub enum Value {
     Boolean(bool),
     Number(Number),

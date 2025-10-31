@@ -1,3 +1,4 @@
+use crate::flow_engine::Value;
 use crate::flow_engine::flow::{ActionFlowNode, Flow, FlowLink, FlowNode, FlowNodeKind};
 use crate::flow_loader::serialized_flow::{SerializedFlow, SerializedFlowNode};
 use std::collections::{HashMap, VecDeque};
@@ -6,9 +7,8 @@ use thiserror::Error;
 
 pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
     let flow = serde_json::from_str::<SerializedFlow>(json)?;
-    let mut nodes = flow.nodes; // Take ownership of nodes
 
-    let num_start_nodes = nodes.iter().filter(|node| matches!(node, SerializedFlowNode::StartNode(_))).count();
+    let num_start_nodes = flow.nodes.iter().filter(|node| matches!(node, SerializedFlowNode::StartNode(_))).count();
     if num_start_nodes == 0 {
         return Err(FlowFactoryError::MissingStartNode);
     }
@@ -16,35 +16,66 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
         return Err(FlowFactoryError::TooManyStartNodes(num_start_nodes));
     }
 
-    let end_nodes: Vec<SerializedFlowNode> = nodes._extract_if(|node| matches!(node, SerializedFlowNode::EndNode(_)));
+    let end_nodes: Vec<String> = flow
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            SerializedFlowNode::EndNode(end_node) => Some(end_node.id.to_owned()),
+            _ => None,
+        })
+        .collect();
     if end_nodes.len() == 0 {
         return Err(FlowFactoryError::MissingEndNode);
     }
 
-    let mut nodes_to_visit: VecDeque<SerializedFlowNode> = VecDeque::from(end_nodes);
-    nodes_to_visit.reserve(nodes.len()); // Reserve capacity to avoid multiple reallocations
+    let mut nodes_map: HashMap<String, SerializedFlowNode> = flow.nodes.into_iter().map(|node| (node.id().to_owned(), node)).collect(); // Take ownership of the nodes
+    let mut remaining_children: HashMap<String, usize> = HashMap::with_capacity(nodes_map.len());
+    let mut child_to_parent: HashMap<String, String> = HashMap::new();
 
-    let mut flow_node_map: HashMap<String, Arc<FlowNode>> = HashMap::new();
-    let mut start_node: Option<Arc<FlowNode>> = None;
+    for (id, node) in nodes_map.iter() {
+        let out_count = node.outgoing_nodes().len();
+        remaining_children.insert(id.clone(), out_count);
 
-    while let Some(serialized_node) = nodes_to_visit.pop_back() {
-        let incoming_nodes: Vec<SerializedFlowNode> = nodes._extract_if(|node| match node {
-            SerializedFlowNode::StartNode(node) => node.outgoing_node == serialized_node.id(),
-            SerializedFlowNode::EndNode(_) => false,
-            SerializedFlowNode::ActionNode(node) => node.outgoing_node == serialized_node.id(),
-            SerializedFlowNode::SleepNode(node) => node.outgoing_node == serialized_node.id(),
-        });
+        let mut value_to_nodes: HashMap<&Value, Vec<String>> = HashMap::new();
+        for link in node.outgoing_nodes().iter() {
+            value_to_nodes.entry(&link.value).or_default().push(link.node_id.clone());
 
-        if !matches!(serialized_node, SerializedFlowNode::StartNode(_)) && incoming_nodes.is_empty() {
-            return Err(FlowFactoryError::NoConnectingNode {
-                node: serialized_node.id().to_owned(),
-                flow: flow.name,
-            });
+            // Parent linkage check
+            if let Some(prev) = child_to_parent.insert(link.node_id.clone(), id.clone()) {
+                // `prev` is the previously registered parent id
+                return Err(FlowFactoryError::TooManyParentNodes {
+                    node_id: link.node_id.clone(),
+                    parent_nodes: vec![prev, id.clone()],
+                });
+            }
         }
 
-        // Push elements to the front in reverse order to maintain original order
-        for incoming_node in incoming_nodes.into_iter().rev() {
-            nodes_to_visit.push_front(incoming_node);
+        let duplicates: Vec<String> = value_to_nodes.values().filter(|node_ids| node_ids.len() > 1).flatten().cloned().collect();
+        if !duplicates.is_empty() {
+            return Err(FlowFactoryError::DuplicateLinkValues { node_id: id.clone(), duplicates });
+        }
+    }
+
+    let mut nodes_to_visit: VecDeque<String> = VecDeque::from(end_nodes);
+    let mut flow_node_map: HashMap<String, Arc<FlowNode>> = HashMap::with_capacity(nodes_map.len());
+    let mut start_node: Option<Arc<FlowNode>> = None;
+
+    while let Some(node_id) = nodes_to_visit.pop_back() {
+        // Take the node out of the map (ownership)
+        let serialized_node = match nodes_map.remove(&node_id) {
+            Some(node) => node,
+            None => continue,
+        };
+
+        // Unless it's a start node, ensure it has a parent
+        if !matches!(serialized_node, SerializedFlowNode::StartNode(_)) {
+            let has_parent = child_to_parent.get(serialized_node.id()).is_some();
+            if !has_parent {
+                return Err(FlowFactoryError::NoConnectingNode {
+                    node: serialized_node.id().to_owned(),
+                    flow: flow.name,
+                });
+            }
         }
 
         let outgoing_nodes = map_outgoing_nodes(&serialized_node, &flow_node_map)?;
@@ -57,12 +88,22 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
             start_node = Some(node_arc.clone());
         }
 
-        flow_node_map.insert(node_id, node_arc);
+        flow_node_map.insert(node_id.clone(), node_arc);
+
+        // Ensure all children are handled, so outgoing nodes will be correct
+        if let Some(parent_id) = child_to_parent.get(&node_id) {
+            if let Some(count) = remaining_children.get_mut(parent_id) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    nodes_to_visit.push_back(parent_id.clone());
+                }
+            }
+        }
     }
 
-    if !nodes.is_empty() {
+    if !nodes_map.is_empty() {
         return Err(FlowFactoryError::UnusedNodes {
-            nodes: nodes.into_iter().map(|n| n.id().to_owned()).collect(),
+            nodes: nodes_map.into_keys().collect(),
         });
     }
 
@@ -79,16 +120,18 @@ pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
 }
 
 fn map_outgoing_nodes(serialized_node: &SerializedFlowNode, flow_node_map: &HashMap<String, Arc<FlowNode>>) -> Result<Vec<FlowLink>, FlowFactoryError> {
-    if let Some(outgoing_node_id) = serialized_node.outgoing_nodes() {
-        let node = flow_node_map.get(outgoing_node_id).ok_or_else(|| FlowFactoryError::MissingNode {
-            node_id: serialized_node.id().to_owned(),
-            outgoing_node_id: outgoing_node_id.to_owned(),
-        })?;
+    serialized_node
+        .outgoing_nodes()
+        .iter()
+        .map(|flow_link| {
+            let node = flow_node_map.get(&flow_link.node_id).ok_or_else(|| FlowFactoryError::MissingNode {
+                node_id: serialized_node.id().to_owned(),
+                outgoing_node_id: flow_link.node_id.clone(),
+            })?;
 
-        return Ok(vec![FlowLink::new(node.clone(), None)]);
-    }
-
-    Ok(Vec::new())
+            Ok(FlowLink::new(Arc::clone(node), flow_link.value.clone()))
+        })
+        .collect()
 }
 
 // Must own serialized_node so the contents can be moved to avoid copying data
@@ -96,33 +139,9 @@ fn to_flow_node(serialized_node: SerializedFlowNode, outgoing_nodes: Vec<FlowLin
     match serialized_node {
         SerializedFlowNode::StartNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Start),
         SerializedFlowNode::EndNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::End),
+        SerializedFlowNode::ConditionalNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Conditional(node.expression)),
         SerializedFlowNode::ActionNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Action(ActionFlowNode::new(node.action))),
         SerializedFlowNode::SleepNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Sleep(node.duration)),
-    }
-}
-
-// This can be removed once Rust 1.87.0 comes out and extract_if is stabilized (https://github.com/rust-lang/rust/pull/137109)
-trait ExtractIf<T> {
-    fn _extract_if<F>(&mut self, predicate: F) -> Vec<T>
-    where
-        F: FnMut(&T) -> bool;
-}
-
-impl<T> ExtractIf<T> for Vec<T> {
-    fn _extract_if<F>(&mut self, mut predicate: F) -> Vec<T>
-    where
-        F: FnMut(&T) -> bool,
-    {
-        let mut extracted = Vec::new();
-        let mut i = 0;
-        while i < self.len() {
-            if predicate(&self[i]) {
-                extracted.push(self.remove(i));
-            } else {
-                i += 1
-            }
-        }
-        extracted
     }
 }
 
@@ -140,13 +159,20 @@ pub enum FlowFactoryError {
     NoConnectingNode { node: String, flow: String },
     #[error("node '{node_id}' has a missing outgoing node to '{outgoing_node_id}'")]
     MissingNode { node_id: String, outgoing_node_id: String },
+    #[error("node '{node_id}' too many parent nodes: {}", parent_nodes.join(", "))]
+    TooManyParentNodes { node_id: String, parent_nodes: Vec<String> },
     #[error("unused nodes: {}", nodes.join(", "))]
     UnusedNodes { nodes: Vec<String> },
+    #[error("duplicate outgoing link values for node '{node_id}', pointing to {}", duplicates.join(", "))]
+    DuplicateLinkValues { node_id: String, duplicates: Vec<String> },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Number;
+    use crate::flow_engine::Expression::Literal;
+    use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
     use pretty_assertions::assert_eq;
@@ -195,12 +221,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn returns_an_error_if_a_node_has_multiple_parent_nodes() {
+        let json = include_str!("../../tests/resources/flows/invalid/multipleParentNodesFlow.json");
+        let result = from_json(json);
+        match result {
+            Err(FlowFactoryError::TooManyParentNodes { node_id, parent_nodes }) => {
+                assert_eq!(node_id, "endNode");
+                assert_eq!(parent_nodes, vec!["conditionalNode", "conditionalNode"]);
+            }
+            other => panic!("expected FlowFactoryError::TooManyParentNodes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn returns_an_error_if_a_node_has_duplicate_link_values() {
+        assert_eq!(Value::Boolean(true), Value::Boolean(true));
+        let json = include_str!("../../tests/resources/flows/invalid/duplicateLinkValuesFlow.json");
+        let result = from_json(json);
+        match result {
+            Err(FlowFactoryError::DuplicateLinkValues { node_id, duplicates }) => {
+                assert_eq!(node_id, "conditionalNode");
+                println!("{:?}", duplicates);
+                assert_eq!(duplicates, vec!["endNodeTrue", "endNodeFalse", "endNodeFalseAgain"]);
+            }
+            other => panic!("expected FlowFactoryError::DuplicateLinkValues, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
     async fn creates_a_flow_with_a_start_and_end_node() {
         let json = include_str!("../../tests/resources/flows/emptyFlow.json");
         let flow = from_json(json).unwrap();
 
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(end_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(end_node), Value::None)], FlowNodeKind::Start);
 
         let expected = Flow::new(
             "01K7KK65D87SZGGZE7VB8QYT20".to_string(),
@@ -223,11 +277,11 @@ mod tests {
 
         let action_node = FlowNode::new(
             "logNode".to_string(),
-            vec![FlowLink::new(Arc::new(end_node), None)],
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(LogAction::new("Action is triggered".to_string())))),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), Value::None)], FlowNodeKind::Start);
 
         let expected = Flow::new(
             "01K7KK6H5R7Y72QJEJSJQCKMRQ".to_string(),
@@ -250,18 +304,51 @@ mod tests {
 
         let action_node = FlowNode::new(
             "controlNode".to_string(),
-            vec![FlowLink::new(Arc::new(end_node), None)],
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(
                 "42".to_string(),
                 HashMap::from([("fan".to_string(), SetBooleanValue(true))]),
             )))),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), Value::None)], FlowNodeKind::Start);
 
         let expected = Flow::new(
             "01K7KK5FC54SN8D4QYVNEGFYG4".to_string(),
             "controlDeviceFlow".to_string(),
+            None,
+            None,
+            Arc::new(start_node),
+            HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
+    }
+
+    #[tokio::test]
+    async fn creates_a_flow_with_a_conditional_node() {
+        let json = include_str!("../../tests/resources/flows/conditionalFlow.json");
+        let flow = from_json(json).unwrap();
+
+        let end_node_true = FlowNode::new("endNodeTrue".to_string(), vec![], FlowNodeKind::End);
+        let end_node_false = FlowNode::new("endNodeFalse".to_string(), vec![], FlowNodeKind::End);
+
+        let conditional_node = FlowNode::new(
+            "conditionalNode".to_string(),
+            vec![
+                FlowLink::new(Arc::new(end_node_true), Value::Boolean(true)),
+                FlowLink::new(Arc::new(end_node_false), Value::Boolean(false)),
+            ],
+            FlowNodeKind::Conditional(Literal {
+                value: Value::Number(Number::Float(42.0)),
+            }),
+        );
+
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(conditional_node), Value::None)], FlowNodeKind::Start);
+
+        let expected = Flow::new(
+            "01K8JSTTCC831M6TERRH41D595".to_string(),
+            "conditionalFlow".to_string(),
             None,
             None,
             Arc::new(start_node),
@@ -280,11 +367,11 @@ mod tests {
 
         let sleep_node = FlowNode::new(
             "sleepNode".to_string(),
-            vec![FlowLink::new(Arc::new(end_node), None)],
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Sleep(Duration::from_secs(3907)),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), Value::None)], FlowNodeKind::Start);
 
         let expected = Flow::new(
             "01K7KK7E6GG26XZZDXSGFZCWQ4".to_string(),

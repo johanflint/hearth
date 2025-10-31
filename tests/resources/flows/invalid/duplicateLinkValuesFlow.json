@@ -1,0 +1,45 @@
+{
+  "id": "01K8TVFQ5RWR2FE0MKWVX81ESZ",
+  "name": "duplicateLinkValuesFlow",
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "conditionalNode"
+    },
+    {
+      "id": "conditionalNode",
+      "type": "conditionalNode",
+      "outgoingNodes": [
+        {
+          "value": true,
+          "node": "endNodeTrue"
+        },
+        {
+          "value": true,
+          "node": "endNodeFalse"
+        },
+        {
+          "value": true,
+          "node": "endNodeFalseAgain"
+        }
+      ],
+      "expression": {
+        "type": "literal",
+        "value": 42.0
+      }
+    },
+    {
+      "id": "endNodeTrue",
+      "type": "endNode"
+    },
+    {
+      "id": "endNodeFalse",
+      "type": "endNode"
+    },
+    {
+      "id": "endNodeFalseAgain",
+      "type": "endNode"
+    }
+  ]
+}

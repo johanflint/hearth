@@ -1,0 +1,33 @@
+{
+  "id": "01K8R8V5QMF7TJEFAD3NQKZYSC",
+  "name": "multipleParentNodesFlow",
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "conditionalNode"
+    },
+    {
+      "id": "conditionalNode",
+      "type": "conditionalNode",
+      "outgoingNodes": [
+        {
+          "value": true,
+          "node": "endNode"
+        },
+        {
+          "value": false,
+          "node": "endNode"
+        }
+      ],
+      "expression": {
+        "type": "literal",
+        "value": 42.0
+      }
+    },
+    {
+      "id": "endNode",
+      "type": "endNode"
+    }
+  ]
+}
