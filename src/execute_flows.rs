@@ -13,7 +13,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tracing::{instrument, warn};
 
-type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
+type DeviceId = String;
+type PropertyId = String;
+type CommandMap = HashMap<DeviceId, HashMap<PropertyId, PropertyValue>>;
 
 #[instrument(skip_all, fields(flow = flow.name(), node_id = node_id.as_deref().unwrap_or("<start>")))]
 pub async fn execute_flow(flow: Arc<Flow>, node_id: Option<String>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
