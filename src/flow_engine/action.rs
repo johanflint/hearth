@@ -1,4 +1,4 @@
-use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions, register_action};
+use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::property_value::PropertyValue;
 use crate::flow_engine::scope::Scope;
