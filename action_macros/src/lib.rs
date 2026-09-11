@@ -15,7 +15,7 @@ pub fn register_action(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[ctor::ctor]
         fn #fn_name() {
-            register_action::<#name>();
+            crate::flow_engine::action_registry::register_action::<#name>();
         }
     };
 
