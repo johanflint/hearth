@@ -20,7 +20,7 @@ cron = "0.17"
 chrono = "0.4"
 ordered-float = "5.1.0"
 humantime-serde = "1.1.1"
-sunrise = "2.1"
+sunrise = "3.0"
 
 # Action macros
 action_macros = { path = "action_macros" }
