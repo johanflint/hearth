@@ -13,7 +13,7 @@ pub fn register_action(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #input
 
-        #[ctor::ctor]
+        #[ctor::ctor(unsafe)]
         fn #fn_name() {
             crate::flow_engine::action_registry::register_action::<#name>();
         }

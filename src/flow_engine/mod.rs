@@ -8,6 +8,7 @@ pub mod property_value;
 mod schedule;
 pub mod scheduler;
 mod scope;
+mod solar_event;
 
 pub use context::Context;
 pub use engine::FlowEngineError;
