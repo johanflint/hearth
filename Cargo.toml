@@ -30,5 +30,5 @@ ctor = "1.0"
 cargo-llvm-cov = "0.9"
 mockito = "1.7"
 pretty_assertions = "1.4"
-rstest = "0.26"
+rstest = "0.27"
 test-log = { version = "0.2", features = ["trace"] }
