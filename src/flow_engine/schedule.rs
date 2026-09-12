@@ -120,7 +120,7 @@ where
         }
     }
 
-    fn event_time(&self, date: NaiveDate) -> DateTime<Z>
+    fn event_time(&self, date: NaiveDate) -> Option<DateTime<Z>>
     where
         Z: TimeZone,
     {
@@ -132,8 +132,7 @@ where
         SolarDay::new(self.coordinates, date)
             .with_altitude(self.altitude)
             .event_time(event)
-            .with_timezone(&self.current.timezone())
-            .add(Duration::minutes(self.offset))
+            .map(|time| time.with_timezone(&self.current.timezone()).add(Duration::minutes(self.offset)))
     }
 }
 
@@ -150,8 +149,10 @@ where
             if !self.when.included_days().contains(&date.to_weekday()) {
                 continue;
             }
-            let event_time = self.event_time(date.date_naive());
-            return Some(event_time);
+            if let Some(event_time) = self.event_time(date.date_naive()) {
+                return Some(event_time);
+            }
+            // Polar day/night, no sunrise/sunseton this date - try the next day instead of ending the iterator
         }
     }
 }
@@ -222,6 +223,30 @@ mod tests {
         assert_eq!(upcoming[2].to_weekday(), Thursday);
         assert_eq!(upcoming[3].to_weekday(), Friday);
         assert_eq!(upcoming[4].to_weekday(), Wednesday);
+    }
+
+    #[test]
+    fn test_schedule_with_sunrise_event_on_polar_night() {
+        let schedule = Schedule::Sunrise {
+            when: WeekdayCondition::Any,
+            offset: 0,
+        };
+
+        // Longyearbyen, Svalbard sits far enough north to experience a polar night: no sunrise occurs from
+        // late October until mid-February. Starting just before the polar night ends should skip every day
+        // without a sunrise and resume once the sun rises again.
+        let polar_location = GeoLocation {
+            latitude: 78.2232,
+            longitude: 15.6267,
+            altitude: 0.0,
+        };
+        let now = Utc.with_ymd_and_hms(2000, 2, 13, 12, 0, 0).unwrap();
+        let upcoming = schedule.after(now, polar_location).take(3).collect::<Vec<_>>();
+
+        // 2000-02-13, 02-14 and 02-15 have no sunrise (polar night); the first sunrise is on 02-16
+        assert_eq!(upcoming[0], Utc.with_ymd_and_hms(2000, 02, 16, 10, 37, 58).unwrap());
+        assert_eq!(upcoming[1], Utc.with_ymd_and_hms(2000, 02, 17, 10, 05, 42).unwrap());
+        assert_eq!(upcoming[2], Utc.with_ymd_and_hms(2000, 02, 18, 09, 44, 18).unwrap());
     }
 
     fn location() -> GeoLocation {

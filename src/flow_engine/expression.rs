@@ -3,6 +3,7 @@ use crate::domain::{Number, Time, WeekdayCondition};
 use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
+use crate::flow_engine::solar_event::EventTime;
 use chrono::NaiveTime;
 use serde::Deserialize;
 use std::cmp::Ordering;
@@ -170,14 +171,42 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                         .map(|target| now.time() > target)
                         .unwrap_or(false),
                 )),
-                TemporalExpression::HasSunRisen => Ok(Value::Boolean(now.time() >= context.sunrise().time())),
-                TemporalExpression::HasSunSet => Ok(Value::Boolean(now.time() >= context.sunset().time())),
+                TemporalExpression::HasSunRisen => Ok(Value::Boolean(
+                    match context.sunrise() {
+                        EventTime::At(sunrise) => now.time() >= sunrise.time(),
+                        EventTime::PolarDay => true,
+                        EventTime::PolarNight => false,
+                    }
+                )),
+                TemporalExpression::HasSunSet => Ok(Value::Boolean(
+                    match context.sunset() {
+                        EventTime::At(sunrise) => now.time() >= sunrise.time(),
+                        EventTime::PolarDay => true,
+                        EventTime::PolarNight => false,
+                    }
+                )),
                 TemporalExpression::IsDaytime => {
-                    let is_daytime = now.time() >= context.sunrise().time() && now.time() < context.sunset().time();
+                    let is_daytime = match (context.sunrise(), context.sunset()) {
+                        (EventTime::At(sunrise), EventTime::At(sunset)) => now.time() >= sunrise.time() && now.time() < sunset.time(),
+                        (EventTime::PolarDay, EventTime::PolarDay) => true,
+                        (EventTime::PolarNight, EventTime::PolarNight) => false,
+                        (sunrise, sunset) => {
+                            warn!(?sunrise, ?sunset, "⚠️ Inconsistent sunrise/sunset classification, defaulting IsDaytime to false");
+                            false
+                        }
+                    };
                     Ok(Value::Boolean(is_daytime))
                 }
                 TemporalExpression::IsNighttime => {
-                    let is_nighttime = now.time() < context.sunrise().time() || now.time() >= context.sunset().time();
+                    let is_nighttime = match (context.sunrise(), context.sunset()) {
+                        (EventTime::At(sunrise), EventTime::At(sunset)) => now.time() < sunrise.time() || now.time() >= sunset.time(),
+                        (EventTime::PolarDay, EventTime::PolarDay) => false,
+                        (EventTime::PolarNight, EventTime::PolarNight) => true,
+                        (sunrise, sunset) => {
+                            warn!(?sunrise, ?sunset, "⚠️ Inconsistent sunrise/sunset classification, defaulting IsNighttime to false");
+                            false
+                        }
+                    };
                     Ok(Value::Boolean(is_nighttime))
                 }
             }

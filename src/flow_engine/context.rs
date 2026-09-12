@@ -1,7 +1,7 @@
 use crate::domain::GeoLocation;
+use crate::flow_engine::solar_event::{EventTime, SolarEvent, solar_event_time};
 use crate::store::StoreSnapshot;
 use chrono::{DateTime, Local};
-use sunrise::{Coordinates, SolarDay, SolarEvent};
 
 #[derive(Default, Debug)]
 pub struct Context {
@@ -23,23 +23,12 @@ impl Context {
         self.now
     }
 
-    pub fn sunrise(&self) -> DateTime<Local> {
-        self.solar_event(SolarEvent::Sunrise)
+    pub fn sunrise(&self) -> EventTime {
+        solar_event_time(SolarEvent::Sunrise, self.now, &self.location)
     }
 
-    pub fn sunset(&self) -> DateTime<Local> {
-        self.solar_event(SolarEvent::Sunset)
-    }
-
-    fn solar_event(&self, event: SolarEvent) -> DateTime<Local> {
-        let date = self.now.date_naive();
-
-        // The expect is fine as GeoLocation is validated during deserialization
-        let coordinates = Coordinates::new(self.location.latitude, self.location.longitude).expect("valid coordinates");
-        SolarDay::new(coordinates, date)
-            .with_altitude(self.location.altitude)
-            .event_time(event)
-            .with_timezone(&Local)
+    pub fn sunset(&self) -> EventTime {
+        solar_event_time(SolarEvent::Sunset, self.now, &self.location)
     }
 }
 
