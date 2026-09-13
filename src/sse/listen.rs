@@ -102,16 +102,16 @@ where
                         }
                     };
 
-
-                    // Track last event id for resume support
-                    if let Some(id) = &event.id {
-                        let mut guard = last_event_id.lock().await;
-                        *guard = Some(id.clone());
-                    }
-
+                    let event_id = event.id.clone();
                     if timeout(config.send_timeout_ms, tx.send(event)).await.is_err() {
                         warn!("⏳ SSE listener stalled for {}ms while forwarding event. Reconnecting...", config.send_timeout_ms.as_millis());
                         return Err("SSE listener stalled".into());
+                    }
+
+                    // Track last event id for resume support
+                    if let Some(id) = event_id {
+                        let mut guard = last_event_id.lock().await;
+                        *guard = Some(id);
                     }
                 }
             }
