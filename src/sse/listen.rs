@@ -31,7 +31,7 @@ where
 
     info!("Connecting to SSE stream {}...", config.url);
     let last_event_id = Arc::new(Mutex::new(None::<String>));
-    Retry::spawn(strategy, || {
+    Retry::start(strategy, || {
         let tx = tx.clone();
         let client = client.clone();
         let last_event_id = last_event_id.clone();
