@@ -92,8 +92,15 @@ where
                         }
                     };
 
-                    let event = ServerSentEvent::<T>::from_str(&raw)?;
-                    debug!(event = raw.trim(), "🔸 Received event: {:?}", event);
+                    debug!("🔸 Received event: {:?}", raw.trim());
+                    let event = match ServerSentEvent::<T>::from_str(&raw) {
+                        Ok(event) => event,
+                        Err(e) => {
+                            warn!("⚠️ Failed to parse SSE event, skipping it: {}", e);
+                            continue;
+                        }
+                    };
+
 
                     // Track last event id for resume support
                     if let Some(id) = &event.id {
