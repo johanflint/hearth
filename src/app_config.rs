@@ -68,6 +68,7 @@ pub struct Hue {
     retry_ms: u64,
     retry_max_delay_ms: u64,
     stale_connection_timeout_ms: u64,
+    send_timeout_ms: u64,
     application_key: String,
 }
 
@@ -86,6 +87,10 @@ impl Hue {
 
     pub fn stale_connection_timeout_ms(&self) -> Duration {
         Duration::from_millis(self.stale_connection_timeout_ms)
+    }
+
+    pub fn send_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.send_timeout_ms)
     }
 
     pub fn application_key(&self) -> &str {
@@ -110,6 +115,7 @@ impl AppConfigBuilder {
                     retry_ms: 100,
                     retry_max_delay_ms: 200,
                     stale_connection_timeout_ms: 30_000,
+                    send_timeout_ms: 100,
                     application_key: "key".to_string(),
                 },
                 location: GeoLocation {

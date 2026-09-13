@@ -10,6 +10,7 @@
     retry_ms: 500,
     retry_max_delay_ms: 30000,
     stale_connection_timeout_ms: 60000,
+    send_timeout_ms: 500,
     application_key: "Hue application key"
   },
   "location": {

@@ -19,6 +19,7 @@ pub struct Config {
     pub retry_ms: u64,
     pub retry_max_delay: Duration,
     pub stale_connection_timeout_ms: Duration,
+    pub send_timeout_ms: Duration,
 }
 
 #[instrument(skip_all)]
@@ -108,7 +109,10 @@ where
                         *guard = Some(id.clone());
                     }
 
-                    tx.send(event).await?;
+                    if timeout(config.send_timeout_ms, tx.send(event)).await.is_err() {
+                        warn!("⏳ SSE listener stalled for {}ms while forwarding event. Reconnecting...", config.send_timeout_ms.as_millis());
+                        return Err("SSE listener stalled".into());
+                    }
                 }
             }
             Ok(Some(Err(e))) => {

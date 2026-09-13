@@ -22,6 +22,7 @@ pub async fn observe(tx: Sender<Event>, client: &Client, config: &AppConfig) -> 
         retry_ms: config.hue().retry_ms(),
         retry_max_delay: config.hue().retry_max_delay_ms(),
         stale_connection_timeout_ms: config.hue().stale_connection_timeout_ms(),
+        send_timeout_ms: config.hue().send_timeout_ms(),
     };
 
     task::spawn(async move {
