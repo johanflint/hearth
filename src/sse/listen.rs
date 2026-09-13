@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::error::SendTimeoutError;
 use tokio::time::timeout;
 use tokio_retry::Retry;
 use tokio_retry::strategy::{ExponentialBackoff, jitter};
@@ -103,15 +104,22 @@ where
                     };
 
                     let event_id = event.id.clone();
-                    if timeout(config.send_timeout_ms, tx.send(event)).await.is_err() {
-                        warn!("⏳ SSE listener stalled for {}ms while forwarding event. Reconnecting...", config.send_timeout_ms.as_millis());
-                        return Err("SSE listener stalled".into());
-                    }
-
-                    // Track last event id for resume support
-                    if let Some(id) = event_id {
-                        let mut guard = last_event_id.lock().await;
-                        *guard = Some(id);
+                    match tx.send_timeout(event, config.send_timeout_ms).await {
+                        Ok(()) => {
+                            // Track last event id for resume support
+                            if let Some(id) = event_id {
+                                let mut guard = last_event_id.lock().await;
+                                *guard = Some(id);
+                            }
+                        }
+                        Err(SendTimeoutError::Timeout(_)) => {
+                            warn!("⏳ SSE listener stalled for {}ms while forwarding event. Reconnecting...", config.send_timeout_ms.as_millis());
+                            return Err("SSE listener stalled".into());
+                        }
+                        Err(SendTimeoutError::Closed(_)) => {
+                            error!("❌ SSE forwarding channel closed. Reconnecting...");
+                            return Err("SSE forwarding channel closed".into());
+                        }
                     }
                 }
             }
