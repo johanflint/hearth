@@ -1,6 +1,6 @@
 use crate::app_config::AppConfig;
 use reqwest::header::HeaderValue;
-use reqwest::{header, Client};
+use reqwest::{Client, header};
 use thiserror::Error;
 
 pub fn new_client(config: &AppConfig) -> Result<Client, HueClientError> {
@@ -9,7 +9,11 @@ pub fn new_client(config: &AppConfig) -> Result<Client, HueClientError> {
     application_key_value.set_sensitive(true);
     headers.insert("hue-application-key", application_key_value);
 
-    let client = Client::builder().danger_accept_invalid_certs(true).default_headers(headers).build()?;
+    let client = Client::builder()
+        .danger_accept_invalid_certs(true)
+        .default_headers(headers)
+        .connect_timeout(config.core().client_connection_timeout_ms())
+        .build()?;
     Ok(client)
 }
 

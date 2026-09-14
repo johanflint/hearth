@@ -43,11 +43,16 @@ impl AppConfig {
 #[derive(Debug, Deserialize)]
 pub struct Core {
     store_buffer_size: usize,
+    client_connection_timeout_ms: u64,
 }
 
 impl Core {
     pub fn store_buffer_size(&self) -> usize {
         self.store_buffer_size
+    }
+
+    pub fn client_connection_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.client_connection_timeout_ms)
     }
 }
 
@@ -108,7 +113,10 @@ impl AppConfigBuilder {
     pub fn new() -> Self {
         AppConfigBuilder {
             config: AppConfig {
-                core: Core { store_buffer_size: 1 },
+                core: Core {
+                    store_buffer_size: 1,
+                    client_connection_timeout_ms: 100,
+                },
                 flows: Flows { directory: "flows".to_string() },
                 hue: Hue {
                     url: "https://hue.url/".to_string(),
