@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::{signal, task};
 use tracing::{error, info, trace};
+use tracing_subscriber::EnvFilter;
 
 mod app_config;
 mod domain;
@@ -26,7 +27,9 @@ mod store_listener;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,hearth::flow_engine=warn")))
+        .init();
 
     info!("🪵 Starting {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 
