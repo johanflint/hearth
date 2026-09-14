@@ -1,7 +1,9 @@
 use crate::domain::device::Device;
 use crate::domain::events::Event;
 use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty};
+use crate::metrics::Metric;
 use crate::property_changed_reducer::reduce_property_changed_event;
+use metrics::{counter, gauge};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
@@ -52,24 +54,27 @@ impl Store {
                     debug!("🔵 Registring {} new device(s)...", num_devices);
                     self.devices.extend(discovered_devices.into_iter().map(|device| (device.id.clone(), Arc::new(device))));
                     info!("🔵 Registring {} new device(s)... OK", num_devices);
+
+                    counter!(Metric::StoreDiscoveredDevices.name()).increment(num_devices as u64);
+                    gauge!(Metric::StoreNumberOfDevices.name()).set(self.devices.len() as f64);
                 }
                 Event::BooleanPropertyChanged { device_id, property_id, value } => {
-                    reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut BooleanProperty| {
+                    let result = reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut BooleanProperty| {
                         property.set_value(value)
-                    })
-                    .unwrap_or_default();
+                    });
+                    counter!(Metric::StorePropertyChanged.name(),  "property_type" => "boolean", "result" => if result.is_ok() { "success" } else { "failure" }).increment(1);
                 }
                 Event::NumberPropertyChanged { device_id, property_id, value } => {
-                    reduce_property_changed_event(&mut self.devices.clone(), &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
+                    let result = reduce_property_changed_event(&mut self.devices.clone(), &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
                         property.set_value(value)
-                    })
-                    .unwrap_or_default();
+                    });
+                    counter!(Metric::StorePropertyChanged.name(),  "property_type" => "number", "result" => if result.is_ok() { "success" } else { "failure" }).increment(1);
                 }
                 Event::ColorPropertyChanged { device_id, property_id, xy, gamut } => {
-                    reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut ColorProperty| {
+                    let result = reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut ColorProperty| {
                         property.set_value(xy, gamut)
-                    })
-                    .unwrap_or_default();
+                    });
+                    counter!(Metric::StorePropertyChanged.name(),  "property_type" => "color", "result" => if result.is_ok() { "success" } else { "failure" }).increment(1);
                 }
             }
 

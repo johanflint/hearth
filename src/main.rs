@@ -24,6 +24,7 @@ mod property_changed_reducer;
 mod sse;
 mod store;
 mod store_listener;
+mod metrics;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
