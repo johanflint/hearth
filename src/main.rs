@@ -25,6 +25,7 @@ mod sse;
 mod store;
 mod store_listener;
 mod metrics;
+mod server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -79,6 +80,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store.listen().await;
     });
     info!("✅  Initialized store");
+
+    server::start(config.core().port()).await?;
+    info!("✅  Initialized server");
 
     let hue_devices = hue::discover(&hue_client, &config).await.expect("Could not discover Hue devices");
     trace!("Observed Hue devices: {:?}", &hue_devices);

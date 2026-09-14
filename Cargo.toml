@@ -12,6 +12,7 @@ futures = "0.3" # Needed by reqwest's stream feature
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 config = "0.15"
@@ -23,6 +24,9 @@ chrono = "0.4"
 ordered-float = "5.1.0"
 humantime-serde = "1.1.1"
 sunrise = "3.0"
+
+# Webserver
+axum = "0.8"
 
 # Action macros
 action_macros = { path = "action_macros" }

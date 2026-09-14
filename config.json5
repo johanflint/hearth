@@ -1,5 +1,6 @@
 {
   "core": {
+    "port": 8080,
     "store_buffer_size": 100,
     "client_connection_timeout_ms": 2000
   },
