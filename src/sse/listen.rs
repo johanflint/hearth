@@ -44,7 +44,7 @@ where
                     Err("Stream ended") // Triggers retry
                 }
                 Err(e) => {
-                    warn!("⚠️ SSE error: {}. Retrying...", e);
+                    warn!("⚠️ SSE error: {:?}. Retrying...", e);
                     Err("SSE failed") // Triggers retry
                 }
             }
@@ -124,7 +124,7 @@ where
                 }
             }
             Ok(Some(Err(e))) => {
-                error!("❌ SSE stream error: {}", e);
+                // SSE stream error
                 return Err(Box::new(e));
             }
             Ok(None) => {
