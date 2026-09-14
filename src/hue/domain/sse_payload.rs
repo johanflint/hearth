@@ -1,7 +1,6 @@
 use crate::hue::domain::LightChanged;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, to_string_pretty};
-use std::ops::IndexMut;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -43,10 +42,16 @@ impl<'de> Deserialize<'de> for UnknownProperty {
     {
         let mut value = Value::deserialize(deserializer)?;
         let string_value = to_string_pretty(&value).unwrap();
-        match value.index_mut("type").take() {
-            Value::String(property_type) => Ok(UnknownProperty { property_type, value: string_value }),
-            _ => Err(serde::de::Error::missing_field("type")),
-        }
+
+        let property_type = match value.as_object_mut().and_then(|map| map.get_mut("type")) {
+            Some(type_value) => match type_value.take() {
+                Value::String(property_type) => property_type,
+                _ => return Err(serde::de::Error::missing_field("type")),
+            },
+            None => return Err(serde::de::Error::missing_field("type")),
+        };
+
+        Ok(UnknownProperty { property_type, value: string_value })
     }
 }
 

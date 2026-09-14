@@ -43,11 +43,16 @@ impl AppConfig {
 #[derive(Debug, Deserialize)]
 pub struct Core {
     store_buffer_size: usize,
+    client_connection_timeout_ms: u64,
 }
 
 impl Core {
     pub fn store_buffer_size(&self) -> usize {
         self.store_buffer_size
+    }
+
+    pub fn client_connection_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.client_connection_timeout_ms)
     }
 }
 
@@ -68,6 +73,7 @@ pub struct Hue {
     retry_ms: u64,
     retry_max_delay_ms: u64,
     stale_connection_timeout_ms: u64,
+    send_timeout_ms: u64,
     application_key: String,
 }
 
@@ -88,6 +94,10 @@ impl Hue {
         Duration::from_millis(self.stale_connection_timeout_ms)
     }
 
+    pub fn send_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.send_timeout_ms)
+    }
+
     pub fn application_key(&self) -> &str {
         &self.application_key
     }
@@ -103,13 +113,17 @@ impl AppConfigBuilder {
     pub fn new() -> Self {
         AppConfigBuilder {
             config: AppConfig {
-                core: Core { store_buffer_size: 1 },
+                core: Core {
+                    store_buffer_size: 1,
+                    client_connection_timeout_ms: 100,
+                },
                 flows: Flows { directory: "flows".to_string() },
                 hue: Hue {
                     url: "https://hue.url/".to_string(),
                     retry_ms: 100,
                     retry_max_delay_ms: 200,
                     stale_connection_timeout_ms: 30_000,
+                    send_timeout_ms: 100,
                     application_key: "key".to_string(),
                 },
                 location: GeoLocation {

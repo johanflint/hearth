@@ -8,17 +8,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::error::SendTimeoutError;
 use tokio::time::timeout;
 use tokio_retry::Retry;
 use tokio_retry::strategy::{ExponentialBackoff, jitter};
 use tracing::{debug, error, info, instrument, warn};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub url: String,
     pub retry_ms: u64,
     pub retry_max_delay: Duration,
     pub stale_connection_timeout_ms: Duration,
+    pub send_timeout_ms: Duration,
 }
 
 #[instrument(skip_all)]
@@ -30,7 +32,7 @@ where
 
     info!("Connecting to SSE stream {}...", config.url);
     let last_event_id = Arc::new(Mutex::new(None::<String>));
-    Retry::spawn(strategy, || {
+    Retry::start(strategy, || {
         let tx = tx.clone();
         let client = client.clone();
         let last_event_id = last_event_id.clone();
@@ -42,7 +44,7 @@ where
                     Err("Stream ended") // Triggers retry
                 }
                 Err(e) => {
-                    warn!("⚠️ SSE error: {}. Retrying...", e);
+                    warn!("⚠️ SSE error: {:?}. Retrying...", e);
                     Err("SSE failed") // Triggers retry
                 }
             }
@@ -92,20 +94,37 @@ where
                         }
                     };
 
-                    let event = ServerSentEvent::<T>::from_str(&raw)?;
-                    debug!(event = raw.trim(), "🔸 Received event: {:?}", event);
+                    debug!("🔸 Received event: {:?}", raw.trim());
+                    let event = match ServerSentEvent::<T>::from_str(&raw) {
+                        Ok(event) => event,
+                        Err(e) => {
+                            warn!("⚠️ Failed to parse SSE event, skipping it: {}", e);
+                            continue;
+                        }
+                    };
 
-                    // Track last event id for resume support
-                    if let Some(id) = &event.id {
-                        let mut guard = last_event_id.lock().await;
-                        *guard = Some(id.clone());
+                    let event_id = event.id.clone();
+                    match tx.send_timeout(event, config.send_timeout_ms).await {
+                        Ok(()) => {
+                            // Track last event id for resume support
+                            if let Some(id) = event_id {
+                                let mut guard = last_event_id.lock().await;
+                                *guard = Some(id);
+                            }
+                        }
+                        Err(SendTimeoutError::Timeout(_)) => {
+                            warn!("⏳ SSE listener stalled for {}ms while forwarding event. Reconnecting...", config.send_timeout_ms.as_millis());
+                            return Err("SSE listener stalled".into());
+                        }
+                        Err(SendTimeoutError::Closed(_)) => {
+                            error!("❌ SSE forwarding channel closed. Reconnecting...");
+                            return Err("SSE forwarding channel closed".into());
+                        }
                     }
-
-                    tx.send(event).await?;
                 }
             }
             Ok(Some(Err(e))) => {
-                error!("❌ SSE stream error: {}", e);
+                // SSE stream error
                 return Err(Box::new(e));
             }
             Ok(None) => {
