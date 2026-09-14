@@ -3,6 +3,7 @@ use crate::domain::events::Event;
 use crate::domain::property::CartesianCoordinate;
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::LightChanged;
+use tracing::warn;
 
 pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
     let mut events = Vec::<Event>::with_capacity(4);
@@ -23,11 +24,17 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
     }
 
     if let Some(color_temperature) = property.color_temperature {
-        events.push(Event::NumberPropertyChanged {
-            device_id: property.owner.rid.to_string(),
-            property_id: "colorTemperature".to_string(),
-            value: color_temperature.mirek.map(|m| Number::PositiveInt(m.mirek_to_kelvin())),
-        });
+        if color_temperature.mirek_valid && let Some(mirek) = color_temperature.mirek {
+            let clamped = mirek.clamp(153, 500);
+            if clamped != mirek {
+                warn!("⚠️ Mirek value of '{mirek}' is out of range [153, 500], clamping to '{clamped}'")
+            }
+            events.push(Event::NumberPropertyChanged {
+                device_id: property.owner.rid.to_string(),
+                property_id: "colorTemperature".to_string(),
+                value: Some(Number::PositiveInt(clamped.mirek_to_kelvin())),
+            });
+        }
     }
 
     if let Some(color) = property.color {
@@ -50,6 +57,7 @@ mod tests {
     use crate::domain::property::Gamut;
     use crate::hue::domain::{ChangedColor, ChangedColorTemperature, ColorGamut, Dimming, On, Owner, Xy};
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     #[test]
     fn maps_no_changes() {
@@ -146,6 +154,52 @@ mod tests {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
                 property_id: "colorTemperature".to_string(),
                 value: Some(PositiveInt(6535))
+            }
+        );
+    }
+
+    #[test]
+    fn ignores_color_temperature_if_mirek_is_invalid() {
+        let light_changed = LightChanged {
+            id: "42".to_string(),
+            owner: Owner {
+                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                rtype: "device".to_string(),
+            },
+            on: None,
+            dimming: None,
+            color_temperature: Some(ChangedColorTemperature { mirek: Some(100), mirek_valid: false }),
+            color: None,
+        };
+
+        let result = map_light_changed_property(light_changed);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[rstest]
+    #[case::mirek_too_small(152, 6535)]
+    #[case::mirek_too_big(501, 2000)]
+    fn ignores_color_temperature_if_mirek_is_out_of_bounds(#[case] mirek: u64, #[case] expected_kelvin: u64) {
+        let light_changed = LightChanged {
+            id: "42".to_string(),
+            owner: Owner {
+                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                rtype: "device".to_string(),
+            },
+            on: None,
+            dimming: None,
+            color_temperature: Some(ChangedColorTemperature { mirek: Some(mirek), mirek_valid: true }),
+            color: None,
+        };
+
+        let result = map_light_changed_property(light_changed);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0],
+            NumberPropertyChanged {
+                device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
+                property_id: "colorTemperature".to_string(),
+                value: Some(PositiveInt(expected_kelvin))
             }
         );
     }
