@@ -14,7 +14,7 @@ use tokio_retry::Retry;
 use tokio_retry::strategy::{ExponentialBackoff, jitter};
 use tracing::{debug, error, info, instrument, warn};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub url: String,
     pub retry_ms: u64,
