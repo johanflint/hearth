@@ -14,7 +14,7 @@ use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tracing::{debug, error, info, instrument, trace, warn};
 
-#[instrument(skip_all, fields(flow = flow.name(), metric_name = Metric::FlowExecuted.name()))]
+#[instrument(skip_all, fields(flow = flow.name(), metric_name = Metric::FlowExecutionDuration.name()))]
 pub async fn execute(flow: &Flow, node_id: Option<String>, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
     debug!("⚖️ Evaluating trigger condition for flow...");
     let result = evaluate(flow.trigger(), context);

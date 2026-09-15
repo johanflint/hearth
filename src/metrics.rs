@@ -14,26 +14,26 @@ pub fn describe() {
 
 #[derive(EnumIter, Debug)]
 pub enum Metric {
-    StoreDiscoveredDevices,
-    StoreNumberOfDevices,
-    StorePropertyChanged,
     FlowExecutionDuration,
+    StoreDeviceCount,
+    StoreDeviceDiscoveries,
+    StorePropertyChanges,
 }
 
 impl Metric {
     pub const fn name(&self) -> &'static str {
         match self {
-            Metric::StoreDiscoveredDevices => "hearth_store_discovered_devices_total",
-            Metric::StoreNumberOfDevices => "hearth_store_number_of_devices",
-            Metric::StorePropertyChanged => "hearth_store_property_changed_total",
             Metric::FlowExecutionDuration => "hearth_flow_execution_duration_seconds",
+            Metric::StoreDeviceCount => "hearth_store_device_count",
+            Metric::StoreDeviceDiscoveries => "hearth_store_device_discoveries_total",
+            Metric::StorePropertyChanges => "hearth_store_property_changes_total",
         }
     }
 
     const fn kind(&self) -> MetricKind {
         match self {
-            Metric::StoreNumberOfDevices => MetricKind::Gauge,
             Metric::FlowExecutionDuration => MetricKind::Histogram,
+            Metric::StoreDeviceCount => MetricKind::Gauge,
             _ => MetricKind::Counter,
         }
     }
@@ -47,10 +47,10 @@ impl Metric {
 
     const fn description(&self) -> &'static str {
         match self {
-            Metric::StoreDiscoveredDevices => "Newly discovered devices",
-            Metric::StoreNumberOfDevices => "Total number of devices",
-            Metric::StorePropertyChanged => "Number of times a property changed event is processed",
             Metric::FlowExecutionDuration => "Flow execution duration",
+            Metric::StoreDeviceCount => "Total number of devices",
+            Metric::StoreDeviceDiscoveries => "Newly discovered devices",
+            Metric::StorePropertyChanges => "Number of times a property changed event is processed",
         }
     }
 }

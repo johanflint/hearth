@@ -55,26 +55,26 @@ impl Store {
                     self.devices.extend(discovered_devices.into_iter().map(|device| (device.id.clone(), Arc::new(device))));
                     info!("🔵 Registring {} new device(s)... OK", num_devices);
 
-                    counter!(Metric::StoreDiscoveredDevices.name()).increment(num_devices as u64);
-                    gauge!(Metric::StoreNumberOfDevices.name()).set(self.devices.len() as f64);
+                    counter!(Metric::StoreDeviceDiscoveries.name()).increment(num_devices as u64);
+                    gauge!(Metric::StoreDeviceCount.name()).set(self.devices.len() as f64);
                 }
                 Event::BooleanPropertyChanged { device_id, property_id, value } => {
                     let result = reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut BooleanProperty| {
                         property.set_value(value)
                     });
-                    counter!(Metric::StorePropertyChanged.name(),  "property_type" => "boolean", "result" => if result.is_ok() { "success" } else { "failure" }).increment(1);
+                    counter!(Metric::StorePropertyChanges.name(),  "property_type" => "boolean", "result" => if result.is_ok() { "success" } else { "failure" }).increment(1);
                 }
                 Event::NumberPropertyChanged { device_id, property_id, value } => {
                     let result = reduce_property_changed_event(&mut self.devices.clone(), &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
                         property.set_value(value)
                     });
-                    counter!(Metric::StorePropertyChanged.name(),  "property_type" => "number", "result" => if result.is_ok() { "success" } else { "failure" }).increment(1);
+                    counter!(Metric::StorePropertyChanges.name(),  "property_type" => "number", "result" => if result.is_ok() { "success" } else { "failure" }).increment(1);
                 }
                 Event::ColorPropertyChanged { device_id, property_id, xy, gamut } => {
                     let result = reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut ColorProperty| {
                         property.set_value(xy, gamut)
                     });
-                    counter!(Metric::StorePropertyChanged.name(),  "property_type" => "color", "result" => if result.is_ok() { "success" } else { "failure" }).increment(1);
+                    counter!(Metric::StorePropertyChanges.name(),  "property_type" => "color", "result" => if result.is_ok() { "success" } else { "failure" }).increment(1);
                 }
             }
 
