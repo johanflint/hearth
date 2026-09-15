@@ -3,8 +3,9 @@ use crate::flow_engine::expression::{ExpressionError, evaluate};
 use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
 use crate::flow_engine::scope::Scope;
 use crate::flow_engine::{SchedulerCommand, Value};
-use crate::metrics::Metric;
+use crate::metrics::{Metric, MetricReason};
 use ExecuteNodeResult::*;
+use action_macros::track_failures;
 use std::any::Any;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -14,6 +15,7 @@ use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tracing::{debug, error, info, instrument, trace, warn};
 
+#[track_failures(Metric::FlowExecutionFailures.name())]
 #[instrument(skip_all, fields(flow = flow.name(), metric_name = Metric::FlowExecutionDuration.name()))]
 pub async fn execute(flow: &Flow, node_id: Option<String>, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
     debug!("⚖️ Evaluating trigger condition for flow...");
@@ -142,6 +144,19 @@ pub enum FlowEngineError {
     FailedScheduleSleepCommand(#[from] SendError<SchedulerCommand>),
     #[error("missing provided start node '{0}'")]
     MissingProvidedStartNode(String),
+}
+
+impl MetricReason for FlowEngineError {
+    fn metric_reason(&self) -> &'static str {
+        match self {
+            FlowEngineError::MissingOutgoingNode(_) => "missing_outgoing_node",
+            FlowEngineError::FailedTriggerEvaluation(_) => "trigger_evaluation_failed",
+            FlowEngineError::FailedConditionalExpressionEvaluation { .. } => "conditional_evaluation_failed",
+            FlowEngineError::NoMatchingFlowLink { .. } => "no_matching_flow_link",
+            FlowEngineError::FailedScheduleSleepCommand(_) => "schedule_sleep_command_failed",
+            FlowEngineError::MissingProvidedStartNode(_) => "missing_provided_start_node",
+        }
+    }
 }
 
 #[derive(Debug)]
