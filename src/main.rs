@@ -3,12 +3,16 @@ use crate::domain::controller_registry;
 use crate::domain::events::Event;
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
+use crate::metrics_layer::MetricsLayer;
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::{signal, task};
 use tracing::{error, info, trace};
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 mod app_config;
 mod domain;
@@ -23,10 +27,18 @@ mod property_changed_reducer;
 mod sse;
 mod store;
 mod store_listener;
+mod metrics;
+mod server;
+mod metrics_layer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,hearth::flow_engine=warn"));
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(MetricsLayer)
+        .init();
 
     info!("🪵 Starting {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 
@@ -75,6 +87,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store.listen().await;
     });
     info!("✅  Initialized store");
+
+    server::start(config.core().port()).await?;
+    info!("✅  Initialized server");
 
     let hue_devices = hue::discover(&hue_client, &config).await.expect("Could not discover Hue devices");
     trace!("Observed Hue devices: {:?}", &hue_devices);

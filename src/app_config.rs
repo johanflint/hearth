@@ -42,11 +42,16 @@ impl AppConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct Core {
+    port: usize,
     store_buffer_size: usize,
     client_connection_timeout_ms: u64,
 }
 
 impl Core {
+    pub fn port(&self) -> usize {
+        self.port
+    }
+    
     pub fn store_buffer_size(&self) -> usize {
         self.store_buffer_size
     }
@@ -114,6 +119,7 @@ impl AppConfigBuilder {
         AppConfigBuilder {
             config: AppConfig {
                 core: Core {
+                    port: 8080,
                     store_buffer_size: 1,
                     client_connection_timeout_ms: 100,
                 },

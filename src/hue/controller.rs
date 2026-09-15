@@ -9,7 +9,9 @@ use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::flow_engine::property_value::PropertyValue;
 use crate::hue::clip_to_gamut::clip_to_gamut;
 use crate::hue::domain::{LightRequest, On};
+use crate::metrics::Metric;
 use async_trait::async_trait;
+use metrics::counter;
 use reqwest::Client;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
@@ -133,6 +135,13 @@ impl Controller for HueController {
                         .json(&request)
                         .send()
                         .await;
+
+                    let (result, status) = match &request_result {
+                        Err(_) => ("failure", "n/a".to_string()),
+                        Ok(response) if response.status().is_success() => ("success", "n/a".to_string()),
+                        Ok(response) => ("failure", response.status().as_u16().to_string()),
+                    };
+                    counter!(Metric::DeviceCommandDispatches.name(), "system" => "hue", "result" => result, "status" => status).increment(1);
 
                     match request_result {
                         Err(e) => {
