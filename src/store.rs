@@ -90,33 +90,8 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::device::DeviceType;
-    use crate::domain::property::{Property, PropertyType};
+    use crate::test_support::DeviceBuilder;
     use tokio::sync::mpsc::channel;
-
-    fn device_with_property(device_id: &str, initial_value: bool) -> Device {
-        let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
-            "on".to_string(),
-            PropertyType::On,
-            false,
-            Some("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string()),
-            initial_value,
-        ));
-        Device {
-            id: device_id.to_string(),
-            r#type: DeviceType::Light,
-            manufacturer: "Signify Netherlands B.V.".to_string(),
-            model_id: "LCT007".to_string(),
-            product_name: "Hue color lamp".to_string(),
-            name: "Lamp".to_string(),
-            properties: HashMap::from([
-                (on_property.name().to_string(), on_property),
-            ]),
-            external_id: None,
-            address: None,
-            controller_id: Some("hue"),
-        }
-    }
 
     #[tokio::test]
     async fn property_change_is_persisted_in_the_store() {
@@ -129,7 +104,10 @@ mod tests {
         });
 
         // Discover the device whose "on" property is false
-        tx.send(Event::DiscoveredDevices(vec![device_with_property("device", false)])).await.unwrap();
+        let device = DeviceBuilder::new("device")
+            .with_boolean_property("on", false)
+            .build();
+        tx.send(Event::DiscoveredDevices(vec![device])).await.unwrap();
         notifier.changed().await.unwrap();
 
         // Flip the property to true

@@ -70,8 +70,8 @@ pub enum ReducerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::device::{Device, DeviceType};
-    use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
+    use crate::domain::property::{BooleanProperty, NumberProperty};
+    use crate::test_support::DeviceBuilder;
     use std::collections::HashMap;
     use std::sync::Arc;
     use test_log::test;
@@ -79,26 +79,9 @@ mod tests {
     const DEVICE_ID: &str = "079e0321-7e18-46bc-bc16-fcbc3dd09e30";
 
     fn create_devices() -> DeviceMap {
-        let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
-            "on".to_string(),
-            PropertyType::On,
-            false,
-            Some("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string()),
-            false,
-        ));
-
-        let device = Device {
-            id: DEVICE_ID.to_string(),
-            r#type: DeviceType::Light,
-            manufacturer: "Signify Netherlands B.V.".to_string(),
-            model_id: "LWA004".to_string(),
-            product_name: "Hue filament bulb".to_string(),
-            name: "Woonkamer".to_string(),
-            properties: HashMap::from([(on_property.name().to_string(), on_property)]),
-            external_id: None,
-            address: None,
-            controller_id: None,
-        };
+        let device = DeviceBuilder::new(DEVICE_ID)
+            .with_boolean_property("on", false)
+            .build();
 
         HashMap::from([(DEVICE_ID.to_string(), Arc::new(device))])
     }
