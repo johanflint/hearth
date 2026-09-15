@@ -15,6 +15,7 @@ pub fn describe() {
 #[derive(EnumIter, Debug)]
 pub enum Metric {
     FlowExecutionDuration,
+    SseConnectionAttempts,
     StoreDeviceCount,
     StoreDeviceDiscoveries,
     StorePropertyChanges,
@@ -24,6 +25,7 @@ impl Metric {
     pub const fn name(&self) -> &'static str {
         match self {
             Metric::FlowExecutionDuration => "hearth_flow_execution_duration_seconds",
+            Metric::SseConnectionAttempts => "hearth_see_connection_attempts_total",
             Metric::StoreDeviceCount => "hearth_store_device_count",
             Metric::StoreDeviceDiscoveries => "hearth_store_device_discoveries_total",
             Metric::StorePropertyChanges => "hearth_store_property_changes_total",
@@ -48,6 +50,7 @@ impl Metric {
     const fn description(&self) -> &'static str {
         match self {
             Metric::FlowExecutionDuration => "Flow execution duration",
+            Metric::SseConnectionAttempts => "Number of SSE connection attempts",
             Metric::StoreDeviceCount => "Total number of devices",
             Metric::StoreDeviceDiscoveries => "Newly discovered devices",
             Metric::StorePropertyChanges => "Number of times a property changed event is processed",

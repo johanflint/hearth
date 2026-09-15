@@ -1,5 +1,7 @@
+use crate::metrics::Metric;
 use crate::sse::server_sent_event::ServerSentEvent;
 use futures::StreamExt;
+use metrics::counter;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use std::error::Error;
@@ -66,8 +68,11 @@ where
     if let Some(id) = current_id {
         request = request.header("Last-Event-ID", id);
     }
-    let response = request.send().await?.error_for_status()?;
+    let result = request.send().await.and_then(|r| r.error_for_status());
+    let outcome = if result.is_ok() { "success" } else { "failure" };
+    counter!(Metric::SseConnectionAttempts.name(), "result" => outcome).increment(1);
 
+    let response = result?;
     if response.status() == StatusCode::OK {
         info!(status = %response.status(), "Connecting to SSE stream {}... OK", config.url);
     }
