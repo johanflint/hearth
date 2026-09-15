@@ -3,6 +3,7 @@ use crate::domain::controller_registry;
 use crate::domain::events::Event;
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
+use crate::metrics_layer::MetricsLayer;
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use std::sync::Arc;
@@ -10,6 +11,8 @@ use tokio::sync::mpsc;
 use tokio::{signal, task};
 use tracing::{error, info, trace};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 mod app_config;
 mod domain;
@@ -26,11 +29,15 @@ mod store;
 mod store_listener;
 mod metrics;
 mod server;
+mod metrics_layer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,hearth::flow_engine=warn")))
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,hearth::flow_engine=warn"));
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(MetricsLayer)
         .init();
 
     info!("🪵 Starting {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));

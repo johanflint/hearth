@@ -3,6 +3,7 @@ use crate::flow_engine::expression::{ExpressionError, evaluate};
 use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
 use crate::flow_engine::scope::Scope;
 use crate::flow_engine::{SchedulerCommand, Value};
+use crate::metrics::Metric;
 use ExecuteNodeResult::*;
 use std::any::Any;
 use std::collections::HashMap;
@@ -13,7 +14,7 @@ use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tracing::{debug, error, info, instrument, trace, warn};
 
-#[instrument(fields(flow = flow.name()), skip_all)]
+#[instrument(skip_all, fields(flow = flow.name(), metric_name = Metric::FlowExecuted.name()))]
 pub async fn execute(flow: &Flow, node_id: Option<String>, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
     debug!("⚖️ Evaluating trigger condition for flow...");
     let result = evaluate(flow.trigger(), context);
