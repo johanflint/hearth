@@ -64,3 +64,13 @@ enum MetricKind {
     Gauge,
     Histogram,
 }
+
+pub trait ResultOutcomeLabel {
+    fn metric_label(&self) -> &'static str;
+}
+
+impl<T, E> ResultOutcomeLabel for Result<T, E> {
+    fn metric_label(&self) -> &'static str {
+        if self.is_ok() { "success" } else { "failure" }
+    }
+}

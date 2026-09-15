@@ -1,4 +1,4 @@
-use crate::metrics::Metric;
+use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::sse::server_sent_event::ServerSentEvent;
 use futures::StreamExt;
 use metrics::counter;
@@ -69,8 +69,7 @@ where
         request = request.header("Last-Event-ID", id);
     }
     let result = request.send().await.and_then(|r| r.error_for_status());
-    let outcome = if result.is_ok() { "success" } else { "failure" };
-    counter!(Metric::SseConnectionAttempts.name(), "result" => outcome).increment(1);
+    counter!(Metric::SseConnectionAttempts.name(), "result" => result.metric_label()).increment(1);
 
     let response = result?;
     if response.status() == StatusCode::OK {
