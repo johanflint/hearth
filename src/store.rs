@@ -59,19 +59,19 @@ impl Store {
                     gauge!(Metric::StoreDeviceCount.name()).set(self.devices.len() as f64);
                 }
                 Event::BooleanPropertyChanged { device_id, property_id, value } => {
-                    let result = reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut BooleanProperty| {
+                    let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut BooleanProperty| {
                         property.set_value(value)
                     });
                     counter!(Metric::StorePropertyChanges.name(),  "property_type" => "boolean", "result" => result.metric_label()).increment(1);
                 }
                 Event::NumberPropertyChanged { device_id, property_id, value } => {
-                    let result = reduce_property_changed_event(&mut self.devices.clone(), &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
+                    let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
                         property.set_value(value)
                     });
                     counter!(Metric::StorePropertyChanges.name(),  "property_type" => "number", "result" => result.metric_label()).increment(1);
                 }
                 Event::ColorPropertyChanged { device_id, property_id, xy, gamut } => {
-                    let result = reduce_property_changed_event(&mut self.devices.clone(), &device_id, &property_id, |property: &mut ColorProperty| {
+                    let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut ColorProperty| {
                         property.set_value(xy, gamut)
                     });
                     counter!(Metric::StorePropertyChanges.name(),  "property_type" => "color", "result" => result.metric_label()).increment(1);
@@ -84,5 +84,66 @@ impl Store {
             self.notifier_tx.send(snapshot).unwrap_or_default();
             info!("🔄 Updated store");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::device::DeviceType;
+    use crate::domain::property::{Property, PropertyType};
+    use tokio::sync::mpsc::channel;
+
+    fn device_with_property(device_id: &str, initial_value: bool) -> Device {
+        let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
+            "on".to_string(),
+            PropertyType::On,
+            false,
+            Some("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string()),
+            initial_value,
+        ));
+        Device {
+            id: device_id.to_string(),
+            r#type: DeviceType::Light,
+            manufacturer: "Signify Netherlands B.V.".to_string(),
+            model_id: "LCT007".to_string(),
+            product_name: "Hue color lamp".to_string(),
+            name: "Lamp".to_string(),
+            properties: HashMap::from([
+                (on_property.name().to_string(), on_property),
+            ]),
+            external_id: None,
+            address: None,
+            controller_id: Some("hue"),
+        }
+    }
+
+    #[tokio::test]
+    async fn property_change_is_persisted_in_the_store() {
+        let (tx, rx) = channel::<Event>(8);
+        let mut store = Store::new(rx);
+        let mut notifier = store.notifier();
+
+        tokio::spawn(async move {
+            store.listen().await;
+        });
+
+        // Discover the device whose "on" property is false
+        tx.send(Event::DiscoveredDevices(vec![device_with_property("device", false)])).await.unwrap();
+        notifier.changed().await.unwrap();
+
+        // Flip the property to true
+        tx.send(Event::BooleanPropertyChanged {
+            device_id: "device".to_string(),
+            property_id: "on".to_string(),
+            value: true,
+        }).await.unwrap();
+        notifier.changed().await.unwrap();
+
+        let snapshot = notifier.borrow().clone();
+        let device = snapshot.devices.get("device").expect("device should exist in snapshot");
+        let on_property = device.get_property::<BooleanProperty>("on").expect("property should exist");
+
+        assert_eq!(on_property.value(), true, "expected the store snapshot to reflect the property change");
     }
 }
