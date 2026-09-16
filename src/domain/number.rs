@@ -73,17 +73,25 @@ impl Sub for Number {
         match (self, rhs) {
             // Integer - Integer
             (Number::PositiveInt(a), Number::PositiveInt(b)) => {
-                if a >= b {
-                    Number::PositiveInt(a - b)
+                let diff = a as i128 - b as i128;
+                if diff >= 0 {
+                    Number::PositiveInt(diff as u64)
                 } else {
-                    Number::NegativeInt((a as i128 - b as i128) as i64)
+                    Number::NegativeInt(diff.max(i64::MIN as i128) as i64)
                 }
             }
-            (Number::PositiveInt(a), Number::NegativeInt(b)) => match a as i128 - b as i128 {
-                result if result >= 0 => Number::PositiveInt(result as u64),
-                result => Number::NegativeInt(result as i64),
+            (Number::PositiveInt(a), Number::NegativeInt(b)) => {
+                let diff = a as i128 - b as i128;
+                if diff >= 0 {
+                    Number::PositiveInt(diff.min(u64::MAX as i128) as u64)
+                } else {
+                    Number::NegativeInt(diff as i64)
+                }
             },
-            (Number::NegativeInt(a), Number::PositiveInt(b)) => Number::NegativeInt(a.saturating_sub(b as i64)),
+            (Number::NegativeInt(a), Number::PositiveInt(b)) => {
+                let diff = a as i128 - b as i128;
+                Number::NegativeInt(diff.max(i64::MIN as i128) as i64)
+            },
             (Number::NegativeInt(a), Number::NegativeInt(b)) => Number::NegativeInt(a.saturating_sub(b)),
 
             // Float involved
@@ -188,6 +196,10 @@ mod tests {
     #[case(Number::PositiveInt(5), Number::NegativeInt(-2), Number::PositiveInt(7))]
     #[case(Number::PositiveInt(3), Number::NegativeInt(5), Number::NegativeInt(-2))]
     #[case(Number::PositiveInt(3), Number::NegativeInt(1), Number::PositiveInt(2))]
+    #[case(Number::PositiveInt(0), Number::PositiveInt(u64::MAX), Number::NegativeInt(i64::MIN))]
+    #[case(Number::PositiveInt(0), Number::NegativeInt(i64::MIN), Number::PositiveInt((i64::MAX as u64) + 1))]
+    #[case(Number::NegativeInt(-1), Number::PositiveInt(u64::MAX), Number::NegativeInt(i64::MIN))]
+    #[case(Number::PositiveInt(u64::MAX), Number::NegativeInt(i64::MIN), Number::PositiveInt(u64::MAX))]
     #[case(Number::NegativeInt(3), Number::PositiveInt(5), Number::NegativeInt(-2))]
     #[case(Number::NegativeInt(3), Number::PositiveInt(1), Number::NegativeInt(2))]
     #[case(Number::NegativeInt(-3), Number::NegativeInt(-3), Number::NegativeInt(0))]
