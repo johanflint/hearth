@@ -50,13 +50,9 @@ impl Add for Number {
         match (self, rhs) {
             // Integer + Integer
             (Number::PositiveInt(a), Number::PositiveInt(b)) => Number::PositiveInt(a.saturating_add(b)),
-            (Number::PositiveInt(a), Number::NegativeInt(b)) => match a as i128 + b as i128 {
-                sum if sum >= 0 => Number::PositiveInt(a.saturating_add(b as u64)),
-                sum => Number::NegativeInt(sum as i64),
-            },
-            (Number::NegativeInt(a), Number::PositiveInt(b)) => match a as i128 + b as i128 {
-                sum if sum >= 0 => Number::PositiveInt(b.saturating_add(a as u64)),
-                sum => Number::NegativeInt(sum as i64),
+            (Number::PositiveInt(a), Number::NegativeInt(b)) | (Number::NegativeInt(b), Number::PositiveInt(a)) => match a as i128 + b as i128 {
+                sum if sum >= 0 => Number::PositiveInt(sum.min(u64::MAX as i128) as u64),
+                sum => Number::NegativeInt(sum.max(i64::MIN as i128) as i64),
             },
             (Number::NegativeInt(a), Number::NegativeInt(b)) => Number::NegativeInt(a.saturating_add(b)),
 
@@ -165,6 +161,8 @@ mod tests {
     #[rstest]
     #[case(Number::PositiveInt(1), Number::PositiveInt(2), Number::PositiveInt(3))]
     #[case(Number::PositiveInt(1), Number::NegativeInt(2), Number::PositiveInt(3))]
+    #[case(Number::PositiveInt(5), Number::NegativeInt(-2), Number::PositiveInt(3))]
+    #[case(Number::PositiveInt(u64::MAX), Number::NegativeInt(i64::MIN), Number::PositiveInt(i64::MAX as u64))]
     #[case(Number::PositiveInt(1), Number::NegativeInt(-2), Number::NegativeInt(-1))]
     #[case(Number::NegativeInt(1), Number::PositiveInt(2), Number::PositiveInt(3))]
     #[case(Number::NegativeInt(-3), Number::PositiveInt(2), Number::NegativeInt(-1))]
@@ -177,7 +175,6 @@ mod tests {
     // Overflows
     #[case(Number::PositiveInt(u64::MAX), Number::PositiveInt(1), Number::PositiveInt(u64::MAX))]
     #[case(Number::PositiveInt(u64::MAX), Number::NegativeInt(1), Number::PositiveInt(u64::MAX))]
-    #[case(Number::PositiveInt(u64::MAX), Number::NegativeInt(i64::MIN), Number::PositiveInt(u64::MAX))]
     #[case(Number::PositiveInt(0), Number::NegativeInt(i64::MIN), Number::NegativeInt(i64::MIN))]
     #[case(Number::NegativeInt(1), Number::PositiveInt(u64::MAX), Number::PositiveInt(u64::MAX))]
     #[case(Number::NegativeInt(0), Number::NegativeInt(i64::MIN), Number::NegativeInt(i64::MIN))]
@@ -188,6 +185,7 @@ mod tests {
     #[rstest]
     #[case(Number::PositiveInt(3), Number::PositiveInt(2), Number::PositiveInt(1))]
     #[case(Number::PositiveInt(3), Number::PositiveInt(5), Number::NegativeInt(-2))]
+    #[case(Number::PositiveInt(5), Number::NegativeInt(-2), Number::PositiveInt(7))]
     #[case(Number::PositiveInt(3), Number::NegativeInt(5), Number::NegativeInt(-2))]
     #[case(Number::PositiveInt(3), Number::NegativeInt(1), Number::PositiveInt(2))]
     #[case(Number::NegativeInt(3), Number::PositiveInt(5), Number::NegativeInt(-2))]
