@@ -2,7 +2,13 @@ name: Rust
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true # superseded pushes to the same PR/branch cancel the stale run
 
 env:
   CARGO_TERM_COLOR: always
