@@ -93,11 +93,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     server::start(config.core().port()).await?;
     info!("✅  Initialized server");
 
-    let hue_devices = hue::discover(&hue_client, &config).await.expect("Could not discover Hue devices");
+    let hue_devices = hue::discover(&hue_client, &config).await?;
     trace!("Observed Hue devices: {:?}", &hue_devices);
-    tx.send(Event::DiscoveredDevices(hue_devices))
-        .await
-        .expect("Could not send discovered devices to the store");
+    tx.send(Event::DiscoveredDevices(hue_devices)).await?;
 
     info!("✅  Discovered all devices");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));

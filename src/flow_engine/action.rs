@@ -29,7 +29,7 @@ impl<'de> Deserialize<'de> for Box<dyn Action> {
 
         let registry = ACTION_REGISTRY.read().unwrap();
         if let Some(action) = registry.get(kind) {
-            Ok(action(&value))
+            action(&value).map_err(serde::de::Error::custom)
         } else {
             Err(serde::de::Error::custom(format!(
                 "unknown action type '{}', known types: {}",
