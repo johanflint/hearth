@@ -29,7 +29,7 @@ impl Metric {
             Metric::DeviceCommandDispatches => "hearth_device_command_dispatches_total",
             Metric::FlowExecutionDuration => "hearth_flow_execution_duration_seconds",
             Metric::FlowExecutionFailures => "hearth_flow_execution_failures_total",
-            Metric::SseConnectionAttempts => "hearth_see_connection_attempts_total",
+            Metric::SseConnectionAttempts => "hearth_sse_connection_attempts_total",
             Metric::StoreDeviceCount => "hearth_store_device_count",
             Metric::StoreDeviceDiscoveries => "hearth_store_device_discoveries_total",
             Metric::StorePropertyChanges => "hearth_store_property_changes_total",
