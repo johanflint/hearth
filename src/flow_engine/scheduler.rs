@@ -67,7 +67,7 @@ pub async fn scheduler(
             SchedulerCommand::ScheduleOnce { flow_id, node_id, delay } => {
                 let Some(flow) = flow_registry.by_id(&flow_id) else {
                     warn!("🕗 Scheduling flow '{}'... failed, flow not found", flow_id);
-                    return;
+                    continue;
                 };
 
                 debug!("🕗 Scheduling flow '{}' to run node '{}' after {:?}... OK", flow_id, node_id, delay);
