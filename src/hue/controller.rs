@@ -35,13 +35,20 @@ impl Controller for HueController {
         match command {
             Command::ControlDevice { device, property } => {
                 if device.r#type == DeviceType::Light {
-                    let on_property = device.get_property_of_type::<BooleanProperty>(PropertyType::On).unwrap();
-                    let on = device.get_property_of_type::<BooleanProperty>(PropertyType::On).and_then(|on_property| {
-                        property.get(on_property.name()).and_then(|pv| match pv {
-                            PropertyValue::SetBooleanValue(value) => Some(On { on: *value }),
-                            PropertyValue::ToggleBooleanValue => Some(On { on: !on_property.value() }),
-                            _ => None,
-                        })
+                    let Some(on_property) = device.get_property_of_type::<BooleanProperty>(PropertyType::On) else {
+                        warn!(device_id = device.id, "⚠️ Light has no on property");
+                        return;
+                    };
+
+                    let Some(light_id) = on_property.external_id() else {
+                        warn!(device_id = device.id, "⚠️ Light on property has no Hue resource id");
+                        return;
+                    };
+
+                    let on = property.get(on_property.name()).and_then(|pv| match pv {
+                        PropertyValue::SetBooleanValue(value) => Some(On { on: *value }),
+                        PropertyValue::ToggleBooleanValue => Some(On { on: !on_property.value() }),
+                        _ => None,
                     });
 
                     if let Some(value) = &on {
@@ -131,7 +138,7 @@ impl Controller for HueController {
                     let request = LightRequest::new(on, brightness, color_temperature, color);
                     let request_result = self
                         .client
-                        .put(format!("{}/clip/v2/resource/light/{}", self.config.hue().url(), on_property.external_id().expect("")))
+                        .put(format!("{}/clip/v2/resource/light/{}", self.config.hue().url(), light_id))
                         .json(&request)
                         .send()
                         .await;
