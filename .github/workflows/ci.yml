@@ -15,14 +15,19 @@ env:
 
 jobs:
   build_and_test:
-    name: Hearth - latest
-    runs-on: ubuntu-latest
+    name: Hearth - ${{ matrix.toolchain }} (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        toolchain:
-          - stable
-          - beta
-          - nightly
+        include:
+          - runner: ubuntu-latest
+            toolchain: stable
+          - runner: ubuntu-latest
+            toolchain: beta
+          - runner: ubuntu-latest
+            toolchain: nightly
+          - runner: ubuntu-24.04-arm
+            toolchain: stable
     steps:
       - uses: actions/checkout@v4
       - name: Rustup
