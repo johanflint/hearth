@@ -29,6 +29,8 @@ mod store;
 mod store_listener;
 mod metrics;
 mod server;
+#[cfg(test)]
+mod test_support;
 mod metrics_layer;
 
 #[tokio::main]

@@ -254,14 +254,15 @@ pub enum ExpressionError {
 mod tests {
     use super::*;
     use crate::domain::Weekday::*;
-    use crate::domain::device::{Device, DeviceType};
-    use crate::domain::property::{CartesianCoordinate, ColorProperty, Gamut, Property, Unit};
+    use crate::domain::device::Device;
+    use crate::domain::property::{CartesianCoordinate, Gamut, Property, Unit};
     use crate::domain::{GeoLocation, Weekday};
     use crate::flow_engine::context::ContextBuilder;
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
     use crate::flow_engine::expression::TemporalExpression::{HasSunRisen, HasSunSet, IsAfterTime, IsBeforeTime, IsDaytime, IsNighttime, IsToday};
     use crate::store::{DeviceMap, StoreSnapshot};
+    use crate::test_support::DeviceBuilder;
     use chrono::{Local, TimeZone};
     use rstest::rstest;
     use std::collections::HashMap;
@@ -287,14 +288,6 @@ mod tests {
     }
 
     fn device() -> Device {
-        let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
-            "on".to_string(),
-            PropertyType::On,
-            false,
-            Some("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string()),
-            true,
-        ));
-
         let brightness_property: Box<dyn Property> = Box::new(
             NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false)
                 .external_id("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string())
@@ -311,36 +304,19 @@ mod tests {
                 .build(),
         );
 
-        let color_property: Box<dyn Property> = Box::new(ColorProperty::new(
-            "color".to_string(),
-            PropertyType::Color,
-            false,
-            Some("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string()),
-            CartesianCoordinate::new(0.4851, 0.4331),
-            Some(Gamut::new(
-                CartesianCoordinate::new(0.675, 0.322),
-                CartesianCoordinate::new(0.409, 0.518),
-                CartesianCoordinate::new(0.167, 0.04),
-            )),
-        ));
-
-        Device {
-            id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
-            r#type: DeviceType::Light,
-            manufacturer: "Signify Netherlands B.V.".to_string(),
-            model_id: "LCT007".to_string(),
-            product_name: "Hue color lamp".to_string(),
-            name: "Lamp".to_string(),
-            properties: HashMap::from([
-                (on_property.name().to_string(), on_property),
-                (brightness_property.name().to_string(), brightness_property),
-                (color_temperature_property.name().to_string(), color_temperature_property),
-                (color_property.name().to_string(), color_property),
-            ]),
-            external_id: None,
-            address: None,
-            controller_id: Some("hue"),
-        }
+        DeviceBuilder::new("ab917a9a-a7d5-4853-9518-75909236a182")
+            .with_boolean_property("on", true)
+            .with_color_property(
+                "color",
+                CartesianCoordinate::new(0.4851, 0.4331),
+                Some(Gamut::new(
+                    CartesianCoordinate::new(0.675, 0.322),
+                    CartesianCoordinate::new(0.409, 0.518),
+                    CartesianCoordinate::new(0.167, 0.04),
+                )),
+            )
+            .with_properties(vec![brightness_property, color_temperature_property])
+            .build()
     }
 
     #[rstest]
