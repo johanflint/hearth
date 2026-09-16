@@ -9,5 +9,6 @@ mod time_deserializer;
 mod value_deserializer;
 mod weekday_condition_deserializer;
 mod weekday_deserializer;
+mod duplicate_ids;
 
 pub use loader::load_flows_from;
