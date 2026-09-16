@@ -1,5 +1,6 @@
 use crate::extensions::path_ext::FileName;
 use crate::flow_engine::flow::Flow;
+use crate::flow_loader::duplicate_ids::{duplicate_id_set, group_duplicates};
 use crate::flow_loader::factory::{FlowFactoryError, from_json};
 use futures::stream::FuturesUnordered;
 use std::io;
@@ -20,14 +21,27 @@ pub async fn load_flows_from(directory: &str, extension: &str) -> Result<Vec<Flo
     })?;
 
     let results = load_files(files).await;
-    let (flows, errors): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+    let (loaded_flows, errors): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+    let parsed: Vec<(PathBuf, Flow)> = loaded_flows.into_iter().map(Result::unwrap).collect();
 
     for error in errors.iter().filter_map(|res| res.as_ref().err()) {
         log_error(error);
     }
 
-    info!("📁 Loading flows... OK, {} loaded, {} failed", flows.len(), errors.len());
-    Ok(flows.into_iter().filter_map(Result::ok).collect())
+    // Warn about duplicate flows sharing an id
+    let grouped = group_duplicates(parsed.iter().map(|(path, flow)| (flow.id().to_string(), path.clone())));
+    let duplicate_ids = duplicate_id_set(&grouped);
+
+    for (id, paths) in &grouped {
+        let names = paths.iter().map(|p| p.string_file_name()).collect::<Vec<_>>();
+        warn!("⚠️ Rejecting {} flows with duplicate id '{}': {}", names.len(), id, names.join(", "));
+    }
+
+    // Reject flows with duplicate ids
+    let flows: Vec<Flow> = parsed.into_iter().filter(|(_, flow)| !duplicate_ids.contains(flow.id())).map(|(_, flow)| flow).collect();
+    let rejected_count: usize = grouped.values().map(Vec::len).sum();
+    info!("📁 Loading flows... OK, {} loaded, {} failed, {} rejected", flows.len(), errors.len(), rejected_count);
+    Ok(flows)
 }
 
 #[instrument]
@@ -52,10 +66,15 @@ async fn list_files(directory: &str, extension: &str) -> io::Result<Vec<PathBuf>
 }
 
 #[instrument(skip_all)]
-async fn load_files(paths: Vec<PathBuf>) -> Vec<Result<Flow, LoaderError>> {
+async fn load_files(paths: Vec<PathBuf>) -> Vec<Result<(PathBuf, Flow), LoaderError>> {
     FuturesUnordered::from_iter(paths.into_iter().map(|path| async move {
         match fs::read_to_string(&path).await {
-            Ok(content) => task::spawn_blocking(move || from_json(&content).map_err(|e| LoaderError::FlowFactory { source: e, path })).await?,
+            Ok(content) => {
+                let path_clone = path.clone();
+                task::spawn_blocking(move || from_json(&content).map_err(|e| LoaderError::FlowFactory { source: e, path: path_clone }))
+                    .await?
+                    .map(|flow| (path, flow))
+            }
             Err(err) => Err(LoaderError::Io { source: err, path: Some(path) }),
         }
     }))
@@ -92,6 +111,17 @@ mod tests {
     use test_log::test;
 
     #[tokio::test]
+    async fn load_flows_from_ignores_flows_with_duplicate_ids() -> Result<(), LoaderError> {
+        let path = PathBuf::from(format!("{}/tests/resources/flows/duplicates", env!("CARGO_MANIFEST_DIR")));
+        let flows = load_flows_from(path.to_str().unwrap(), "json").await?;
+
+        // Both flows found at the path have duplicate ids, so no flows should be loaded
+        assert_eq!(flows.len(), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn list_files_returns_all_relevant_files() -> io::Result<()> {
         let temp_dir = temp_dir().join("hearth");
         fs::create_dir_all(&temp_dir).await?;
@@ -122,7 +152,7 @@ mod tests {
         let result = load_files(vec![path]).await;
         assert_eq!(result.len(), 1);
         match &result[0] {
-            Ok(flow) => assert_eq!(flow.name(), "logFlow"),
+            Ok((_path, flow)) => assert_eq!(flow.name(), "logFlow"),
             Err(err) => assert!(false, "Expected a flow, found {:?}", err),
         }
 
