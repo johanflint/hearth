@@ -1,7 +1,8 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
 use crate::hue::domain::{DeviceGet, HueResponse, LightGet};
-use crate::hue::map_lights::map_lights;
+use crate::hue::map_lights;
+use crate::hue::map_lights::{MapLightsError, map_lights};
 use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -33,7 +34,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     info!("Retrieving lights... OK, {} found", light_response.data.len());
 
     let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
-    let devices = map_lights(light_response.data, &mut device_map).unwrap();
+    let devices = map_lights(light_response.data, &mut device_map)?;
 
     if !device_map.is_empty() {
         log_unmapped_devices(&device_map);
@@ -66,6 +67,8 @@ pub enum DiscoverError {
     ClientError(#[from] reqwest::Error),
     #[error("unexpected status code {0} when calling {1}")]
     UnexpectedResponse(StatusCode, String),
+    #[error(transparent)]
+    MapLights(#[from] MapLightsError),
 }
 
 #[cfg(test)]
