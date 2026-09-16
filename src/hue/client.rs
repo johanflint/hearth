@@ -13,6 +13,7 @@ pub fn new_client(config: &AppConfig) -> Result<Client, HueClientError> {
         .danger_accept_invalid_certs(true)
         .default_headers(headers)
         .connect_timeout(config.core().client_connection_timeout_ms())
+        .timeout(config.core().client_request_timeout_ms())
         .build()?;
     Ok(client)
 }
@@ -29,6 +30,8 @@ pub enum HueClientError {
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
+    use std::time::{Duration, Instant};
+    use tokio::net::TcpListener;
 
     #[tokio::test]
     async fn new_client_sets_the_hue_application_key_header() -> Result<(), HueClientError> {
@@ -50,5 +53,35 @@ mod tests {
         mock.assert();
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn request_times_out_instead_of_hanging_forever() -> Result<(), HueClientError> {
+        let url = start_hanging_server().await;
+
+        let config = AppConfigBuilder::new().hue_url(url.clone()).build();
+        let client = new_client(&config)?;
+
+        let start = Instant::now();
+        let result = client.get(&url).send().await;
+
+        assert!(result.is_err(), "expected the request to time out, got {:?}", result);
+        assert!(result.unwrap_err().is_timeout(), "expected a timeout error");
+        assert!(start.elapsed() < Duration::from_secs(1), "expected request to fail fast, not hang; took {:?}", start.elapsed());
+
+        Ok(())
+    }
+
+    async fn start_hanging_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                if let Ok((socket, _)) = listener.accept().await {
+                    std::mem::forget(socket); // Hold the connection open, never respond
+                }
+            }
+        });
+        format!("http://{}", address)
     }
 }

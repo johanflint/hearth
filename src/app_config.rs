@@ -45,6 +45,7 @@ pub struct Core {
     port: usize,
     store_buffer_size: usize,
     client_connection_timeout_ms: u64,
+    client_request_timeout_ms: u64,
 }
 
 impl Core {
@@ -58,6 +59,10 @@ impl Core {
 
     pub fn client_connection_timeout_ms(&self) -> Duration {
         Duration::from_millis(self.client_connection_timeout_ms)
+    }
+
+    pub fn client_request_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.client_request_timeout_ms)
     }
 }
 
@@ -122,6 +127,7 @@ impl AppConfigBuilder {
                     port: 8080,
                     store_buffer_size: 1,
                     client_connection_timeout_ms: 100,
+                    client_request_timeout_ms: 100,
                 },
                 flows: Flows { directory: "flows".to_string() },
                 hue: Hue {

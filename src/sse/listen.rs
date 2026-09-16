@@ -62,7 +62,9 @@ where
     T: DeserializeOwned + Debug + 'static,
 {
     let url = format!("{}/eventstream/clip/v2", config.url);
-    let mut request = client.get(&url).header("Accept", "text/event-stream");
+    let mut request = client.get(&url)
+        .timeout(Duration::MAX) // Overrides the client_request_timeout_ms config
+        .header("Accept", "text/event-stream");
 
     let current_id = { last_event_id.lock().await.clone() };
     if let Some(id) = current_id {
