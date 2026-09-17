@@ -31,7 +31,7 @@ jobs:
           - runner: macos-26
             toolchain: stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Rustup
         run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
       - name: Build
