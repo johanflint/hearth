@@ -17,7 +17,7 @@ impl AppConfig {
 
         Config::builder()
             .add_source(config::File::from_str(DEFAULT_CONFIG, FileFormat::Json5))
-            .add_source(config::File::with_name("config_local").required(false))
+            .add_source(config::File::with_name("config.local").required(false))
             .add_source(config::Environment::default())
             .build()
             .unwrap()
