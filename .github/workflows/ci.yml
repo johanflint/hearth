@@ -1,4 +1,4 @@
-name: Rust
+name: CI
 
 on:
   push:
@@ -28,11 +28,13 @@ jobs:
             toolchain: nightly
           - runner: ubuntu-24.04-arm
             toolchain: stable
+          - runner: macos-26
+            toolchain: stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Rustup
         run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
       - name: Build
-        run: cargo build --verbose
+        run: cargo build --verbose --locked
       - name: Tests
-        run: cargo test --verbose
+        run: cargo test --locked
