@@ -1,5 +1,5 @@
 use crate::domain::GeoLocation;
-use config::Config;
+use config::{Config, FileFormat};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -13,8 +13,10 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn load() -> Self {
+        const DEFAULT_CONFIG: &str = include_str!("../config.json5");
+
         Config::builder()
-            .add_source(config::File::with_name("config").required(true))
+            .add_source(config::File::from_str(DEFAULT_CONFIG, FileFormat::Json5))
             .add_source(config::File::with_name("config_local").required(false))
             .add_source(config::Environment::default())
             .build()
