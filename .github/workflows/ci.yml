@@ -28,6 +28,8 @@ jobs:
             toolchain: nightly
           - runner: ubuntu-24.04-arm
             toolchain: stable
+          - runner: macos-26
+            toolchain: stable
     steps:
       - uses: actions/checkout@v4
       - name: Rustup
