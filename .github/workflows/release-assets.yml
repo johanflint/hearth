@@ -1,0 +1,85 @@
+name: Release assets
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - run: rustup update stable && rustup default stable
+      - run: cargo test --release --locked
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest        # x86_64 Linux (native runner, no cross toolchain needed)
+            target: x86_64-unknown-linux-gnu
+            archive_os: linux-x86_64
+          - os: ubuntu-24.04-arm     # aarch64 Linux — Raspberry Pi / ARM NAS (native arm64 runner)
+            target: aarch64-unknown-linux-gnu
+            archive_os: linux-aarch64
+          - os: macos-15-intel       # Intel macOS
+            target: x86_64-apple-darwin
+            archive_os: macos-x86_64
+          - os: macos-15             # Apple Silicon (native runner)
+            target: aarch64-apple-darwin
+            archive_os: macos-aarch64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Rustup
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+      - name: Build
+        run: cargo build --verbose --release --locked --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          name="hearth-${{ github.event.release.tag_name }}-${{ matrix.archive_os }}"
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/hearth" "$name/"
+          cp README.md "$name/" 2>/dev/null || true
+          tar czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: hearth-${{ matrix.archive_os }}
+          path: |
+            hearth-*.tar.gz
+            hearth-*.tar.gz.sha256
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Combine checksums
+        run: cd dist && cat *.sha256 > SHA256SUMS
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
