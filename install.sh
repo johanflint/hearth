@@ -2,7 +2,7 @@
 set -eu
 
 REPOSITORY="johanflint/hearth"
-APP_DIR="${HEARTH_HOME:-$HOME/.hearth}"
+APP_DIR="${HEARTH_HOME:-}"
 VERSION="${HEARTH_VERSION:-}"
 
 log() {
@@ -13,6 +13,12 @@ die() {
   printf '❌ %s\n' "$*" >&2;
   exit 1;
 }
+
+### Ensure HOME is set
+if [ -z "$APP_DIR" ]; then
+  [ -n "${HOME:-}" ] || die "HOME is unset; set HEARTH_HOME to choose an install directory"
+  APP_DIR="$HOME/.hearth"
+fi
 
 ### Detect OS and arch, map to archive_os naming used by release-assets.yml
 os="$(uname -s)"
