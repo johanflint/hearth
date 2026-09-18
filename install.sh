@@ -45,8 +45,20 @@ archive="hearth-${VERSION}-${archive_os}.tar.gz"
 base_url="https://github.com/${REPOSITORY}/releases/download/${VERSION}"
 
 ### Download to a scratch dir, always cleaned up
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
+tmp_dir=
+install_tmp=
+install_complete=false
+cleanup() {
+  status=$?
+  [ -z "$install_tmp" ] || rm -f "$install_tmp"
+  [ -z "$tmp_dir" ] || rm -rf "$tmp_dir"
+  if [ "$install_complete" != true ] && [ "$status" -eq 0 ]; then
+    die "Installed input ended before completion"
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+tmp_dir="$(mktemp -d)" || die "Could not create a temporary directory"
 
 log "⏳ Downloading '${archive}'..."
 curl -fsSL -o "${tmp_dir}/${archive}" "${base_url}/${archive}" \
@@ -78,9 +90,13 @@ extracted_dir="${tmp_dir}/hearth-${VERSION}-${archive_os}"
 [ -x "${extracted_dir}/hearth" ] || die "Extracted archive did not contain an executable"
 
 ### Install
-mkdir -p "$APP_DIR"
-cp "${extracted_dir}/hearth" "${APP_DIR}/hearth"
-chmod +x "${APP_DIR}/hearth"
+mkdir -p "$APP_DIR" || die "Could not create '${APP_DIR}'"
+install_tmp="$(mktemp "${APP_DIR}/.hearth.XXXXXX")" || die "Could not stage binary"
+cp "${extracted_dir}/hearth" "$install_tmp" || die "Could not stage binary, unable to copy"
+chmod +x "$install_tmp" || die "Could not mark hearth as executable"
+mv -f "$install_tmp" "${APP_DIR}/hearth" || die "Could not install hearth"
+install_tmp=
+install_complete=true
 
 if [ ! -f "${APP_DIR}/config.local.json5" ]; then
   log "⚠️ No config.local.json5 found in ${APP_DIR} - hearth will run with default settings"
