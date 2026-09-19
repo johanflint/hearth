@@ -144,9 +144,21 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 }
                 PropertyType::Color => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
+                PropertyType::Enabled => {
+                    let enabled_property = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
+                    Ok(Value::Boolean(enabled_property.value()))
+                }
+                PropertyType::Motion => {
+                    let motion_property = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
+                    Ok(Value::Boolean(motion_property.value()))
+                }
                 PropertyType::On => {
                     let value = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
                     Ok(Value::Boolean(value.value()))
+                }
+                PropertyType::MotionSensitivity => {
+                    let sensitivity_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
+                    Ok(sensitivity_property.value().map(Value::Number).unwrap_or(Value::None))
                 }
             }
         }

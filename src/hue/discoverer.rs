@@ -2,6 +2,7 @@ use crate::app_config::AppConfig;
 use crate::domain::device::Device;
 use crate::hue::domain::{DeviceGet, HueResponse, LightGet, MotionGet};
 use crate::hue::map_lights::{MapLightsError, map_lights};
+use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
 use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -43,7 +44,13 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     info!("Retrieving motion sensors... OK, {} found", motion_response.data.len());
 
     let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
-    let devices = map_lights(light_response.data, &mut device_map)?;
+
+    let mut devices = vec![];
+    let lights = map_lights(light_response.data, &mut device_map)?;
+    let motion_sensors = map_motion_sensors(motion_response.data, &mut device_map)?;
+
+    devices.extend(lights);
+    devices.extend(motion_sensors);
 
     if !device_map.is_empty() {
         log_unmapped_devices(&device_map);
@@ -78,6 +85,8 @@ pub enum DiscoverError {
     UnexpectedResponse(StatusCode, String),
     #[error(transparent)]
     MapLights(#[from] MapLightsError),
+    #[error(transparent)]
+    MapMotionSensors(#[from] MapMotionSensorsError),
 }
 
 #[cfg(test)]
@@ -85,7 +94,7 @@ mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
     use crate::domain::device::DeviceType;
-    use crate::domain::property::{BooleanProperty, Property, PropertyType};
+    use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyType, Unit};
     use crate::hue::client::new_client;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
@@ -111,6 +120,14 @@ mod tests {
             .create_async()
             .await;
 
+        server
+            .mock("GET", "/clip/v2/resource/motion")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_motion_simplified_response.json"))
+            .create_async()
+            .await;
+
         let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
         let client = new_client(&app_config).unwrap();
 
@@ -124,8 +141,33 @@ mod tests {
             false,
         ));
 
+        let enabled_property: Box<dyn Property> = Box::new(BooleanProperty::new(
+            "enabled".to_string(),
+            PropertyType::Enabled,
+            false,
+            Some("0af9eb8a-f38f-427c-b819-0c6850f55fe9".to_string()),
+            false,
+        ));
+
+        let motion_property: Box<dyn Property> = Box::new(BooleanProperty::new(
+            "motion".to_string(),
+            PropertyType::Motion,
+            true,
+            None,
+            false,
+        ));
+
+        let sensitivity_property: Box<dyn Property> = Box::new(
+            NumberProperty::builder("sensitivity".to_string(), PropertyType::MotionSensitivity, false)
+                .external_id("0af9eb8a-f38f-427c-b819-0c6850f55fe9".to_string())
+                .unit(Unit::None)
+                .positive_int(2, Some(0), Some(4))
+                .build(),
+        );
+
+
         mock.assert();
-        assert_eq!(response.len(), 1);
+        assert_eq!(response.len(), 2);
         assert_eq!(
             response[0],
             Device {
@@ -136,6 +178,25 @@ mod tests {
                 product_name: "Hue filament bulb".to_string(),
                 name: "Woonkamer".to_string(),
                 properties: HashMap::from([(on_property.name().to_string(), on_property),]),
+                external_id: None,
+                address: None,
+                controller_id: Some("hue"),
+            }
+        );
+        assert_eq!(
+            response[1],
+            Device {
+                id: "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3".to_string(),
+                r#type: DeviceType::MotionSensor,
+                manufacturer: "Signify Netherlands B.V.".to_string(),
+                model_id: "SML004".to_string(),
+                product_name: "Hue outdoor motion sensor".to_string(),
+                name: "Schuur sensor".to_string(),
+                properties: HashMap::from([
+                    (enabled_property.name().to_string(), enabled_property),
+                    (motion_property.name().to_string(), motion_property),
+                    (sensitivity_property.name().to_string(), sensitivity_property),
+                ]),
                 external_id: None,
                 address: None,
                 controller_id: Some("hue"),

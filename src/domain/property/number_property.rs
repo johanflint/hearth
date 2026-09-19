@@ -204,6 +204,7 @@ pub enum Unit {
     #[allow(dead_code)]
     DegreesCelsius,
     Kelvin,
+    None,
 }
 
 impl Unit {
@@ -214,6 +215,7 @@ impl Unit {
             Unit::Lux => "l",
             Unit::DegreesCelsius => "°C",
             Unit::Kelvin => "k",
+            Unit::None => "",
         }
     }
 }

@@ -37,6 +37,9 @@ pub enum PropertyType {
     Brightness,
     Color,
     ColorTemperature,
+    Enabled,
+    Motion,
+    MotionSensitivity,
     On,
 }
 

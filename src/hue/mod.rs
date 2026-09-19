@@ -6,6 +6,7 @@ mod domain;
 mod map_light_changed;
 mod map_lights;
 mod observer;
+mod map_motion_sensors;
 
 pub use client::{HueClientError, new_client};
 pub use controller::HueController as Controller;
