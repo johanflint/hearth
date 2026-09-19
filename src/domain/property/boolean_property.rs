@@ -25,11 +25,9 @@ impl BooleanProperty {
         self.value
     }
 
+    // This function does not check the readonly value as the value comes from an observer and the system
+    // must be in sync with the observed system.
     pub fn set_value(&mut self, value: bool) -> Result<(), PropertyError> {
-        if self.readonly {
-            return Err(PropertyError::ReadOnly);
-        }
-
         self.value = value;
         Ok(())
     }
@@ -76,9 +74,10 @@ impl Property for BooleanProperty {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
-    fn set_value_returns_the_value_if_property_is_editable() {
+    fn set_value_updates_the_value_if_the_property_is_editable() {
         let mut property = BooleanProperty {
             name: "on".to_string(),
             property_type: PropertyType::On,
@@ -95,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn set_value_returns_an_error_if_property_is_readonly() {
+    fn set_value_updates_the_value_even_if_the_property_is_readonly() {
         let mut property = BooleanProperty {
             name: "on".to_string(),
             property_type: PropertyType::On,
@@ -104,10 +103,10 @@ mod tests {
             value: false,
         };
 
-        let result = property.set_value(false);
+        let result = property.set_value(true);
 
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), PropertyError::ReadOnly);
-        assert_eq!(property.value, false);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ());
+        assert_eq!(property.value, true);
     }
 }

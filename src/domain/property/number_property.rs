@@ -76,10 +76,6 @@ impl NumberProperty {
     // This function does not validate the value as the value comes from an observer and the system
     // must be in sync with the observed system.
     pub fn set_value(&mut self, value: Option<Number>) -> Result<(), PropertyError> {
-        if self.readonly {
-            return Err(PropertyError::ReadOnly);
-        }
-
         self.value = value;
         Ok(())
     }
@@ -318,5 +314,27 @@ mod tests {
         let result = property.validate_value(value);
 
         assert_eq!(result, ValidatedValue::Clamped(Number::PositiveInt(10), PropertyError::ValueTooLarge));
+    }
+
+    #[test]
+    fn set_value_updates_the_value_if_the_property_is_editable() {
+        let mut property = builder(false).negative_int(-2, None, None).build();
+
+        let result = property.set_value(Some(Number::PositiveInt(42)));
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ());
+        assert_eq!(property.value, Some(Number::PositiveInt(42)));
+    }
+
+    #[test]
+    fn set_value_updates_the_value_even_if_the_property_is_readonly() {
+        let mut property = builder(true).negative_int(-2, None, None).build();
+
+        let result = property.set_value(Some(Number::PositiveInt(42)));
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ());
+        assert_eq!(property.value, Some(Number::PositiveInt(42)));
     }
 }

@@ -6,6 +6,7 @@ use thiserror::Error;
 pub trait Property: Debug + Send + Sync {
     fn name(&self) -> &str;
     fn property_type(&self) -> PropertyType;
+    /// Determines if the property may be set from a flow
     fn readonly(&self) -> bool;
     fn external_id(&self) -> Option<&str>;
 
