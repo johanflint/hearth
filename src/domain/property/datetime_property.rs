@@ -21,6 +21,10 @@ impl DateTimeProperty {
             value,
         }
     }
+
+    pub fn value(&self) -> chrono::DateTime<Utc> {
+        self.value
+    }
 }
 
 impl Property for DateTimeProperty {
