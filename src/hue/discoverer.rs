@@ -94,8 +94,9 @@ mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
     use crate::domain::device::DeviceType;
-    use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyType, Unit};
+    use crate::domain::property::{BooleanProperty, DateTimeProperty, NumberProperty, Property, PropertyType, Unit};
     use crate::hue::client::new_client;
+    use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 
@@ -153,8 +154,19 @@ mod tests {
             "motion".to_string(),
             PropertyType::Motion,
             true,
-            None,
+            Some("0af9eb8a-f38f-427c-b819-0c6850f55fe9".to_string()),
             false,
+        ));
+
+        let motion_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "motionLastChanged".to_string(),
+            PropertyType::MotionLastChanged,
+            true,
+            None,
+            Utc.with_ymd_and_hms(2026, 9, 19, 19, 53, 59)
+                .unwrap()
+                .with_nanosecond(108_000_000)
+                .unwrap(),
         ));
 
         let sensitivity_property: Box<dyn Property> = Box::new(
@@ -164,7 +176,6 @@ mod tests {
                 .positive_int(2, Some(0), Some(4))
                 .build(),
         );
-
 
         mock.assert();
         assert_eq!(response.len(), 2);
@@ -195,6 +206,7 @@ mod tests {
                 properties: HashMap::from([
                     (enabled_property.name().to_string(), enabled_property),
                     (motion_property.name().to_string(), motion_property),
+                    (motion_last_changed_property.name().to_string(), motion_last_changed_property),
                     (sensitivity_property.name().to_string(), sensitivity_property),
                 ]),
                 external_id: None,

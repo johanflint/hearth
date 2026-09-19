@@ -10,7 +10,12 @@
       },
       "enabled": false,
       "motion": {
-        "motion_valid": false
+        "motion": false,
+        "motion_valid": true,
+        "motion_report": {
+          "changed": "2026-09-19T19:53:59.108Z",
+          "motion": false
+        }
       },
       "sensitivity": {
         "status": "set",

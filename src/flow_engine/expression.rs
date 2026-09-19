@@ -144,6 +144,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 }
                 PropertyType::Color => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
+                PropertyType::MotionLastChanged => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::Enabled => {
                     let enabled_property = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
                     Ok(Value::Boolean(enabled_property.value()))
