@@ -44,3 +44,19 @@ pub enum SensitivityStatus {
 pub enum MotionType {
     Motion
 }
+
+#[derive(Debug, Deserialize)]
+pub struct MotionChanged {
+    pub id: String,
+    pub owner: Owner,
+    pub enabled: Option<bool>,
+    pub motion: Option<Motion>,
+    pub sensitivity: Option<SensitivityChanged>,
+    pub r#type: Option<MotionType>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SensitivityChanged {
+    pub status: Option<SensitivityStatus>,
+    pub sensitivity: Option<u64>,
+}
