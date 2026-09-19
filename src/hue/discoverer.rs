@@ -1,6 +1,6 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
-use crate::hue::domain::{DeviceGet, HueResponse, LightGet};
+use crate::hue::domain::{DeviceGet, HueResponse, LightGet, MotionGet};
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
@@ -31,6 +31,16 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
 
     let light_response = response.json::<HueResponse<LightGet>>().await?;
     info!("Retrieving lights... OK, {} found", light_response.data.len());
+
+    let response = client
+        .get(format!("{}/clip/v2/resource/motion", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(to_discover_error)?;
+
+    let motion_response = response.json::<HueResponse<MotionGet>>().await?;
+    info!("Retrieving motion sensors... OK, {} found", motion_response.data.len());
 
     let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
     let devices = map_lights(light_response.data, &mut device_map)?;
