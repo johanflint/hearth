@@ -1,4 +1,5 @@
 use crate::domain::commands::Command;
+use crate::domain::device::Device;
 use crate::domain::{GeoLocation, controller_registry};
 use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
@@ -99,6 +100,11 @@ fn log_conflict(device_id: &DeviceId, property_id: &PropertyId, writes: &[Propos
 async fn dispatch_commands(snapshot: &StoreSnapshot, command_map: CommandMap) {
     for (device_id, properties) in command_map {
         if let Some(device) = snapshot.devices.get(&device_id) {
+            let properties = filter_flow_editable_properties(device, properties);
+            if properties.is_empty() {
+                continue;
+            }
+
             if let Some(controller) = device.controller_id.and_then(|controller_id| controller_registry::get(controller_id)) {
                 let command = Command::ControlDevice {
                     device: device.clone(),
@@ -112,14 +118,34 @@ async fn dispatch_commands(snapshot: &StoreSnapshot, command_map: CommandMap) {
     }
 }
 
+// Drops properties that a flow is not allowed to write (unknown and marked as readonly).
+fn filter_flow_editable_properties(device: &Device, properties: HashMap<PropertyId, PropertyValue>) -> HashMap<PropertyId, PropertyValue> {
+    properties
+        .into_iter()
+        .filter(|(property_id, _)| match device.properties.get(property_id) {
+            Some(property) if property.readonly() => {
+                warn!(device_id = device.id, property_id, "⚠️ Ignoring a command to set readonly property '{}' for device '{}'", property_id, device.name);
+                false
+            }
+            Some(_) => true,
+            None => {
+                warn!(device_id = device.id, property_id, "⚠️ Ignoring a command to set unknown property '{}' for device '{}'", property_id, device.name);
+                false
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::Number;
     use crate::domain::color::Color;
+    use crate::domain::property::{BooleanProperty, PropertyType};
     use crate::flow_engine::Value;
     use crate::flow_engine::flow::{FlowLink, FlowNode, FlowNodeKind};
     use crate::flow_engine::property_value::PropertyValue::*;
+    use crate::test_support::DeviceBuilder;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use std::any::Any;
@@ -279,5 +305,59 @@ mod tests {
     fn merge_command_maps_empty_map() {
         let result = merge_command_maps(vec![]);
         assert_eq!(result, HashMap::new());
+    }
+
+    #[test]
+    fn filter_flow_editable_properties_keeps_a_writable_property() {
+        let device = DeviceBuilder::new(DEVICE_ID)
+            .with_properties(vec![Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, false, None, false))])
+            .build();
+
+        let properties = HashMap::from([("on".to_string(), SetBooleanValue(true))]);
+
+        let result = filter_flow_editable_properties(&device, properties);
+
+        assert_eq!(result, HashMap::from([("on".to_string(), SetBooleanValue(true))]));
+    }
+
+    #[test]
+    fn filter_flow_editable_properties_drops_a_readonly_property() {
+        let device = DeviceBuilder::new(DEVICE_ID)
+            .with_properties(vec![Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, true, None, false))])
+            .build();
+
+        let properties = HashMap::from([("on".to_string(), SetBooleanValue(true))]);
+
+        let result = filter_flow_editable_properties(&device, properties);
+
+        assert_eq!(result, HashMap::new());
+    }
+
+    #[test]
+    fn filter_flow_editable_properties_drops_an_unknown_property() {
+        let device = DeviceBuilder::new(DEVICE_ID)
+            .with_properties(vec![Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, true, None, false))])
+            .build();
+
+        let properties = HashMap::from([("does_not_exist".to_string(), SetBooleanValue(true))]);
+
+        let result = filter_flow_editable_properties(&device, properties);
+
+        assert_eq!(result, HashMap::new());
+    }
+
+    #[test]
+    fn filter_flow_editable_properties_keeps_only_the_writable_properties_in_a_mixed_map() {
+        let device = DeviceBuilder::new(DEVICE_ID)
+            .with_properties(vec![
+                Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, false, None, false)),
+                Box::new(BooleanProperty::new("brightness".to_string(), PropertyType::Brightness, true, None, false)),
+            ])
+            .build();
+        let properties = HashMap::from([("on".to_string(), SetBooleanValue(true)), ("brightness".to_string(), SetBooleanValue(true))]);
+
+        let result = filter_flow_editable_properties(&device, properties);
+
+        assert_eq!(result, HashMap::from([("on".to_string(), SetBooleanValue(true))]));
     }
 }

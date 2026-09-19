@@ -23,11 +23,9 @@ impl ColorProperty {
         }
     }
 
+    // This function does not check the readonly value as the value comes from an observer and the system
+    // must be in sync with the observed system.
     pub fn set_value(&mut self, value: CartesianCoordinate, gamut: Option<Gamut>) -> Result<(), PropertyError> {
-        if self.readonly {
-            return Err(PropertyError::ReadOnly);
-        }
-
         self.xy = value;
         if gamut.is_some() {
             self.gamut = gamut;

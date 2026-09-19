@@ -53,6 +53,7 @@ impl<'de> Deserialize<'de> for Color {
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)]
 mod tests {
     use super::*;
     use rstest::rstest;
@@ -110,7 +111,6 @@ mod tests {
 
     #[rstest]
     #[case(0.4, 0.3, 0.9, Ok(Color::CIE_xyY { xy: CartesianCoordinate::new(x, y), brightness}))]
-    #[allow(non_snake_case)]
     fn deserialize_xy_Y_values(#[case] x: f64, #[case] y: f64, #[case] brightness: f64, #[case] expected: serde_json::Result<Color>) {
         let json = format!(
             r#"{{

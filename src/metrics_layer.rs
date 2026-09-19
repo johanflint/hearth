@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::time::Instant;
 use tracing::field::{Field, Visit};
 use tracing::span::Attributes;
-use tracing::{Id, Subscriber, info};
+use tracing::{Id, Subscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;

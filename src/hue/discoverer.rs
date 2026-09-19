@@ -1,7 +1,6 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
 use crate::hue::domain::{DeviceGet, HueResponse, LightGet};
-use crate::hue::map_lights;
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
