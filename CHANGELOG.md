@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0 (2026-09-19)
+
+### Features
+
+- Provide an installer script ([#40](https://github.com/johanflint/hearth/pull/40))
+
+### Bug Fixes
+
+- Allow setting readonly values from observers but not from flows ([#42](https://github.com/johanflint/hearth/pull/42))
+
 ## v0.1.0 (2026-09-17)
 
 ### Features
