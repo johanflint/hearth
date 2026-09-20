@@ -171,6 +171,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         }
 
         // Temporal
+        // Uses wall-clock so it needs to use NaiveTime
         Temporal { expression } => {
             let now = context.now();
 
