@@ -149,7 +149,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::MotionLastChanged => {
                     let motion_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
-                    Ok(Value::DateTime(motion_last_changed_property.value()))
+                    Ok(motion_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
                 },
                 PropertyType::Enabled => {
                     let enabled_property = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
@@ -326,7 +326,7 @@ mod tests {
         );
 
         let motion_last_changed_property: Box<dyn Property> = Box::new(
-            DateTimeProperty::new("motionLastChanged".to_string(), PropertyType::MotionLastChanged, true, None, Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())
+            DateTimeProperty::new("motionLastChanged".to_string(), PropertyType::MotionLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
         );
 
         DeviceBuilder::new("ab917a9a-a7d5-4853-9518-75909236a182")

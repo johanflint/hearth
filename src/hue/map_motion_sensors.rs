@@ -21,10 +21,14 @@ pub fn map_motion_sensors(sensors: Vec<MotionGet>, device_map: &mut HashMap<Stri
             let motion_property = Box::new(BooleanProperty::new("motion".to_string(), PropertyType::Motion, true, Some(sensor.id.clone()), sensor.motion.motion_report.as_ref().is_some_and(|r| r.motion)));
             properties.insert(motion_property.name().to_owned(), motion_property);
 
-            if let Some(motion_report) = sensor.motion.motion_report {
-                let motion_changed_property = Box::new(DateTimeProperty::new("motionLastChanged".to_string(), PropertyType::MotionLastChanged, true, None, motion_report.changed));
-                properties.insert(motion_changed_property.name().to_owned(), motion_changed_property);
-            }
+            let motion_changed_property = Box::new(DateTimeProperty::new(
+                "motionLastChanged".to_string(),
+                PropertyType::MotionLastChanged,
+                true,
+                None,
+                sensor.motion.motion_report.map(|r| r.changed),
+            ));
+            properties.insert(motion_changed_property.name().to_owned(), motion_changed_property);
 
             // Depends on the PIR sensitivity setting, so it's a hardware capability and without units
             let sensitivity_property = Box::new(

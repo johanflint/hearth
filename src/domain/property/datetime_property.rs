@@ -1,5 +1,5 @@
 use crate::domain::property::{Property, PropertyError, PropertyType};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::any::Any;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -8,11 +8,11 @@ pub struct DateTimeProperty {
     property_type: PropertyType,
     readonly: bool,
     external_id: Option<String>,
-    value: chrono::DateTime<Utc>,
+    value: Option<DateTime<Utc>>,
 }
 
 impl DateTimeProperty {
-    pub fn new(name: String, property_type: PropertyType, readonly: bool, external_id: Option<String>, value: chrono::DateTime<Utc>) -> Self {
+    pub fn new(name: String, property_type: PropertyType, readonly: bool, external_id: Option<String>, value: Option<DateTime<Utc>>) -> Self {
         DateTimeProperty {
             name,
             property_type,
@@ -22,13 +22,13 @@ impl DateTimeProperty {
         }
     }
 
-    pub fn value(&self) -> chrono::DateTime<Utc> {
+    pub fn value(&self) -> Option<DateTime<Utc>> {
         self.value
     }
 
     // This function does not check the readonly value as the value comes from an observer and the system
     // must be in sync with the observed system.
-    pub fn set_value(&mut self, value: chrono::DateTime<Utc>) -> Result<(), PropertyError> {
+    pub fn set_value(&mut self, value: Option<DateTime<Utc>>) -> Result<(), PropertyError> {
         self.value = value;
         Ok(())
     }
@@ -52,7 +52,7 @@ impl Property for DateTimeProperty {
     }
 
     fn value_string(&self) -> String {
-        self.value.to_string()
+        self.value.map(|v| v.to_string()).unwrap_or(String::new())
     }
 
     fn as_any(&self) -> &dyn Any {

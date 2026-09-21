@@ -20,7 +20,7 @@ pub enum Event {
     DateTimePropertyChanged {
         device_id: String,
         property_id: String,
-        value: DateTime<Utc>,
+        value: Option<DateTime<Utc>>,
     },
     NumberPropertyChanged {
         device_id: String,

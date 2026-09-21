@@ -21,7 +21,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
         events.push(Event::DateTimePropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: "motionLastChanged".to_string(),
-            value: report.changed,
+            value: Some(report.changed),
         })
     }
 

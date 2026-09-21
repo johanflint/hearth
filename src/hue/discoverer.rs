@@ -163,10 +163,7 @@ mod tests {
             PropertyType::MotionLastChanged,
             true,
             None,
-            Utc.with_ymd_and_hms(2026, 9, 19, 19, 53, 59)
-                .unwrap()
-                .with_nanosecond(108_000_000)
-                .unwrap(),
+            Some(Utc.with_ymd_and_hms(2026, 9, 19, 19, 53, 59).unwrap().with_nanosecond(108_000_000).unwrap()),
         ));
 
         let sensitivity_property: Box<dyn Property> = Box::new(
