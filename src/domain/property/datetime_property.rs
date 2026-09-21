@@ -1,4 +1,4 @@
-use crate::domain::property::{Property, PropertyType};
+use crate::domain::property::{Property, PropertyError, PropertyType};
 use chrono::Utc;
 use std::any::Any;
 
@@ -24,6 +24,13 @@ impl DateTimeProperty {
 
     pub fn value(&self) -> chrono::DateTime<Utc> {
         self.value
+    }
+
+    // This function does not check the readonly value as the value comes from an observer and the system
+    // must be in sync with the observed system.
+    pub fn set_value(&mut self, value: chrono::DateTime<Utc>) -> Result<(), PropertyError> {
+        self.value = value;
+        Ok(())
     }
 }
 

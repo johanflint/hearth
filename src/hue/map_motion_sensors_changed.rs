@@ -18,6 +18,11 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
             property_id: "motion".to_string(),
             value: report.motion,
         });
+        events.push(Event::DateTimePropertyChanged {
+            device_id: property.owner.rid.to_string(),
+            property_id: "motionLastChanged".to_string(),
+            value: report.changed,
+        })
     }
 
     if let Some(sensitivity) = property.sensitivity.and_then(|s| s.sensitivity) {
