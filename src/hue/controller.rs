@@ -8,7 +8,7 @@ use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty, Pr
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::flow_engine::property_value::PropertyValue;
 use crate::hue::clip_to_gamut::clip_to_gamut;
-use crate::hue::domain::{LightRequest, On};
+use crate::hue::domain::{LightRequest, MotionRequest, On, SetSensitivity};
 use crate::metrics::Metric;
 use async_trait::async_trait;
 use metrics::counter;
@@ -35,8 +35,9 @@ impl Controller for HueController {
     async fn execute(&self, command: Command) {
         match command {
             Command::ControlDevice { device, property } => {
-                if device.r#type == DeviceType::Light {
-                    self.control_device_light(device, property).await;
+                match device.r#type {
+                    DeviceType::Light => self.control_device_light(device, property).await,
+                    DeviceType::MotionSensor => self.control_device_motion_sensor(device, property).await,
                 }
             }
         }
@@ -83,12 +84,12 @@ impl HueController {
                     ValidatedValue::Valid(value) => value.as_f64(),
                     ValidatedValue::Clamped(value, PropertyError::ValueTooSmall) => {
                         #[rustfmt::skip]
-                                    warn!(device_id = device.id, ?brightness_property, "🔅 Brightness value of '{}%' is too small, clamped to the minimum valid value of '{}%'", brightness, value);
+                        warn!(device_id = device.id, ?brightness_property, "🔅 Brightness value of '{}%' is too small, clamped to the minimum valid value of '{}%'", brightness, value);
                         value.as_f64()
                     }
                     ValidatedValue::Clamped(value, PropertyError::ValueTooLarge) => {
                         #[rustfmt::skip]
-                                    warn!(device_id = device.id, ?brightness_property, "🔆 Brightness value of '{}%' is too large, clamped to the maximim valid value of '{}%'", brightness, value);
+                        warn!(device_id = device.id, ?brightness_property, "🔆 Brightness value of '{}%' is too large, clamped to the maximim valid value of '{}%'", brightness, value);
                         value.as_f64()
                     }
                     ValidatedValue::Clamped(value, error) => {
@@ -172,6 +173,88 @@ impl HueController {
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
                 warn!(device_id = device.id, status_code = %status, "⚠️ Unable to control the light, request to the Hue bridge failed. Response: {}", body);
+            }
+            _ => {}
+        }
+    }
+
+    async fn control_device_motion_sensor(&self, device: Arc<Device>, property: Arc<HashMap<String, PropertyValue>>) {
+        let Some(motion_property) = device.get_property_of_type::<BooleanProperty>(PropertyType::Motion) else {
+            warn!(device_id = device.id, "⚠️ Motion sensor has no motion property");
+            return;
+        };
+
+        let Some(motion_sensor_id) = motion_property.external_id() else {
+            warn!(device_id = device.id, "⚠️ Motion sensor motion property has no Hue resource id");
+            return;
+        };
+
+        let enabled_property = device.get_property_of_type::<BooleanProperty>(PropertyType::Enabled).and_then(|enabled_property| {
+            property.get(enabled_property.name())
+                .and_then(|pv| match pv {
+                    PropertyValue::SetBooleanValue(value) => Some(*value),
+                    PropertyValue::ToggleBooleanValue => Some(!enabled_property.value()),
+                    _ => None,
+                })
+        });
+
+        let sensitivity = device.get_property_of_type::<NumberProperty>(PropertyType::MotionSensitivity).and_then(|sensitivity_property| {
+            property
+                .get(sensitivity_property.name())
+                .and_then(|pv| match pv {
+                    PropertyValue::SetNumberValue(value) => Some(value.clone()),
+                    PropertyValue::IncrementNumberValue(value) => Some(sensitivity_property.value().unwrap_or(Number::PositiveInt(0)) + value.clone()),
+                    PropertyValue::DecrementNumberValue(value) => Some(sensitivity_property.value().unwrap_or(Number::PositiveInt(0)) - value.clone()),
+                    _ => None,
+                })
+                .and_then(|sensitivity| match sensitivity_property.validate_value(sensitivity) {
+                    ValidatedValue::Valid(value) => value.as_u64(),
+                    ValidatedValue::Clamped(value, PropertyError::ValueTooSmall) => {
+                        #[rustfmt::skip]
+                        warn!(device_id = device.id, ?sensitivity_property, "🎚️ Motion sensor sensitivity value of '{}' is too small, clamped to the minimum valid value of '{}'",
+                    sensitivity, value);
+                        value.as_u64()
+                    }
+                    ValidatedValue::Clamped(value, PropertyError::ValueTooLarge) => {
+                        #[rustfmt::skip]
+                        warn!(device_id = device.id, ?sensitivity_property, "🎚️ Motion sensor sensitivity value of '{}' is too large, clamped to the maximim valid value of '{}'", sensitivity, value);
+                        value.as_u64()
+                    }
+                    ValidatedValue::Clamped(value, error) => {
+                        warn!("🎚️ Motion sensor sensitivity value of '{}' is invalid, clamped to {}", error, value);
+                        value.as_u64()
+                    }
+                    ValidatedValue::Invalid(error) => {
+                        warn!("🎚️ Motion sensor sensitivity value is invalid: {}", error);
+                        None
+                    }
+                })
+                .map(|sensitivity| SetSensitivity { sensitivity })
+        });
+
+        let request = MotionRequest::new(enabled_property, sensitivity);
+        let request_result = self
+            .client
+            .put(format!("{}/clip/v2/resource/motion/{}", self.config.hue().url(), motion_sensor_id))
+            .json(&request)
+            .send()
+            .await;
+
+        let (result, status) = match &request_result {
+            Err(_) => ("failure", "n/a".to_string()),
+            Ok(response) if response.status().is_success() => ("success", "n/a".to_string()),
+            Ok(response) => ("failure", response.status().as_u16().to_string()),
+        };
+        counter!(Metric::DeviceCommandDispatches.name(), "system" => "hue", "result" => result, "status" => status).increment(1);
+
+        match request_result {
+            Err(e) => {
+                warn!(device_id = device.id, "⚠️ Unable to control the motion sensor: {:?}", e);
+            }
+            Ok(response) if !response.status().is_success() => {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                warn!(device_id = device.id, status_code = %status, "⚠️ Unable to control the motion sensor, request to the Hue bridge failed. Response: {}", body);
             }
             _ => {}
         }

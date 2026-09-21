@@ -1,6 +1,6 @@
 use crate::hue::domain::Owner;
 use chrono::Utc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // API: https://developers.meethue.com/develop/hue-api-v2/api-reference/#resource_motion_get
 #[derive(Debug, Deserialize)]
@@ -11,6 +11,20 @@ pub struct MotionGet {
     pub motion: Motion,
     pub sensitivity: Sensitivity,
     pub r#type: MotionType,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MotionRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sensitivity: Option<SetSensitivity>,
+}
+
+impl MotionRequest {
+    pub fn new(enabled: Option<bool>, sensitivity: Option<SetSensitivity>) -> Self {
+        MotionRequest { enabled, sensitivity }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,6 +53,11 @@ pub enum SensitivityStatus {
     Changing,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SetSensitivity {
+    pub sensitivity: u64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MotionType {
@@ -59,4 +78,38 @@ pub struct MotionChanged {
 pub struct SensitivityChanged {
     pub status: Option<SensitivityStatus>,
     pub sensitivity: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::hue::domain::{MotionRequest, SetSensitivity};
+    use serde_json::json;
+
+    #[test]
+    fn motion_request_serializes_enabled_only() {
+        let request = MotionRequest::new(Some(true), None);
+
+        assert_eq!(serde_json::to_value(request).unwrap(), json!({ "enabled": true }));
+    }
+
+    #[test]
+    fn motion_request_serializes_sensitivity_only() {
+        let request = MotionRequest::new(None, Some(SetSensitivity { sensitivity: 2 }));
+
+        assert_eq!(serde_json::to_value(request).unwrap(), json!({ "sensitivity": { "sensitivity": 2 } }));
+    }
+
+    #[test]
+    fn motion_request_serializes_both_fields() {
+        let request = MotionRequest::new(Some(true), Some(SetSensitivity { sensitivity: 2 }));
+
+        assert_eq!(serde_json::to_value(request).unwrap(), json!({ "enabled": true, "sensitivity": { "sensitivity": 2 } }));
+    }
+
+    #[test]
+    fn motion_request_serializes_neither_field() {
+        let request = MotionRequest::new(None, None);
+
+        assert_eq!(serde_json::to_value(request).unwrap(), json!({}));
+    }
 }
