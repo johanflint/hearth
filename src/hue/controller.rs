@@ -13,6 +13,7 @@ use crate::metrics::Metric;
 use async_trait::async_trait;
 use metrics::counter;
 use reqwest::Client;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
@@ -151,31 +152,8 @@ impl HueController {
         });
 
         let request = LightRequest::new(on, brightness, color_temperature, color);
-        let request_result = self
-            .client
-            .put(format!("{}/clip/v2/resource/light/{}", self.config.hue().url(), light_id))
-            .json(&request)
-            .send()
-            .await;
-
-        let (result, status) = match &request_result {
-            Err(_) => ("failure", "n/a".to_string()),
-            Ok(response) if response.status().is_success() => ("success", "n/a".to_string()),
-            Ok(response) => ("failure", response.status().as_u16().to_string()),
-        };
-        counter!(Metric::DeviceCommandDispatches.name(), "system" => "hue", "result" => result, "status" => status).increment(1);
-
-        match request_result {
-            Err(e) => {
-                warn!(device_id = device.id, "⚠️ Unable to control the light: {:?}", e);
-            }
-            Ok(response) if !response.status().is_success() => {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                warn!(device_id = device.id, status_code = %status, "⚠️ Unable to control the light, request to the Hue bridge failed. Response: {}", body);
-            }
-            _ => {}
-        }
+        let url = format!("{}/clip/v2/resource/light/{}", self.config.hue().url(), light_id);
+        self.send_request(&request, &url, &device, "light").await;
     }
 
     async fn control_device_motion_sensor(&self, device: Arc<Device>, property: Arc<HashMap<String, PropertyValue>>) {
@@ -233,10 +211,15 @@ impl HueController {
         });
 
         let request = MotionRequest::new(enabled_property, sensitivity);
+        let url = format!("{}/clip/v2/resource/motion/{}", self.config.hue().url(), motion_sensor_id);
+        self.send_request(&request, &url, &device, "motion sensor").await;
+    }
+
+    async fn send_request<T: Serialize + ?Sized>(&self, request: &T, url: &str, device: &Device, device_kind: &str) {
         let request_result = self
             .client
-            .put(format!("{}/clip/v2/resource/motion/{}", self.config.hue().url(), motion_sensor_id))
-            .json(&request)
+            .put(url)
+            .json(request)
             .send()
             .await;
 
@@ -249,12 +232,12 @@ impl HueController {
 
         match request_result {
             Err(e) => {
-                warn!(device_id = device.id, "⚠️ Unable to control the motion sensor: {:?}", e);
+                warn!(device_id = device.id, "⚠️ Unable to control the {}: {:?}", device_kind, e);
             }
             Ok(response) if !response.status().is_success() => {
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
-                warn!(device_id = device.id, status_code = %status, "⚠️ Unable to control the motion sensor, request to the Hue bridge failed. Response: {}", body);
+                warn!(device_id = device.id, status_code = %status, "⚠️ Unable to control the {}, request to the Hue bridge failed. Response: {}", device_kind, body);
             }
             _ => {}
         }
