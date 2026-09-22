@@ -39,6 +39,27 @@ pub enum Expression {
     Temporal { expression: TemporalExpression },
 }
 
+impl Expression {
+    pub fn contains_property_changed(&self) -> bool {
+        use Expression::*;
+        match self {
+            PropertyChanged { .. } => true,
+            GreaterThanOrEqualTo { lhs, rhs }
+            | GreaterThan { lhs, rhs }
+            | LessThan { lhs, rhs }
+            | LessThanOrEqualTo { lhs, rhs }
+            | EqualTo { lhs, rhs }
+            | NotEqualTo { lhs, rhs }
+            | And { lhs, rhs }
+            | Or { lhs, rhs } => {
+                lhs.contains_property_changed() || rhs.contains_property_changed()
+            }
+            Not { expression } => expression.contains_property_changed(),
+            Literal { .. } | PropertyValue { .. } | Temporal { .. } => false,
+        }
+    }
+}
+
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub enum Value {
     Boolean(bool),
@@ -287,7 +308,7 @@ mod tests {
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
     use crate::flow_engine::expression::TemporalExpression::{HasSunRisen, HasSunSet, IsAfterTime, IsBeforeTime, IsDaytime, IsNighttime, IsToday};
-    use crate::store::{DeviceMap, StoreSnapshot};
+    use crate::store::{DeviceMap, PropertyChange, StoreSnapshot};
     use crate::test_support::DeviceBuilder;
     use chrono::{Local, TimeZone};
     use rstest::rstest;
@@ -918,6 +939,32 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+
+    #[test]
+    fn property_changed_evaluates_to_true_when_it_matches_the_context() {
+        let context = Context::builder()
+            .changed(Some(PropertyChange { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() }))
+            .build();
+        let expression = PropertyChanged { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() };
+        assert_eq!(evaluate(&expression, &context), Ok(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn property_changed_evaluates_to_false_for_a_different_property() {
+        let context = Context::builder()
+            .changed(Some(PropertyChange { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "brightness".to_string() }))
+            .build();
+        let expression = PropertyChanged { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() };
+        assert_eq!(evaluate(&expression, &context), Ok(Value::Boolean(false)));
+    }
+
+    #[test]
+    fn property_changed_evaluates_to_false_when_the_context_has_no_change() {
+        let context = Context::builder().build(); // e.g. a scheduled flow's context
+        let expression = PropertyChanged { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() };
+        assert_eq!(evaluate(&expression, &context), Ok(Value::Boolean(false)));
+    }
+
     #[rstest]
     #[case::unknown_device("unknown_device_id", "", Err(ExpressionError::UnknownDevice("unknown_device_id".to_string())))]
     #[case::unknown_property("ab917a9a-a7d5-4853-9518-75909236a182", "unknown_property_id", Err(UnknownProperty { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "unknown_property_id".to_string() }))]
@@ -1131,5 +1178,18 @@ mod tests {
         let context = &context_with_polar_location().now(fixed_date_time).build();
         let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
         assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[rstest]
+    #[case::direct(PropertyChanged{ device_id: "light".to_string(), property_id: "on".to_string() }, true)]
+    #[case::wrapped_in_not(Not{ expression: Box::new(PropertyChanged { device_id: "light".to_string(), property_id: "on".to_string() }) }, true)]
+    #[case::wrapped_in_and(And{
+        lhs: Box::new(PropertyChanged { device_id: "light".to_string(), property_id: "on".to_string() }),
+        rhs: Box::new(Literal { value: Value::Boolean(true) })
+        }, true)]
+    #[case::property_value_only(PropertyValue{ device_id: "light".to_string(), property_id: "on".to_string() }, false)]
+    #[case::literal_only(Literal{ value: Value::Boolean(true) }, false)]
+    fn contains_property_changed_detects_it_anywhere_in_the_tree(#[case] expression: Expression, #[case] expected: bool) {
+        assert_eq!(expression.contains_property_changed(), expected);
     }
 }

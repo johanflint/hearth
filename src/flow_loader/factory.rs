@@ -8,6 +8,14 @@ use thiserror::Error;
 pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
     let flow = serde_json::from_str::<SerializedFlow>(json)?;
 
+    if flow.schedule.is_some() {
+        if let Some(trigger) = &flow.trigger {
+            if trigger.contains_property_changed() {
+                return Err(FlowFactoryError::PropertyChangedInScheduledFlow);
+            }
+        }
+    }
+
     let num_start_nodes = flow.nodes.iter().filter(|node| matches!(node, SerializedFlowNode::StartNode(_))).count();
     if num_start_nodes == 0 {
         return Err(FlowFactoryError::MissingStartNode);
@@ -165,6 +173,8 @@ pub enum FlowFactoryError {
     UnusedNodes { nodes: Vec<String> },
     #[error("duplicate outgoing link values for node '{node_id}', pointing to {}", duplicates.join(", "))]
     DuplicateLinkValues { node_id: String, duplicates: Vec<String> },
+    #[error("scheduled flows cannot use a PropertyChanged trigger - it has no single triggering event to compare against; use PropertyValue instead")]
+    PropertyChangedInScheduledFlow,
 }
 
 #[cfg(test)]
@@ -177,6 +187,21 @@ mod tests {
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn returns_an_error_if_a_scheduled_flow_uses_a_property_changed_trigger() {
+        let json = include_str!("../../tests/resources/flows/invalid/scheduledFlowWithPropertyChangedTrigger.json");
+        let result = from_json(json);
+        assert!(matches!(result, Err(FlowFactoryError::PropertyChangedInScheduledFlow)));
+    }
+
+    #[tokio::test]
+    async fn allows_a_scheduled_flow_without_a_property_changed_trigger() {
+        // Regression guard: the validation must only reject PropertyChanged, not schedules in general
+        let json = include_str!("../../tests/resources/flows/logFlowWithSchedule.json");
+        let result = from_json(json);
+        assert!(result.is_ok());
+    }
 
     #[tokio::test]
     async fn returns_an_error_if_an_unknown_node_type_is_found() {
