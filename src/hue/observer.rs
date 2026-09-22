@@ -2,6 +2,7 @@ use crate::app_config::AppConfig;
 use crate::domain::events::Event;
 use crate::hue::domain::{ChangedProperty, ServerSentEventPayload, UnknownProperty};
 use crate::hue::map_light_changed::map_light_changed_property;
+use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
 use crate::sse;
 use crate::sse::{Config, ServerSentEvent};
 use reqwest::Client;
@@ -85,6 +86,13 @@ async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty) {
             for event in map_light_changed_property(property) {
                 tx.send(event).await.unwrap_or_else(|e| {
                     warn!("⚠️ Unable to send changed light event: {}", e);
+                });
+            }
+        }
+        ChangedProperty::Motion(property) => {
+            for event in map_motion_sensors_changed(property) {
+                tx.send(event).await.unwrap_or_else(|e| {
+                    warn!("⚠️ Unable to send changed motion sensor event: {}", e);
                 });
             }
         }

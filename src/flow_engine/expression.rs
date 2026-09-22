@@ -1,10 +1,10 @@
-use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
+use crate::domain::property::{BooleanProperty, DateTimeProperty, NumberProperty, PropertyType};
 use crate::domain::{Number, Time, WeekdayCondition};
 use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
 use crate::flow_engine::solar_event::EventTime;
-use chrono::NaiveTime;
+use chrono::{DateTime, NaiveTime, Utc};
 use serde::Deserialize;
 use std::cmp::Ordering;
 use thiserror::Error;
@@ -41,6 +41,7 @@ pub enum Expression {
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub enum Value {
     Boolean(bool),
+    DateTime(DateTime<Utc>),
     Number(Number),
     None,
 }
@@ -71,10 +72,11 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         EqualTo { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
+            (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a == b)),
             (Value::None, Value::None) => Ok(Value::Boolean(true)),
             _ => Err(ExpressionError::OperandTypeMismatch {
                 operand: "EqualTo",
-                expected: "Boolean|Number",
+                expected: "Boolean|DateTime|Number",
                 actual_lhs: format!("{:?}", lhs),
                 actual_rhs: format!("{:?}", rhs),
             }),
@@ -82,10 +84,11 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         NotEqualTo { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(!a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a != b)),
+            (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a != b)),
             (Value::None, Value::None) => Ok(Value::Boolean(false)),
             _ => Err(ExpressionError::OperandTypeMismatch {
                 operand: "NotEqualTo",
-                expected: "Boolean|Number",
+                expected: "Boolean|DateTime|Number",
                 actual_lhs: format!("{:?}", lhs),
                 actual_rhs: format!("{:?}", rhs),
             }),
@@ -144,14 +147,31 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 }
                 PropertyType::Color => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
+                PropertyType::MotionLastChanged => {
+                    let motion_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
+                    Ok(motion_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
+                },
+                PropertyType::Enabled => {
+                    let enabled_property = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
+                    Ok(Value::Boolean(enabled_property.value()))
+                }
+                PropertyType::Motion => {
+                    let motion_property = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
+                    Ok(Value::Boolean(motion_property.value()))
+                }
                 PropertyType::On => {
                     let value = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
                     Ok(Value::Boolean(value.value()))
+                }
+                PropertyType::MotionSensitivity => {
+                    let sensitivity_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
+                    Ok(sensitivity_property.value().map(Value::Number).unwrap_or(Value::None))
                 }
             }
         }
 
         // Temporal
+        // Uses wall-clock so it needs to use NaiveTime
         Temporal { expression } => {
             let now = context.now();
 
@@ -220,9 +240,10 @@ fn compare(lhs: &Expression, rhs: &Expression, cmp: fn(Ordering) -> bool, contex
             actual_lhs: format!("{:?}", lhs),
             actual_rhs: format!("{:?}", rhs),
         })?))),
+        (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(cmp(a.cmp(&b)))),
         _ => Err(ExpressionError::OperandTypeMismatch {
             operand: "Compare",
-            expected: "Number",
+            expected: "Number|DateTime",
             actual_lhs: format!("{:?}", lhs),
             actual_rhs: format!("{:?}", rhs),
         }),
@@ -304,6 +325,10 @@ mod tests {
                 .build(),
         );
 
+        let motion_last_changed_property: Box<dyn Property> = Box::new(
+            DateTimeProperty::new("motionLastChanged".to_string(), PropertyType::MotionLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
+        );
+
         DeviceBuilder::new("ab917a9a-a7d5-4853-9518-75909236a182")
             .with_boolean_property("on", true)
             .with_color_property(
@@ -315,260 +340,445 @@ mod tests {
                     CartesianCoordinate::new(0.167, 0.04),
                 )),
             )
-            .with_properties(vec![brightness_property, color_temperature_property])
+            .with_properties(vec![brightness_property, color_temperature_property, motion_last_changed_property])
             .build()
     }
 
-    #[rstest]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(2), true)]
-    #[case(Number::PositiveInt(2), Number::PositiveInt(5), false)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(5), true)]
-    #[case(Number::NegativeInt(5), Number::PositiveInt(2), true)]
-    #[case(Number::NegativeInt(5), Number::NegativeInt(5), true)]
-    #[case(Number::NegativeInt(5), Number::Float(5.0), true)]
-    #[case(Number::Float(5.1), Number::Float(5.0), true)]
-    #[case(Number::Float(4.999), Number::Float(5.0), false)]
-    #[case(Number::Float(5.1), Number::Float(5.0), true)]
-    #[case(Number::Float(5.1), Number::Float(5.1), true)]
-    fn greater_than_or_equal_to(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(
-            &GreaterThanOrEqualTo {
-                lhs: Box::new(Literal { value: Value::Number(lhs) }),
-                rhs: Box::new(Literal { value: Value::Number(rhs) }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
-        assert_eq!(result, Value::Boolean(expected));
+    fn utc_with_ymd(year: i32, month: u32, day: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).unwrap()
     }
 
-    #[rstest]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(2), true)]
-    #[case(Number::PositiveInt(2), Number::PositiveInt(5), false)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(5), false)]
-    #[case(Number::NegativeInt(5), Number::PositiveInt(2), true)]
-    #[case(Number::NegativeInt(5), Number::NegativeInt(5), false)]
-    #[case(Number::NegativeInt(5), Number::Float(5.0), false)]
-    #[case(Number::Float(5.1), Number::Float(5.0), true)]
-    #[case(Number::Float(4.999), Number::Float(5.0), false)]
-    #[case(Number::Float(5.1), Number::Float(5.0), true)]
-    #[case(Number::Float(5.0), Number::Float(5.0), false)]
-    fn greater_than(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(
-            &GreaterThan {
-                lhs: Box::new(Literal { value: Value::Number(lhs) }),
-                rhs: Box::new(Literal { value: Value::Number(rhs) }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
-        assert_eq!(result, Value::Boolean(expected));
+    mod greater_than_or_equal_to {
+        use super::*;
+
+        #[rstest]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(2), true)]
+        #[case(Number::PositiveInt(2), Number::PositiveInt(5), false)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(5), true)]
+        #[case(Number::NegativeInt(5), Number::PositiveInt(2), true)]
+        #[case(Number::NegativeInt(5), Number::NegativeInt(5), true)]
+        #[case(Number::NegativeInt(5), Number::Float(5.0), true)]
+        #[case(Number::Float(5.1), Number::Float(5.0), true)]
+        #[case(Number::Float(4.999), Number::Float(5.0), false)]
+        #[case(Number::Float(5.1), Number::Float(5.0), true)]
+        #[case(Number::Float(5.1), Number::Float(5.1), true)]
+        fn number(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
+            let result = evaluate(
+                &GreaterThanOrEqualTo {
+                    lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Number(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
+        #[case(true, false)]
+        fn boolean(#[case] lhs: bool, #[case] rhs: bool) {
+            let result = evaluate(
+                &GreaterThanOrEqualTo {
+                    lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap_err();
+            assert_eq!(result, OperandTypeMismatch {
+                operand: "Compare",
+                expected: "Number|DateTime",
+                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
+                actual_rhs: "Literal { value: Boolean(false) }".to_string(),
+            });
+        }
+
+        #[rstest]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 3), true)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 4), true)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 5), false)]
+        fn date_time(#[case] lhs: DateTime<Utc>, #[case] rhs: DateTime<Utc>, #[case] expected: bool) {
+            let result = evaluate(
+                &GreaterThanOrEqualTo {
+                    lhs: Box::new(Literal { value: Value::DateTime(lhs) }),
+                    rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
     }
 
-    #[rstest]
-    #[case(Number::PositiveInt(2), Number::PositiveInt(5), true)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(2), false)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(5), false)]
-    #[case(Number::NegativeInt(2), Number::PositiveInt(5), true)]
-    #[case(Number::NegativeInt(5), Number::NegativeInt(5), false)]
-    #[case(Number::NegativeInt(5), Number::Float(5.0), false)]
-    #[case(Number::Float(5.0), Number::Float(5.1), true)]
-    #[case(Number::Float(4.999), Number::Float(5.0), true)]
-    #[case(Number::Float(5.1), Number::Float(5.0), false)]
-    #[case(Number::Float(5.0), Number::Float(5.0), false)]
-    fn less_than(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(
-            &LessThan {
-                lhs: Box::new(Literal { value: Value::Number(lhs) }),
-                rhs: Box::new(Literal { value: Value::Number(rhs) }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
-        assert_eq!(result, Value::Boolean(expected));
+    mod greater_than {
+        use super::*;
+
+        #[rstest]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(2), true)]
+        #[case(Number::PositiveInt(2), Number::PositiveInt(5), false)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(5), false)]
+        #[case(Number::NegativeInt(5), Number::PositiveInt(2), true)]
+        #[case(Number::NegativeInt(5), Number::NegativeInt(5), false)]
+        #[case(Number::NegativeInt(5), Number::Float(5.0), false)]
+        #[case(Number::Float(5.1), Number::Float(5.0), true)]
+        #[case(Number::Float(4.999), Number::Float(5.0), false)]
+        #[case(Number::Float(5.1), Number::Float(5.0), true)]
+        #[case(Number::Float(5.0), Number::Float(5.0), false)]
+        fn number(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
+            let result = evaluate(
+                &GreaterThan {
+                    lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Number(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
+        #[case(true, false)]
+        fn boolean(#[case] lhs: bool, #[case] rhs: bool) {
+            let result = evaluate(
+                &GreaterThan {
+                    lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap_err();
+            assert_eq!(result, OperandTypeMismatch {
+                operand: "Compare",
+                expected: "Number|DateTime",
+                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
+                actual_rhs: "Literal { value: Boolean(false) }".to_string(),
+            });
+        }
+
+        #[rstest]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 3), true)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 4), false)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 5), false)]
+        fn date_time(#[case] lhs: DateTime<Utc>, #[case] rhs: DateTime<Utc>, #[case] expected: bool) {
+            let result = evaluate(
+                &GreaterThan {
+                    lhs: Box::new(Literal { value: Value::DateTime(lhs) }),
+                    rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
     }
 
-    #[rstest]
-    #[case(Number::PositiveInt(2), Number::PositiveInt(5), true)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(2), false)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(5), true)]
-    #[case(Number::NegativeInt(2), Number::PositiveInt(5), true)]
-    #[case(Number::NegativeInt(5), Number::NegativeInt(5), true)]
-    #[case(Number::NegativeInt(5), Number::Float(5.0), true)]
-    #[case(Number::Float(5.0), Number::Float(5.1), true)]
-    #[case(Number::Float(4.999), Number::Float(5.0), true)]
-    #[case(Number::Float(5.1), Number::Float(5.0), false)]
-    #[case(Number::Float(5.0), Number::Float(5.0), true)]
-    fn less_than_or_equal_to(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(
-            &LessThanOrEqualTo {
-                lhs: Box::new(Literal { value: Value::Number(lhs) }),
-                rhs: Box::new(Literal { value: Value::Number(rhs) }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
-        assert_eq!(result, Value::Boolean(expected));
+    mod less_than {
+        use super::*;
+
+        #[rstest]
+        #[case(Number::PositiveInt(2), Number::PositiveInt(5), true)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(2), false)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(5), false)]
+        #[case(Number::NegativeInt(2), Number::PositiveInt(5), true)]
+        #[case(Number::NegativeInt(5), Number::NegativeInt(5), false)]
+        #[case(Number::NegativeInt(5), Number::Float(5.0), false)]
+        #[case(Number::Float(5.0), Number::Float(5.1), true)]
+        #[case(Number::Float(4.999), Number::Float(5.0), true)]
+        #[case(Number::Float(5.1), Number::Float(5.0), false)]
+        #[case(Number::Float(5.0), Number::Float(5.0), false)]
+        fn number(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
+            let result = evaluate(
+                &LessThan {
+                    lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Number(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
+        #[case(true, false)]
+        fn boolean(#[case] lhs: bool, #[case] rhs: bool) {
+            let result = evaluate(
+                &LessThan {
+                    lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap_err();
+            assert_eq!(result, OperandTypeMismatch {
+                operand: "Compare",
+                expected: "Number|DateTime",
+                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
+                actual_rhs: "Literal { value: Boolean(false) }".to_string(),
+            });
+        }
+
+        #[rstest]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 3), false)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 4), false)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 5), true)]
+        fn date_time(#[case] lhs: DateTime<Utc>, #[case] rhs: DateTime<Utc>, #[case] expected: bool) {
+            let result = evaluate(
+                &LessThan {
+                    lhs: Box::new(Literal { value: Value::DateTime(lhs) }),
+                    rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
     }
 
-    #[rstest]
-    #[case(Number::PositiveInt(2), Number::PositiveInt(5), false)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(2), false)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(5), true)]
-    #[case(Number::NegativeInt(2), Number::PositiveInt(5), false)]
-    #[case(Number::NegativeInt(5), Number::NegativeInt(5), true)]
-    #[case(Number::NegativeInt(5), Number::Float(5.0), true)]
-    #[case(Number::Float(5.0), Number::Float(5.1), false)]
-    #[case(Number::Float(4.999), Number::Float(5.0), false)]
-    #[case(Number::Float(5.1), Number::Float(5.0), false)]
-    #[case(Number::Float(5.0), Number::Float(5.0), true)]
-    fn equal_to(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(
-            &EqualTo {
-                lhs: Box::new(Literal { value: Value::Number(lhs) }),
-                rhs: Box::new(Literal { value: Value::Number(rhs) }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
-        assert_eq!(result, Value::Boolean(expected));
+    mod less_than_or_equal_to {
+        use super::*;
+
+        #[rstest]
+        #[case(Number::PositiveInt(2), Number::PositiveInt(5), true)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(2), false)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(5), true)]
+        #[case(Number::NegativeInt(2), Number::PositiveInt(5), true)]
+        #[case(Number::NegativeInt(5), Number::NegativeInt(5), true)]
+        #[case(Number::NegativeInt(5), Number::Float(5.0), true)]
+        #[case(Number::Float(5.0), Number::Float(5.1), true)]
+        #[case(Number::Float(4.999), Number::Float(5.0), true)]
+        #[case(Number::Float(5.1), Number::Float(5.0), false)]
+        #[case(Number::Float(5.0), Number::Float(5.0), true)]
+        fn number(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
+            let result = evaluate(
+                &LessThanOrEqualTo {
+                    lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Number(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
+        #[case(true, false)]
+        fn boolean(#[case] lhs: bool, #[case] rhs: bool) {
+            let result = evaluate(
+                &LessThanOrEqualTo {
+                    lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap_err();
+            assert_eq!(result, OperandTypeMismatch {
+                operand: "Compare",
+                expected: "Number|DateTime",
+                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
+                actual_rhs: "Literal { value: Boolean(false) }".to_string(),
+            });
+        }
+
+        #[rstest]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 3), false)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 4), true)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 5), true)]
+        fn date_time(#[case] lhs: DateTime<Utc>, #[case] rhs: DateTime<Utc>, #[case] expected: bool) {
+            let result = evaluate(
+                &LessThanOrEqualTo {
+                    lhs: Box::new(Literal { value: Value::DateTime(lhs) }),
+                    rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
+                },
+                &Context::default(),
+            )
+                .unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
     }
 
-    #[rstest]
-    #[case(Value::None, Value::None, true)]
-    fn equal_to_none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
-        let result = evaluate(
-            &EqualTo {
-                lhs: Box::new(Literal { value: lhs }),
-                rhs: Box::new(Literal { value: rhs }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
+    mod equal_to {
+        use super::*;
 
-        assert_eq!(result, Value::Boolean(expected));
-    }
+        #[rstest]
+        #[case(Number::PositiveInt(2), Number::PositiveInt(5), false)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(2), false)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(5), true)]
+        #[case(Number::NegativeInt(2), Number::PositiveInt(5), false)]
+        #[case(Number::NegativeInt(5), Number::NegativeInt(5), true)]
+        #[case(Number::NegativeInt(5), Number::Float(5.0), true)]
+        #[case(Number::Float(5.0), Number::Float(5.1), false)]
+        #[case(Number::Float(4.999), Number::Float(5.0), false)]
+        #[case(Number::Float(5.1), Number::Float(5.0), false)]
+        #[case(Number::Float(5.0), Number::Float(5.0), true)]
+        fn number(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
+            let result = evaluate(
+                &EqualTo {
+                    lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Number(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
 
-    #[rstest]
-    #[case(true, true, true)]
-    #[case(true, false, false)]
-    #[case(false, true, false)]
-    #[case(false, false, true)]
-    fn equal_to_bool(#[case] lhs: bool, #[case] rhs: bool, #[case] expected: bool) {
-        let result = evaluate(
-            &EqualTo {
-                lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
-                rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
-        assert_eq!(result, Value::Boolean(expected));
-    }
+        #[rstest]
+        #[case(true, false, false)]
+        #[case(true, true, true)]
+        #[case(false, true, false)]
+        #[case(false, false, true)]
+        fn boolean(#[case] lhs: bool, #[case] rhs: bool, #[case] expected: bool) {
+            let result = evaluate(
+                &EqualTo {
+                    lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
 
-    #[rstest]
-    #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
+        #[rstest]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 3), false)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 4), true)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 5), false)]
+        fn date_time(#[case] lhs: DateTime<Utc>, #[case] rhs: DateTime<Utc>, #[case] expected: bool) {
+            let result = evaluate(
+                &EqualTo {
+                    lhs: Box::new(Literal { value: Value::DateTime(lhs) }),
+                    rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
+        #[case(Value::None, Value::None, true)]
+        fn none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
+            let result = evaluate(
+                &EqualTo {
+                    lhs: Box::new(Literal { value: lhs }),
+                    rhs: Box::new(Literal { value: rhs }),
+                },
+                &Context::default(),
+            )
+                .unwrap();
+
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
+        #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "EqualTo",
-                expected: "Boolean|Number",
+                expected: "Boolean|DateTime|Number",
                 actual_lhs: "Literal { value: Boolean(true) }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
-        })]
-    #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
+            })]
+        #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "EqualTo",
-                expected: "Boolean|Number",
+                expected: "Boolean|DateTime|Number",
                 actual_lhs: "Literal { value: None }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
-        })]
-    fn equal_to_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
-        let result = evaluate(
-            &EqualTo {
-                lhs: Box::new(Literal { value: lhs }),
-                rhs: Box::new(Literal { value: rhs }),
-            },
-            &Context::default(),
-        )
-        .unwrap_err();
-        assert_eq!(result, expected);
+            })]
+        fn mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
+            let result = evaluate(
+                &EqualTo {
+                    lhs: Box::new(Literal { value: lhs }),
+                    rhs: Box::new(Literal { value: rhs }),
+                },
+                &Context::default(),
+            )
+                .unwrap_err();
+            assert_eq!(result, expected);
+        }
     }
 
-    #[rstest]
-    #[case(Number::PositiveInt(2), Number::PositiveInt(5), true)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(2), true)]
-    #[case(Number::PositiveInt(5), Number::PositiveInt(5), false)]
-    #[case(Number::NegativeInt(2), Number::PositiveInt(5), true)]
-    #[case(Number::NegativeInt(5), Number::NegativeInt(5), false)]
-    #[case(Number::NegativeInt(5), Number::Float(5.0), false)]
-    #[case(Number::Float(5.0), Number::Float(5.1), true)]
-    #[case(Number::Float(4.999), Number::Float(5.0), true)]
-    #[case(Number::Float(5.1), Number::Float(5.0), true)]
-    #[case(Number::Float(5.0), Number::Float(5.0), false)]
-    fn not_equal_to(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
-        let result = evaluate(
-            &NotEqualTo {
-                lhs: Box::new(Literal { value: Value::Number(lhs) }),
-                rhs: Box::new(Literal { value: Value::Number(rhs) }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
-        assert_eq!(result, Value::Boolean(expected));
-    }
+    mod not_equal_to {
+        use super::*;
 
-    #[rstest]
-    #[case(Value::None, Value::None, false)]
-    fn not_equal_to_none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
-        let result = evaluate(
-            &NotEqualTo {
-                lhs: Box::new(Literal { value: lhs }),
-                rhs: Box::new(Literal { value: rhs }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
+        #[rstest]
+        #[case(Number::PositiveInt(2), Number::PositiveInt(5), true)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(2), true)]
+        #[case(Number::PositiveInt(5), Number::PositiveInt(5), false)]
+        #[case(Number::NegativeInt(2), Number::PositiveInt(5), true)]
+        #[case(Number::NegativeInt(5), Number::NegativeInt(5), false)]
+        #[case(Number::NegativeInt(5), Number::Float(5.0), false)]
+        #[case(Number::Float(5.0), Number::Float(5.1), true)]
+        #[case(Number::Float(4.999), Number::Float(5.0), true)]
+        #[case(Number::Float(5.1), Number::Float(5.0), true)]
+        #[case(Number::Float(5.0), Number::Float(5.0), false)]
+        fn number(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: bool) {
+            let result = evaluate(
+                &NotEqualTo {
+                    lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Number(rhs) }),
+                },
+                &Context::default(),
+            )
+                .unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
 
-        assert_eq!(result, Value::Boolean(expected));
-    }
+        #[rstest]
+        #[case(true, true, false)]
+        #[case(true, false, true)]
+        #[case(false, true, true)]
+        #[case(false, false, false)]
+        fn bool(#[case] lhs: bool, #[case] rhs: bool, #[case] expected: bool) {
+            let result = evaluate(
+                &NotEqualTo {
+                    lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
+                },
+                &Context::default(),
+            )
+                .unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
 
-    #[rstest]
-    #[case(true, true, false)]
-    #[case(true, false, true)]
-    #[case(false, true, true)]
-    #[case(false, false, false)]
-    fn not_equal_to_bool(#[case] lhs: bool, #[case] rhs: bool, #[case] expected: bool) {
-        let result = evaluate(
-            &NotEqualTo {
-                lhs: Box::new(Literal { value: Value::Boolean(lhs) }),
-                rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
-        assert_eq!(result, Value::Boolean(expected));
-    }
+        #[rstest]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 3), true)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 4), false)]
+        #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 5), true)]
+        fn date_time(#[case] lhs: DateTime<Utc>, #[case] rhs: DateTime<Utc>, #[case] expected: bool) {
+            let result = evaluate(
+                &NotEqualTo {
+                    lhs: Box::new(Literal { value: Value::DateTime(lhs) }),
+                    rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
 
-    #[rstest]
-    #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
+        #[rstest]
+        #[case(Value::None, Value::None, false)]
+        fn none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
+            let result = evaluate(
+                &NotEqualTo {
+                    lhs: Box::new(Literal { value: lhs }),
+                    rhs: Box::new(Literal { value: rhs }),
+                },
+                &Context::default(),
+            )
+                .unwrap();
+
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
+        #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "NotEqualTo",
-                expected: "Boolean|Number",
+                expected: "Boolean|DateTime|Number",
                 actual_lhs: "Literal { value: Boolean(true) }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
-        })]
-    #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
+            })]
+        #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "NotEqualTo",
-                expected: "Boolean|Number",
+                expected: "Boolean|DateTime|Number",
                 actual_lhs: "Literal { value: None }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
-        })]
-    fn not_equal_to_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
-        let result = evaluate(
-            &NotEqualTo {
-                lhs: Box::new(Literal { value: lhs }),
-                rhs: Box::new(Literal { value: rhs }),
-            },
-            &Context::default(),
-        )
-        .unwrap_err();
-        assert_eq!(result, expected);
+            })]
+        fn mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
+            let result = evaluate(
+                &NotEqualTo {
+                    lhs: Box::new(Literal { value: lhs }),
+                    rhs: Box::new(Literal { value: rhs }),
+                },
+                &Context::default(),
+            )
+                .unwrap_err();
+            assert_eq!(result, expected);
+        }
     }
 
     #[rstest]
@@ -707,6 +917,7 @@ mod tests {
     #[case::unknown_device("unknown_device_id", "", Err(ExpressionError::UnknownDevice("unknown_device_id".to_string())))]
     #[case::unknown_property("ab917a9a-a7d5-4853-9518-75909236a182", "unknown_property_id", Err(UnknownProperty { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "unknown_property_id".to_string() }))]
     #[case::boolean("ab917a9a-a7d5-4853-9518-75909236a182", "on", Ok(Value::Boolean(true)))]
+    #[case::date_time("ab917a9a-a7d5-4853-9518-75909236a182", "motionLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
     #[case::number("ab917a9a-a7d5-4853-9518-75909236a182", "brightness", Ok(Value::Number(Number::Float(58.89))))]
     #[case::color("ab917a9a-a7d5-4853-9518-75909236a182", "color", Err(ExpressionError::UnsupportedPropertyType(PropertyType::Color)))]
     #[case::color_temperature(

@@ -1,0 +1,28 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "0af9eb8a-f38f-427c-b819-0c6850f55fe9",
+      "id_v1": "/sensors/117",
+      "owner": {
+        "rid": "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3",
+        "rtype": "device"
+      },
+      "enabled": false,
+      "motion": {
+        "motion": false,
+        "motion_valid": true,
+        "motion_report": {
+          "changed": "2026-09-19T19:53:59.108Z",
+          "motion": false
+        }
+      },
+      "sensitivity": {
+        "status": "set",
+        "sensitivity": 2,
+        "sensitivity_max": 4
+      },
+      "type": "motion"
+    }
+  ]
+}

@@ -31,4 +31,5 @@ impl Device {
 #[derive(Clone, PartialEq, Debug)]
 pub enum DeviceType {
     Light,
+    MotionSensor,
 }

@@ -1,6 +1,6 @@
 use crate::domain::device::Device;
 use crate::domain::events::Event;
-use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty};
+use crate::domain::property::{BooleanProperty, ColorProperty, DateTimeProperty, NumberProperty};
 use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::property_changed_reducer::reduce_property_changed_event;
 use metrics::{counter, gauge};
@@ -64,17 +64,23 @@ impl Store {
                     });
                     counter!(Metric::StorePropertyChanges.name(),  "property_type" => "boolean", "result" => result.metric_label()).increment(1);
                 }
-                Event::NumberPropertyChanged { device_id, property_id, value } => {
-                    let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
+                Event::DateTimePropertyChanged { device_id, property_id, value } => {
+                    let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut DateTimeProperty| {
                         property.set_value(value)
                     });
-                    counter!(Metric::StorePropertyChanges.name(),  "property_type" => "number", "result" => result.metric_label()).increment(1);
+                    counter!(Metric::StorePropertyChanges.name(),  "property_type" => "date_time", "result" => result.metric_label()).increment(1);
                 }
                 Event::ColorPropertyChanged { device_id, property_id, xy, gamut } => {
                     let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut ColorProperty| {
                         property.set_value(xy, gamut)
                     });
                     counter!(Metric::StorePropertyChanges.name(),  "property_type" => "color", "result" => result.metric_label()).increment(1);
+                }
+                Event::NumberPropertyChanged { device_id, property_id, value } => {
+                    let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
+                        property.set_value(value)
+                    });
+                    counter!(Metric::StorePropertyChanges.name(),  "property_type" => "number", "result" => result.metric_label()).increment(1);
                 }
             }
 
