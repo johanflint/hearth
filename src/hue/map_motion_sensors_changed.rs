@@ -1,6 +1,6 @@
 use crate::domain::Number;
 use crate::domain::events::Event;
-use crate::hue::domain::MotionChanged;
+use crate::hue::domain::{MotionChanged, SensitivityChanged, SensitivityStatus};
 
 pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
     let mut events = Vec::<Event>::with_capacity(3);
@@ -25,12 +25,16 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
         })
     }
 
-    if let Some(sensitivity) = property.sensitivity.and_then(|s| s.sensitivity) {
-        events.push(Event::NumberPropertyChanged {
-            device_id: property.owner.rid.to_string(),
-            property_id: "sensitivity".to_string(),
-            value: Some(Number::PositiveInt(sensitivity)),
-        });
+    if let Some(SensitivityChanged { status, sensitivity: Some(sensitivity) }) = property.sensitivity {
+        // The bridge re-announces the target value with status "changing" while it propagates to the
+        // (battery-powered) physical sensor; only apply it once the sensor has confirmed the change.
+        if matches!(status, Some(SensitivityStatus::Set)) {
+            events.push(Event::NumberPropertyChanged {
+                device_id: property.owner.rid.to_string(),
+                property_id: "sensitivity".to_string(),
+                value: Some(Number::PositiveInt(sensitivity)),
+            });
+        }
     }
 
     events
