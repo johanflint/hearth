@@ -33,7 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Rustup
-        run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
+        run: |
+          if [ "${{ matrix.toolchain }}" = "stable" ]; then
+            rustup show # picks up the pinnen version in rust-toolchain.toml automatically
+          else
+            rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
+          fi
       - name: Build
         run: cargo build --verbose --locked
       - name: Tests
