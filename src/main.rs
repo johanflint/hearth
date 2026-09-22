@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Loaded flows");
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
-    let mut store = Store::new(rx);
+    let (mut store, store_reactive_rx) = Store::new(rx);
 
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let scheduler_tx_clone = scheduler_tx.clone();
@@ -78,10 +78,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     controller_registry::register(Arc::new(hue_controller));
     info!("✅  Initialized controllers");
 
-    let store_rx = store.notifier();
     let geo_location = config.geo_location().clone();
     task::spawn(async move {
-        store_listener(store_rx, flow_registry, scheduler_tx, geo_location).await;
+        store_listener(store_reactive_rx, flow_registry, scheduler_tx, geo_location).await;
     });
     info!("✅  Initialized store listener");
 

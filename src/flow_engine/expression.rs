@@ -11,7 +11,7 @@ use thiserror::Error;
 use tracing::warn;
 
 #[derive(PartialEq, Deserialize, Debug)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Expression {
     // Comparison
     GreaterThanOrEqualTo { lhs: Box<Expression>, rhs: Box<Expression> },
@@ -32,6 +32,7 @@ pub enum Expression {
     Literal { value: Value },
 
     // Property
+    PropertyChanged { device_id: String, property_id: String },
     PropertyValue { device_id: String, property_id: String },
 
     // Temporal
@@ -126,6 +127,10 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         Literal { value } => Ok(value.clone()),
 
         // Property
+        PropertyChanged { device_id, property_id } => {
+            let changed = context.changed().is_some_and(|c| &c.device_id == device_id && &c.property_id == property_id);
+            Ok(Value::Boolean(changed))
+        },
         PropertyValue { device_id, property_id } => {
             let Some(device) = context.snapshot().devices.get(device_id) else {
                 warn!(device_id, "⚠️ Received property changed event for unknown device '{}'", device_id);

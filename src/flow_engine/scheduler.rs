@@ -59,7 +59,7 @@ pub async fn scheduler(
 
                         debug!("🕗 Running scheduled flow '{}'...", flow.name());
                         let snapshot = notifier_rx_clone.borrow().clone();
-                        execute_flows(vec![flow.clone()], snapshot, tx_clone.clone(), geo_location_clone.clone()).await;
+                        execute_flows(vec![flow.clone()], snapshot, None, tx_clone.clone(), geo_location_clone.clone()).await;
                     }
                 });
                 info!(schedule = schedule_str, "🕗 Scheduling flow '{}'... OK", flow_name);
