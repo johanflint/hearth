@@ -15,10 +15,13 @@ pub struct LightGet {
 
 #[derive(Debug, Serialize)]
 pub struct LightRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<On>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dimming: Option<SetDimming>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color_temperature: Option<SetColorTemperature>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<SetColor>,
 }
 

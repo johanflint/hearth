@@ -144,7 +144,7 @@ mod tests {
     #[tokio::test]
     async fn property_change_is_persisted_in_the_store() {
         let (tx, rx) = channel::<Event>(8);
-        let (mut store, _) = Store::new(rx);
+        let (mut store, _reactive_rx) = Store::new(rx);
         let mut notifier = store.notifier();
 
         tokio::spawn(async move {
@@ -171,6 +171,54 @@ mod tests {
         let on_property = device.get_property::<BooleanProperty>("on").expect("property should exist");
 
         assert_eq!(on_property.value(), true, "expected the store snapshot to reflect the property change");
+    }
+
+    #[tokio::test]
+    async fn reactive_updates_are_never_merged_even_under_back_to_back_events() {
+        // Regression test: every event must produce its own reactive update, in
+        // order, with no merging/dropping - even when several events are sent
+        // before the store has a chance to process the first one.
+        let (tx, rx) = channel::<Event>(8);
+        let (mut store, mut reactive_rx) = Store::new(rx);
+
+        tokio::spawn(async move {
+            store.listen().await;
+        });
+
+        let device = DeviceBuilder::new("device")
+            .with_boolean_property("on", false)
+            .with_boolean_property("motion", false)
+            .build();
+        tx.send(Event::DiscoveredDevices(vec![device])).await.unwrap();
+
+        // Sent back-to-back, without awaiting a reactive update in between
+        tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: "on".to_string(), value: true }).await.unwrap();
+        tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: "motion".to_string(), value: true }).await.unwrap();
+
+        let discovered = reactive_rx.recv().await.expect("expected a reactive update for device discovery");
+        assert_eq!(discovered.changed, None);
+
+        let first = reactive_rx.recv().await.expect("expected a reactive update for the first property change");
+        assert_eq!(first.changed, Some(PropertyChange { device_id: "device".to_string(), property_id: "on".to_string() }));
+
+        let second = reactive_rx.recv().await.expect("expected a reactive update for the second property change");
+        assert_eq!(second.changed, Some(PropertyChange { device_id: "device".to_string(), property_id: "motion".to_string() }));
+    }
+
+    #[tokio::test]
+    async fn reactive_update_reports_no_change_when_the_event_is_rejected() {
+        let (tx, rx) = channel::<Event>(8);
+        let (mut store, mut reactive_rx) = Store::new(rx);
+
+        tokio::spawn(async move {
+            store.listen().await;
+        });
+
+        // No device named "unknown" exists, so the reducer rejects this event
+        tx.send(Event::BooleanPropertyChanged { device_id: "unknown".to_string(), property_id: "on".to_string(), value: true }).await.unwrap();
+
+        let update = reactive_rx.recv().await.expect("expected a reactive update even for a rejected event");
+        assert_eq!(update.changed, None, "a rejected event must not be reported as a property change");
     }
 
     #[tokio::test]
