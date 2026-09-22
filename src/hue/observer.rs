@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task;
 use tokio::task::JoinError;
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, info, instrument, trace, warn};
 
 type HueEvent = ServerSentEvent<Vec<ServerSentEventPayload>>;
 
