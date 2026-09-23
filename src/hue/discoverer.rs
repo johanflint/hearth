@@ -1,12 +1,12 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
-use crate::hue::domain::{DeviceGet, HueResponse, LightGet, MotionGet};
+use crate::hue::domain::{DeviceGet, HueResponse, LightGet, LightLevelGet, MotionGet};
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
 use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
 use thiserror::Error;
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 #[instrument(skip_all)]
 pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>, DiscoverError> {
@@ -43,11 +43,21 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     let motion_response = response.json::<HueResponse<MotionGet>>().await?;
     info!("Retrieving motion sensors... OK, {} found", motion_response.data.len());
 
+    let response = client
+        .get(format!("{}/clip/v2/resource/light_level", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(to_discover_error)?;
+
+    let light_levels_response = response.json::<HueResponse<LightLevelGet>>().await?;
+    debug!("Retrieving lights levels... OK, {} found", light_levels_response.data.len()); // Using debug as these aren't devices but services
+
     let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
     let mut devices = vec![];
     let lights = map_lights(light_response.data, &mut device_map)?;
-    let motion_sensors = map_motion_sensors(motion_response.data, &mut device_map)?;
+    let motion_sensors = map_motion_sensors(motion_response.data, light_levels_response.data, &mut device_map)?;
 
     devices.extend(lights);
     devices.extend(motion_sensors);
@@ -129,6 +139,14 @@ mod tests {
             .create_async()
             .await;
 
+        server
+            .mock("GET", "/clip/v2/resource/light_level")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_light_level_simplified_response.json"))
+            .create_async()
+            .await;
+
         let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
         let client = new_client(&app_config).unwrap();
 
@@ -174,6 +192,21 @@ mod tests {
                 .build(),
         );
 
+        let illuminance_property: Box<dyn Property> = Box::new(
+            NumberProperty::builder("illuminance".to_string(), PropertyType::Illuminance, true)
+                .unit(Unit::Lux)
+                .float(36.257679024119625, Some(0.0), None)
+                .build()
+        );
+
+        let illuminance_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "illuminanceLastChanged".to_string(),
+            PropertyType::IlluminanceLastChanged,
+            true,
+            None,
+            Some("2026-09-23T15:37:20.001Z".parse().unwrap()),
+        ));
+
         mock.assert();
         assert_eq!(response.len(), 2);
         assert_eq!(
@@ -205,6 +238,8 @@ mod tests {
                     (motion_property.name().to_string(), motion_property),
                     (motion_last_changed_property.name().to_string(), motion_last_changed_property),
                     (sensitivity_property.name().to_string(), sensitivity_property),
+                    (illuminance_property.name().to_string(), illuminance_property),
+                    (illuminance_last_changed_property.name().to_string(), illuminance_last_changed_property),
                 ]),
                 external_id: None,
                 address: None,

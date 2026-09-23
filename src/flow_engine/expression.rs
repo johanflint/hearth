@@ -193,6 +193,14 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                     let sensitivity_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
                     Ok(sensitivity_property.value().map(Value::Number).unwrap_or(Value::None))
                 }
+                PropertyType::Illuminance => {
+                    let illuminance_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
+                    Ok(illuminance_property.value().map(Value::Number).unwrap_or(Value::None))
+                }
+                PropertyType::IlluminanceLastChanged => {
+                    let illuminance_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
+                    Ok(illuminance_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
+                }
             }
         }
 
@@ -355,6 +363,18 @@ mod tests {
             DateTimeProperty::new("motionLastChanged".to_string(), PropertyType::MotionLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
         );
 
+        let illuminance_property: Box<dyn Property> = Box::new(
+            NumberProperty::builder("illuminance".to_string(), PropertyType::Illuminance, true)
+                .external_id("ab917a9a-a7d5-4853-9518-75909236a182".to_string())
+                .unit(Unit::Lux)
+                .float(316.23, Some(0.0), None)
+                .build(),
+        );
+
+        let illuminance_last_changed_property: Box<dyn Property> = Box::new(
+            DateTimeProperty::new("illuminanceLastChanged".to_string(), PropertyType::IlluminanceLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
+        );
+
         DeviceBuilder::new("ab917a9a-a7d5-4853-9518-75909236a182")
             .with_boolean_property("on", true)
             .with_color_property(
@@ -366,7 +386,13 @@ mod tests {
                     CartesianCoordinate::new(0.167, 0.04),
                 )),
             )
-            .with_properties(vec![brightness_property, color_temperature_property, motion_last_changed_property])
+            .with_properties(vec![
+                brightness_property,
+                color_temperature_property,
+                motion_last_changed_property,
+                illuminance_property,
+                illuminance_last_changed_property
+            ])
             .build()
     }
 
@@ -977,6 +1003,8 @@ mod tests {
         "colorTemperature",
         Err(ExpressionError::UnsupportedPropertyType(PropertyType::ColorTemperature))
     )]
+    #[case::illuminance("ab917a9a-a7d5-4853-9518-75909236a182", "illuminance", Ok(Value::Number(Number::Float(316.23))))]
+    #[case::illuminance_last_changed("ab917a9a-a7d5-4853-9518-75909236a182", "illuminanceLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
     fn property_value(#[case] device_id: &str, #[case] property_id: &str, #[case] expected: Result<Value, ExpressionError>) {
         let device = device();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
