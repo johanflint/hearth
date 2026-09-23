@@ -1,0 +1,21 @@
+{
+  "id": "01K7KKPVE7VJ4V3XZ6ZC9Q1M5R",
+  "name": "scheduledFlowWithPropertyChangedTrigger",
+  "schedule": "0 0 18 * * *",
+  "trigger": {
+    "type": "propertyChanged",
+    "deviceId": "device",
+    "propertyId": "on"
+  },
+  "nodes": [
+    {
+      "id": "startNode",
+      "type": "startNode",
+      "outgoingNode": "endNode"
+    },
+    {
+      "id": "endNode",
+      "type": "endNode"
+    }
+  ]
+}

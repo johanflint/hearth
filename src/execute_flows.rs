@@ -6,7 +6,7 @@ use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_value::{ConflictMergeSemantics, PropertyValue};
 use crate::flow_engine::{Context, FlowEngineError, FlowExecutionReport};
 use crate::scheduler::SchedulerCommand;
-use crate::store::StoreSnapshot;
+use crate::store::{PropertyChange, StoreSnapshot};
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
 use std::collections::HashMap;
@@ -36,8 +36,8 @@ pub async fn execute_flow(flow: Arc<Flow>, node_id: Option<String>, snapshot: St
 }
 
 #[instrument(skip_all)]
-pub async fn execute_flows(flows: Vec<Arc<Flow>>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
-    let context = Context::builder().snapshot(snapshot.clone()).location(geo_location).build();
+pub async fn execute_flows(flows: Vec<Arc<Flow>>, snapshot: StoreSnapshot, changed: Option<PropertyChange>, tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
+    let context = Context::builder().snapshot(snapshot.clone()).changed(changed).location(geo_location).build();
     let results = FuturesUnordered::from_iter(flows.into_iter().map(|flow| async {
         let result = flow_engine::execute(&flow, None, &context, tx.clone()).await;
         (flow, result)
