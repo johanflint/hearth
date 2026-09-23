@@ -18,17 +18,23 @@ use tracing::{debug, error, info, instrument, trace, warn};
 #[track_failures(Metric::FlowExecutionFailures.name())]
 #[instrument(skip_all, fields(flow = flow.name(), metric_name = Metric::FlowExecutionDuration.name()))]
 pub async fn execute(flow: &Flow, node_id: Option<String>, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
-    debug!("⚖️ Evaluating trigger condition for flow...");
-    let result = evaluate(flow.trigger(), context);
-    match result {
-        Ok(Value::Boolean(true)) => debug!("⚖️ Evaluating trigger condition for flow... true"),
-        Ok(result) => {
-            debug!(result = ?result, "⚖️ Evaluating trigger condition for flow... false, skipping execution");
-            return Ok(FlowExecutionReport::empty());
-        }
-        Err(error) => {
-            warn!("⚖️ Evaluating trigger condition for flow... failed, {}", error);
-            return Err(FlowEngineError::FailedTriggerEvaluation(error));
+    // Only check the trigger for a fresh run, not when resuming after a Sleep node (node_id is Some).
+    // The trigger already passed before the sleep was scheduled, re-checking it could incorrectly kill the
+    // continuation for edge-trigged expressions like PropertyChanged, whose "changed" fact is only true for
+    // the original event.
+    if node_id.is_none() {
+        debug!("⚖️ Evaluating trigger condition for flow...");
+        let result = evaluate(flow.trigger(), context);
+        match result {
+            Ok(Value::Boolean(true)) => debug!("⚖️ Evaluating trigger condition for flow... true"),
+            Ok(result) => {
+                debug!(result = ?result, "⚖️ Evaluating trigger condition for flow... false, skipping execution");
+                return Ok(FlowExecutionReport::empty());
+            }
+            Err(error) => {
+                warn!("⚖️ Evaluating trigger condition for flow... failed, {}", error);
+                return Err(FlowEngineError::FailedTriggerEvaluation(error));
+            }
         }
     }
 
@@ -242,6 +248,68 @@ mod tests {
         assert_eq!(result.duration, Duration::ZERO);
     }
 
+    #[test(tokio::test)]
+    async fn does_not_re_evaluate_the_trigger_when_resuming_after_a_sleep() {
+        use crate::flow_engine::Expression::PropertyChanged;
+        use crate::store::PropertyChange;
+
+        let end_node = Arc::new(FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End));
+        // A witness node: resuming straight into endNode would look identical
+        // (an empty, successful report) whether resumption actually happened
+        // or the trigger re-check wrongly short-circuited it. A second sleep
+        // gives us an observable side effect - another ScheduleOnce command -
+        // only if execution genuinely continued past the resume point.
+        let witness_sleep_node = Arc::new(FlowNode::new(
+            "witnessSleepNode".to_string(),
+            vec![FlowLink::new(end_node.clone(), Value::None)],
+            FlowNodeKind::Sleep(Duration::from_secs(1)),
+        ));
+        let mid_node = Arc::new(FlowNode::new(
+            "midNode".to_string(),
+            vec![FlowLink::new(witness_sleep_node.clone(), Value::None)],
+            FlowNodeKind::Action(ActionFlowNode::new(Box::new(LogAction::new("resumed".to_string())))),
+        ));
+        let sleep_node = Arc::new(FlowNode::new(
+            "sleepNode".to_string(),
+            vec![FlowLink::new(mid_node.clone(), Value::None)],
+            FlowNodeKind::Sleep(Duration::from_secs(1)),
+        ));
+        let start_node = Arc::new(FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(sleep_node.clone(), Value::None)],
+            FlowNodeKind::Start,
+        ));
+        let nodes_by_id = HashMap::from([
+            (start_node.id().to_string(), start_node.clone()),
+            (sleep_node.id().to_string(), sleep_node.clone()),
+            (mid_node.id().to_string(), mid_node.clone()),
+            (witness_sleep_node.id().to_string(), witness_sleep_node.clone()),
+            (end_node.id().to_string(), end_node.clone()),
+        ]);
+        let trigger = PropertyChanged { device_id: "device".to_string(), property_id: "on".to_string() };
+        let flow = Flow::new("id".to_string(), "flow".to_string(), None, Some(trigger), start_node, nodes_by_id).unwrap();
+
+        let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
+
+        // The property change that fires the flow - only true for this event's context
+        let triggering_context = Context::builder()
+            .changed(Some(PropertyChange { device_id: "device".to_string(), property_id: "on".to_string() }))
+            .build();
+        execute(&flow, None, &triggering_context, scheduler_tx.clone()).await.unwrap();
+        assert!(matches!(scheduler_rx.recv().await, Some(SchedulerCommand::ScheduleOnce { node_id, .. }) if node_id == "midNode"));
+
+        // The scheduler resumes later with a fresh, "nothing changed" context
+        let resume_context = Context::default();
+        execute(&flow, Some("midNode".to_string()), &resume_context, scheduler_tx).await.unwrap();
+
+        // The continuation must still run (and reach the witness sleep) even though
+        // the trigger would evaluate to false against this context
+        assert!(
+            matches!(scheduler_rx.recv().await, Some(SchedulerCommand::ScheduleOnce { node_id, .. }) if node_id == "endNode"),
+            "expected the flow to resume past midNode instead of being killed by trigger re-evaluation"
+        );
+    }
+    
     #[test(tokio::test)]
     async fn fails_if_the_start_node_id_cannot_be_found() {
         let start_node = FlowNode::new("startNode".to_string(), vec![], FlowNodeKind::Start);
