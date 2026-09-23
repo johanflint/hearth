@@ -6,7 +6,7 @@ use thiserror::Error;
 use tracing::{info, warn};
 
 #[inline(always)]
-pub(crate) fn reduce_property_changed_event<F, T>(devices: &mut DeviceMap, device_id: &str, property_id: &str, set_value: F) -> Result<(), ReducerError>
+pub(crate) fn reduce_property_changed_event<F, T>(devices: &mut DeviceMap, device_id: &str, property_id: &str, set_value: F) -> Result<bool, ReducerError>
 where
     F: FnOnce(&mut T) -> Result<(), PropertyError>,
     T: Property + 'static,
@@ -27,6 +27,7 @@ where
     };
 
     let previous_value = property.value_string();
+    let previous_property = property.clone_box();
     let Some(downcast_property) = property.as_any_mut().downcast_mut::<T>() else {
         warn!(device_id, "⚠️ Expected '{}' property for property '{}'", type_name::<T>(), &property_id);
         return Err(ReducerError::IncorrectPropertyType {
@@ -41,18 +42,20 @@ where
         return Err(ReducerError::PropertyChangedError(err));
     }
 
-    info!(
-        device_id,
-        "🟢 Updated device '{}', set '{}' to '{}', was '{}'",
-        &new_device.name,
-        property.name(),
-        property.value_string(),
-        previous_value
-    );
+    let changed = !previous_property.eq_dyn(downcast_property);
+    if changed {
+        info!(
+            device_id,
+            "🟢 Updated device '{}', set '{}' to '{}', was '{}'",
+            &new_device.name,
+            property.name(),
+            property.value_string(),
+            previous_value
+        );
+    }
 
     devices.insert(device_id.to_string(), Arc::new(new_device));
-
-    Ok(()) // return new_device and insert in store?
+    Ok(changed)
 }
 
 #[derive(Error, PartialEq, Debug)]
@@ -133,5 +136,16 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ReducerError::PropertyChangedError(PropertyError::ReadOnly));
+    }
+
+    #[test]
+    fn reduce_returns_false_for_a_duplicate_value() {
+        let mut devices = create_devices(); // property "on" starts at false
+
+        let first = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |p: &mut BooleanProperty| p.set_value(true));
+        assert_eq!(first, Ok(true), "the first update to a new value must report a change");
+
+        let duplicate = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |p: &mut BooleanProperty| p.set_value(true));
+        assert_eq!(duplicate, Ok(false), "re-applying the same value must not report a change");
     }
 }
