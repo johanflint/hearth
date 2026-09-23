@@ -38,6 +38,8 @@ pub enum PropertyType {
     Color,
     ColorTemperature,
     Enabled,
+    Illuminance,
+    IlluminanceLastChanged,
     Motion,
     MotionLastChanged,
     MotionSensitivity,

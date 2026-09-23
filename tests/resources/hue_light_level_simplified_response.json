@@ -1,0 +1,23 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "a5792999-540b-4d4c-b9b6-d3da0cc2a305",
+      "id_v1": "/sensors/77",
+      "owner": {
+        "rid": "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3",
+        "rtype": "device"
+      },
+      "enabled": true,
+      "light": {
+        "light_level": 15595,
+        "light_level_valid": true,
+        "light_level_report": {
+          "changed": "2026-09-23T15:37:20.001Z",
+          "light_level": 15595
+        }
+      },
+      "type": "light_level"
+    }
+  ]
+}
