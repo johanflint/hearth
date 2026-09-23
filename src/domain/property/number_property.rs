@@ -212,7 +212,7 @@ impl Unit {
     pub fn symbol(&self) -> &str {
         match self {
             Unit::Percentage => "%",
-            Unit::Lux => "l",
+            Unit::Lux => "lx",
             Unit::DegreesCelsius => "°C",
             Unit::Kelvin => "k",
             Unit::None => "",
