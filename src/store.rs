@@ -129,11 +129,16 @@ impl Store {
                 result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id })
             }
             Event::ColorPropertyChanged { device_id, property_id, xy, gamut } => {
-                let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut ColorProperty| {
+                let Some(resolved_property_id) = resolve_property_id::<ColorProperty>(&self.devices, &device_id, &property_id) else {
+                    error!(device_id, ?property_id, "⚠️ Could not resolve color property for device '{}'", device_id);
+                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "color", "result" => "failure").increment(1);
+                    return None
+                };
+                let result = reduce_property_changed_event(&mut self.devices, &device_id, &resolved_property_id, |property: &mut ColorProperty| {
                     property.set_value(xy, gamut)
                 });
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "color", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id })
+                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id })
             }
             Event::NumberPropertyChanged { device_id, property_id, value } => {
                 let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {

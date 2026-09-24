@@ -40,7 +40,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
     if let Some(color) = property.color {
         events.push(Event::ColorPropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "color".to_string(),
+            property_id: PropertyLocator::Name("color".to_string()),
             xy: CartesianCoordinate::new(color.xy.x, color.xy.y),
             gamut: color.gamut.map(|mut g| g.take_gamut()),
         });
@@ -231,7 +231,7 @@ mod tests {
             result[0],
             ColorPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                property_id: "color".to_string(),
+                property_id: PropertyLocator::Name("color".to_string()),
                 xy: CartesianCoordinate::new(0.0, 0.0),
                 gamut: Some(Gamut::new(
                     CartesianCoordinate::new(0.1, 0.2),

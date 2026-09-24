@@ -13,7 +13,7 @@ pub enum Event {
     },
     ColorPropertyChanged {
         device_id: String,
-        property_id: String,
+        property_id: PropertyLocator,
         xy: CartesianCoordinate,
         gamut: Option<Gamut>,
     },
