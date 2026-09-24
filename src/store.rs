@@ -107,44 +107,46 @@ impl Store {
                 let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut BooleanProperty| {
                     property.set_value(value)
                 });
-                counter!(Metric::StorePropertyChanges.name(),  "property_type" => "boolean", "result" => result.metric_label()).increment(1);
+                counter!(Metric::StorePropertyChanges.name(), "property_type" => "boolean", "result" => result.metric_label()).increment(1);
                 result.unwrap_or(false).then(|| PropertyChange { device_id, property_id })
             }
             Event::DateTimePropertyChanged { device_id, property_id, value } => {
                 let Some(resolved_property_id) = resolve_property_id::<DateTimeProperty>(&self.devices, &device_id, &property_id) else {
                     error!(device_id, ?property_id, "⚠️ Could not resolve date time property for device '{}'", device_id);
+                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "date_time", "result" => "failure").increment(1);
                     return None
                 };
 
                 let result = reduce_property_changed_event(&mut self.devices, &device_id, &resolved_property_id, |property: &mut DateTimeProperty| {
                     property.set_value(value)
                 });
-                counter!(Metric::StorePropertyChanges.name(),  "property_type" => "date_time", "result" => result.metric_label()).increment(1);
+                counter!(Metric::StorePropertyChanges.name(), "property_type" => "date_time", "result" => result.metric_label()).increment(1);
                 result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id })
             }
             Event::ColorPropertyChanged { device_id, property_id, xy, gamut } => {
                 let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut ColorProperty| {
                     property.set_value(xy, gamut)
                 });
-                counter!(Metric::StorePropertyChanges.name(),  "property_type" => "color", "result" => result.metric_label()).increment(1);
+                counter!(Metric::StorePropertyChanges.name(), "property_type" => "color", "result" => result.metric_label()).increment(1);
                 result.unwrap_or(false).then(|| PropertyChange { device_id, property_id })
             }
             Event::NumberPropertyChanged { device_id, property_id, value } => {
                 let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
                     property.set_value(value)
                 });
-                counter!(Metric::StorePropertyChanges.name(),  "property_type" => "number", "result" => result.metric_label()).increment(1);
+                counter!(Metric::StorePropertyChanges.name(), "property_type" => "number", "result" => result.metric_label()).increment(1);
                 result.unwrap_or(false).then(|| PropertyChange { device_id, property_id })
             }
             Event::EnumPropertyChanged { device_id, property_id, value } => {
                 let Some(resolved_property_id) = resolve_property_id::<EnumProperty>(&self.devices, &device_id, &property_id) else {
                     error!(device_id, ?property_id, "⚠️ Could not resolve enum property for device '{}'", device_id);
+                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "enum", "result" => "failure").increment(1);
                     return None
                 };
                 let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &resolved_property_id, move |property: &mut EnumProperty| {
                     property.set_value(value)
                 });
-                counter!(Metric::StorePropertyChanges.name(),  "property_type" => "enum", "result" => result.metric_label()).increment(1);
+                counter!(Metric::StorePropertyChanges.name(), "property_type" => "enum", "result" => result.metric_label()).increment(1);
                 result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id })
             }
         }
