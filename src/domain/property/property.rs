@@ -56,4 +56,8 @@ pub enum PropertyError {
     ValueTooLarge,
     #[error("missing property")]
     MissingProperty,
+    #[error("enum property must have at least oe allowed value")]
+    EmptyAllowedValues,
+    #[error("unknown value '{value}', allowed values: '{}'", allowed_values.join(", "))]
+    UnknownValue { value: String, allowed_values: Vec<String> },
 }
