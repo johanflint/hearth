@@ -96,10 +96,11 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
             (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a == b)),
+            (Value::String(a), Value::String(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::None, Value::None) => Ok(Value::Boolean(true)),
             _ => Err(ExpressionError::OperandTypeMismatch {
                 operand: "EqualTo",
-                expected: "Boolean|DateTime|Number",
+                expected: "Boolean|DateTime|Number|String",
                 actual_lhs: format!("{:?}", lhs),
                 actual_rhs: format!("{:?}", rhs),
             }),
@@ -108,10 +109,11 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(!a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a != b)),
             (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a != b)),
+            (Value::String(a), Value::String(b)) => Ok(Value::Boolean(!a.eq(&b))),
             (Value::None, Value::None) => Ok(Value::Boolean(false)),
             _ => Err(ExpressionError::OperandTypeMismatch {
                 operand: "NotEqualTo",
-                expected: "Boolean|DateTime|Number",
+                expected: "Boolean|DateTime|Number|String",
                 actual_lhs: format!("{:?}", lhs),
                 actual_rhs: format!("{:?}", rhs),
             }),
@@ -703,6 +705,20 @@ mod tests {
         }
 
         #[rstest]
+        #[case("initial_press", "short_release", false)]
+        #[case("initial_press", "initial_press", true)]
+        fn string(#[case] lhs: String, #[case] rhs: String, #[case] expected: bool) {
+            let result = evaluate(
+                &EqualTo {
+                    lhs: Box::new(Literal { value: Value::String(lhs) }),
+                    rhs: Box::new(Literal { value: Value::String(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
         #[case(Value::None, Value::None, true)]
         fn none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
             let result = evaluate(
@@ -720,13 +736,13 @@ mod tests {
         #[rstest]
         #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "EqualTo",
-                expected: "Boolean|DateTime|Number",
+                expected: "Boolean|DateTime|Number|String",
                 actual_lhs: "Literal { value: Boolean(true) }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
             })]
         #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "EqualTo",
-                expected: "Boolean|DateTime|Number",
+                expected: "Boolean|DateTime|Number|String",
                 actual_lhs: "Literal { value: None }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
             })]
@@ -802,6 +818,20 @@ mod tests {
         }
 
         #[rstest]
+        #[case("initial_press", "short_release", true)]
+        #[case("initial_press", "initial_press", false)]
+        fn string(#[case] lhs: String, #[case] rhs: String, #[case] expected: bool) {
+            let result = evaluate(
+                &NotEqualTo {
+                    lhs: Box::new(Literal { value: Value::String(lhs) }),
+                    rhs: Box::new(Literal { value: Value::String(rhs) }),
+                },
+                &Context::default(),
+            ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
         #[case(Value::None, Value::None, false)]
         fn none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
             let result = evaluate(
@@ -819,13 +849,13 @@ mod tests {
         #[rstest]
         #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "NotEqualTo",
-                expected: "Boolean|DateTime|Number",
+                expected: "Boolean|DateTime|Number|String",
                 actual_lhs: "Literal { value: Boolean(true) }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
             })]
         #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "NotEqualTo",
-                expected: "Boolean|DateTime|Number",
+                expected: "Boolean|DateTime|Number|String",
                 actual_lhs: "Literal { value: None }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
             })]
