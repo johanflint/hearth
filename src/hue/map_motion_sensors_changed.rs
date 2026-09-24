@@ -1,5 +1,6 @@
 use crate::domain::Number;
 use crate::domain::events::Event;
+use crate::domain::property::PropertyLocator;
 use crate::hue::domain::{MotionChanged, SensitivityChanged, SensitivityStatus};
 
 pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
@@ -20,7 +21,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
         });
         events.push(Event::DateTimePropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "motionLastChanged".to_string(),
+            property_id: PropertyLocator::Name("motionLastChanged".to_string()),
             value: Some(report.changed),
         })
     }
@@ -44,6 +45,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
 mod tests {
     use crate::domain::Number::PositiveInt;
     use crate::domain::events::Event::{BooleanPropertyChanged, DateTimePropertyChanged, NumberPropertyChanged};
+    use crate::domain::property::PropertyLocator;
     use crate::hue::domain::{Motion, MotionChanged, MotionReport, MotionType, Owner, SensitivityChanged, SensitivityStatus};
     use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
     use chrono::{TimeZone, Utc};
@@ -112,7 +114,7 @@ mod tests {
             result[1],
             DateTimePropertyChanged {
                 device_id: owner().rid,
-                property_id: "motionLastChanged".to_string(),
+                property_id: PropertyLocator::Name("motionLastChanged".to_string()),
                 value: Some(changed),
             }
         );

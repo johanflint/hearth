@@ -48,7 +48,7 @@ pub fn map_remotes(mut buttons: Vec<ButtonGet>, device_map: &mut HashMap<String,
                     format!("button{}LastChanged", button.metadata.control_id),
                     PropertyType::ButtonLastChanged,
                     true,
-                    None,
+                    Some(button.id.clone()),
                     last_changed,
                 ));
                 properties.insert(button_last_changed_property.name().to_owned(), button_last_changed_property);

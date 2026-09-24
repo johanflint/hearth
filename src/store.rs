@@ -111,11 +111,16 @@ impl Store {
                 result.unwrap_or(false).then(|| PropertyChange { device_id, property_id })
             }
             Event::DateTimePropertyChanged { device_id, property_id, value } => {
-                let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut DateTimeProperty| {
+                let Some(resolved_property_id) = resolve_property_id::<DateTimeProperty>(&self.devices, &device_id, &property_id) else {
+                    error!(device_id, ?property_id, "⚠️ Could not resolve date time property for device '{}'", device_id);
+                    return None
+                };
+
+                let result = reduce_property_changed_event(&mut self.devices, &device_id, &resolved_property_id, |property: &mut DateTimeProperty| {
                     property.set_value(value)
                 });
                 counter!(Metric::StorePropertyChanges.name(),  "property_type" => "date_time", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id })
+                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id })
             }
             Event::ColorPropertyChanged { device_id, property_id, xy, gamut } => {
                 let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut ColorProperty| {

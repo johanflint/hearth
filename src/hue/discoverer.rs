@@ -253,7 +253,7 @@ mod tests {
             "button1LastChanged".to_string(),
             PropertyType::ButtonLastChanged,
             true,
-            None,
+            Some("f72e36a1-50e1-4d01-9c04-c9d44327285e".to_string()),
             Some("2026-09-20T18:36:08.948Z".parse().unwrap()),
         ));
 
