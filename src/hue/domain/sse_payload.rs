@@ -1,4 +1,4 @@
-use crate::hue::domain::{LightChanged, MotionChanged};
+use crate::hue::domain::{ButtonChanged, LightChanged, MotionChanged};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, to_string_pretty};
 
@@ -26,6 +26,7 @@ pub enum DataType {
 pub enum ChangedProperty {
     Light(LightChanged),
     Motion(MotionChanged),
+    Button(ButtonChanged),
     #[serde(untagged)]
     Unknown(UnknownProperty),
 }

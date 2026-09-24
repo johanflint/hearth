@@ -28,3 +28,15 @@ pub struct ButtonReport {
     pub updated: DateTime<Utc>,
     pub event: String, // One of initial_press, repeat, short_release, long_release, double_short_release, long_press
 }
+
+#[derive(Debug, Deserialize)]
+pub struct ButtonChanged {
+    pub id: String,
+    pub owner: Owner,
+    pub button: Option<ButtonUpdate>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ButtonUpdate {
+    pub button_report: Option<ButtonReport>,
+}

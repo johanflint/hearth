@@ -48,6 +48,14 @@ pub enum PropertyType {
     On,
 }
 
+// Identifies aproperty either by its well-known name or by the controller-owned
+// external_id resource.
+#[derive(PartialEq, Debug)]
+pub enum PropertyLocator {
+    Name(String),
+    ExternalId(String),
+}
+
 #[derive(Error, PartialEq, Debug)]
 pub enum PropertyError {
     #[error("unable to modify readonly property")]

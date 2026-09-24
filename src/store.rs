@@ -1,6 +1,6 @@
 use crate::domain::device::Device;
 use crate::domain::events::Event;
-use crate::domain::property::{BooleanProperty, ColorProperty, DateTimeProperty, NumberProperty};
+use crate::domain::property::{BooleanProperty, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyLocator};
 use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::property_changed_reducer::reduce_property_changed_event;
 use metrics::{counter, gauge};
@@ -131,8 +131,25 @@ impl Store {
                 counter!(Metric::StorePropertyChanges.name(),  "property_type" => "number", "result" => result.metric_label()).increment(1);
                 result.unwrap_or(false).then(|| PropertyChange { device_id, property_id })
             }
+            Event::EnumPropertyChanged { device_id, property_id, value } => {
+                let Some(resolved_property_id) = resolve_property_id::<EnumProperty>(&self.devices, &device_id, &property_id) else {
+                    error!(device_id, ?property_id, "⚠️ Could not resolve enum property for device '{}'", device_id);
+                    return None
+                };
+                let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &resolved_property_id, move |property: &mut EnumProperty| {
+                    property.set_value(value)
+                });
+                counter!(Metric::StorePropertyChanges.name(),  "property_type" => "enum", "result" => result.metric_label()).increment(1);
+                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id })
+            }
         }
     }
+}
+
+// Resolves a PropertyLocator (by name, or by the controller-owned external_id of the resource it
+// represents) to the property's well-known name, as expected by `reduce_property_changed_event`.
+fn resolve_property_id<T: 'static + Property>(devices: &DeviceMap, device_id: &str, locator: &PropertyLocator) -> Option<String> {
+    devices.get(device_id)?.resolve_property::<T>(locator).map(|property| property.name().to_string())
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use crate::domain::Number;
 use crate::domain::device::Device;
-use crate::domain::property::{CartesianCoordinate, Gamut};
+use crate::domain::property::{CartesianCoordinate, Gamut, PropertyLocator};
 use chrono::{DateTime, Utc};
 
 #[derive(PartialEq, Debug)]
@@ -26,5 +26,10 @@ pub enum Event {
         device_id: String,
         property_id: String,
         value: Option<Number>,
+    },
+    EnumPropertyChanged {
+        device_id: String,
+        property_id: PropertyLocator,
+        value: Option<String>,
     },
 }
