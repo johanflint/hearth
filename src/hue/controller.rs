@@ -39,6 +39,7 @@ impl Controller for HueController {
                 match device.r#type {
                     DeviceType::Light => self.control_device_light(device, property).await,
                     DeviceType::MotionSensor => self.control_device_motion_sensor(device, property).await,
+                    DeviceType::Remote => {},
                 }
             }
         }

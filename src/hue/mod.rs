@@ -8,6 +8,7 @@ mod map_lights;
 mod observer;
 mod map_motion_sensors;
 mod map_motion_sensors_changed;
+mod map_remotes;
 
 pub use client::{HueClientError, new_client};
 pub use controller::HueController as Controller;

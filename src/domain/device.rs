@@ -32,4 +32,5 @@ impl Device {
 pub enum DeviceType {
     Light,
     MotionSensor,
+    Remote,
 }

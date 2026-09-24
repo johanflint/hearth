@@ -1,10 +1,11 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
-use crate::hue::domain::{DeviceGet, HueResponse, LightGet, LightLevelGet, MotionGet};
+use crate::hue::domain::{ButtonGet, DeviceGet, HueResponse, LightGet, LightLevelGet, MotionGet};
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
+use crate::hue::map_remotes::{MapRemotesError, map_remotes};
 use reqwest::{Client, StatusCode};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use tracing::{debug, info, instrument, warn};
 
@@ -53,14 +54,28 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     let light_levels_response = response.json::<HueResponse<LightLevelGet>>().await?;
     debug!("Retrieving lights levels... OK, {} found", light_levels_response.data.len()); // Using debug as these aren't devices but services
 
+    let response = client
+        .get(format!("{}/clip/v2/resource/button", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(to_discover_error)?;
+
+    let button_response = response.json::<HueResponse<ButtonGet>>().await?;
+    // Count the devices, not the buttons that button_response contains
+    let remotes: HashSet<&str> = button_response.data.iter().map(|b| b.owner.rid.as_str()).collect();
+    info!("Retrieving remotes... OK, {} found", remotes.len());
+
     let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
     let mut devices = vec![];
     let lights = map_lights(light_response.data, &mut device_map)?;
     let motion_sensors = map_motion_sensors(motion_response.data, light_levels_response.data, &mut device_map)?;
+    let buttons = map_remotes(button_response.data, &mut device_map)?;
 
     devices.extend(lights);
     devices.extend(motion_sensors);
+    devices.extend(buttons);
 
     if !device_map.is_empty() {
         log_unmapped_devices(&device_map);
@@ -97,6 +112,8 @@ pub enum DiscoverError {
     MapLights(#[from] MapLightsError),
     #[error(transparent)]
     MapMotionSensors(#[from] MapMotionSensorsError),
+    #[error(transparent)]
+    MapRemotes(#[from] MapRemotesError),
 }
 
 #[cfg(test)]
