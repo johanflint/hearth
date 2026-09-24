@@ -1,0 +1,32 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "f72e36a1-50e1-4d01-9c04-c9d44327285e",
+      "id_v1": "/sensors/106",
+      "owner": {
+        "rid": "3a3225cb-dcda-46fb-8f21-00a8c76024bc",
+        "rtype": "device"
+      },
+      "metadata": {
+        "control_id": 1
+      },
+      "button": {
+        "last_event": "short_release",
+        "button_report": {
+          "updated": "2026-09-20T18:36:08.948Z",
+          "event": "short_release"
+        },
+        "repeat_interval": 800,
+        "event_values": [
+          "initial_press",
+          "repeat",
+          "short_release",
+          "long_release",
+          "long_press"
+        ]
+      },
+      "type": "button"
+    }
+  ]
+}

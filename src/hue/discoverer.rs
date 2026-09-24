@@ -121,7 +121,7 @@ mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
     use crate::domain::device::DeviceType;
-    use crate::domain::property::{BooleanProperty, DateTimeProperty, NumberProperty, Property, PropertyType, Unit};
+    use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;
@@ -161,6 +161,14 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(include_str!("../../tests/resources/hue_light_level_simplified_response.json"))
+            .create_async()
+            .await;
+
+        server
+            .mock("GET", "/clip/v2/resource/button")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_button_simplified_response.json"))
             .create_async()
             .await;
 
@@ -224,8 +232,33 @@ mod tests {
             Some("2026-09-23T15:37:20.001Z".parse().unwrap()),
         ));
 
+        let button_property: Box<dyn Property> = Box::new(
+            EnumProperty::new(
+                "button1".to_string(),
+                PropertyType::Button,
+                true,
+                Some("f72e36a1-50e1-4d01-9c04-c9d44327285e".to_string()),
+                Some("short_release".to_string()),
+                vec![
+                    "initial_press".to_string(),
+                    "repeat".to_string(),
+                    "short_release".to_string(),
+                    "long_release".to_string(),
+                    "long_press".to_string(),
+                ],
+            ).unwrap(),
+        );
+
+        let button_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "button1LastChanged".to_string(),
+            PropertyType::ButtonLastChanged,
+            true,
+            None,
+            Some("2026-09-20T18:36:08.948Z".parse().unwrap()),
+        ));
+
         mock.assert();
-        assert_eq!(response.len(), 2);
+        assert_eq!(response.len(), 3);
         assert_eq!(
             response[0],
             Device {
@@ -257,6 +290,24 @@ mod tests {
                     (sensitivity_property.name().to_string(), sensitivity_property),
                     (illuminance_property.name().to_string(), illuminance_property),
                     (illuminance_last_changed_property.name().to_string(), illuminance_last_changed_property),
+                ]),
+                external_id: None,
+                address: None,
+                controller_id: Some("hue"),
+            }
+        );
+        assert_eq!(
+            response[2],
+            Device {
+                id: "3a3225cb-dcda-46fb-8f21-00a8c76024bc".to_string(),
+                r#type: DeviceType::Remote,
+                manufacturer: "Signify Netherlands B.V.".to_string(),
+                model_id: "RWL021".to_string(),
+                product_name: "Hue dimmer switch".to_string(),
+                name: "Dimmer".to_string(),
+                properties: HashMap::from([
+                    (button_property.name().to_string(), button_property),
+                    (button_last_changed_property.name().to_string(), button_last_changed_property),
                 ]),
                 external_id: None,
                 address: None,
