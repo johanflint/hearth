@@ -8,7 +8,7 @@ pub enum Event {
     DiscoveredDevices(Vec<Device>),
     BooleanPropertyChanged {
         device_id: String,
-        property_id: String,
+        property_id: PropertyLocator,
         value: bool,
     },
     ColorPropertyChanged {

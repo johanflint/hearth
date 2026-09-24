@@ -104,11 +104,16 @@ impl Store {
                 None
             }
             Event::BooleanPropertyChanged { device_id, property_id, value } => {
-                let result = reduce_property_changed_event(&mut self.devices, &device_id, &property_id, |property: &mut BooleanProperty| {
+                let Some(resolved_property_id) = resolve_property_id::<BooleanProperty>(&self.devices, &device_id, &property_id) else {
+                    error!(device_id, ?property_id, "⚠️ Could not resolve boolean property for device '{}'", device_id);
+                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "boolean", "result" => "failure").increment(1);
+                    return None
+                };
+                let result = reduce_property_changed_event(&mut self.devices, &device_id, &resolved_property_id, |property: &mut BooleanProperty| {
                     property.set_value(value)
                 });
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "boolean", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id })
+                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id })
             }
             Event::DateTimePropertyChanged { device_id, property_id, value } => {
                 let Some(resolved_property_id) = resolve_property_id::<DateTimeProperty>(&self.devices, &device_id, &property_id) else {
@@ -185,7 +190,7 @@ mod tests {
         // Flip the property to true
         tx.send(Event::BooleanPropertyChanged {
             device_id: "device".to_string(),
-            property_id: "on".to_string(),
+            property_id: PropertyLocator::Name("on".to_string()),
             value: true,
         }).await.unwrap();
         notifier.changed().await.unwrap();
@@ -216,8 +221,8 @@ mod tests {
         tx.send(Event::DiscoveredDevices(vec![device])).await.unwrap();
 
         // Sent back-to-back, without awaiting a reactive update in between
-        tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: "on".to_string(), value: true }).await.unwrap();
-        tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: "motion".to_string(), value: true }).await.unwrap();
+        tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: PropertyLocator::Name("on".to_string()), value: true }).await.unwrap();
+        tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: PropertyLocator::Name("motion".to_string()), value: true }).await.unwrap();
 
         let discovered = reactive_rx.recv().await.expect("expected a reactive update for device discovery");
         assert_eq!(discovered.changed, None);
@@ -239,7 +244,7 @@ mod tests {
         });
 
         // No device named "unknown" exists, so the reducer rejects this event
-        tx.send(Event::BooleanPropertyChanged { device_id: "unknown".to_string(), property_id: "on".to_string(), value: true }).await.unwrap();
+        tx.send(Event::BooleanPropertyChanged { device_id: "unknown".to_string(), property_id: PropertyLocator::Name("on".to_string()), value: true }).await.unwrap();
 
         let update = reactive_rx.recv().await.expect("expected a reactive update even for a rejected event");
         assert_eq!(update.changed, None, "a rejected event must not be reported as a property change");
@@ -264,7 +269,7 @@ mod tests {
 
         // Queue well past the reactive channel's capacity before consuming anything
         for i in 0..num_events {
-            tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: "on".to_string(), value: i % 2 == 0 }).await.unwrap();
+            tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: PropertyLocator::Name("on".to_string()), value: i % 2 == 0 }).await.unwrap();
         }
 
         let discovered = reactive_rx.recv().await.expect("expected the discovery update");

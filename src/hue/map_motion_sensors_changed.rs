@@ -8,7 +8,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
     if let Some(enabled) = property.enabled {
         events.push(Event::BooleanPropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "enabled".to_string(),
+            property_id: PropertyLocator::Name("enabled".to_string()),
             value: enabled,
         });
     }
@@ -16,7 +16,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
     if let Some(report) = property.motion.and_then(|m| m.motion_report) {
         events.push(Event::BooleanPropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "motion".to_string(),
+            property_id: PropertyLocator::Name("motion".to_string()),
             value: report.motion,
         });
         events.push(Event::DateTimePropertyChanged {
@@ -84,7 +84,7 @@ mod tests {
             result[0],
             BooleanPropertyChanged {
                 device_id: owner().rid,
-                property_id: "enabled".to_string(),
+                property_id: PropertyLocator::Name("enabled".to_string()),
                 value: true,
             }
         );
@@ -106,7 +106,7 @@ mod tests {
             result[0],
             BooleanPropertyChanged {
                 device_id: owner().rid,
-                property_id: "motion".to_string(),
+                property_id: PropertyLocator::Name("motion".to_string()),
                 value: true,
             }
         );
