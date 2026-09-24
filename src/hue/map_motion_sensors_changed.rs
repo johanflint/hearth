@@ -32,7 +32,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
         if matches!(status, Some(SensitivityStatus::Set)) {
             events.push(Event::NumberPropertyChanged {
                 device_id: property.owner.rid.to_string(),
-                property_id: "sensitivity".to_string(),
+                property_id: PropertyLocator::Name("sensitivity".to_string()),
                 value: Some(Number::PositiveInt(sensitivity)),
             });
         }
@@ -136,7 +136,7 @@ mod tests {
             result[0],
             NumberPropertyChanged {
                 device_id: owner().rid,
-                property_id: "sensitivity".to_string(),
+                property_id: PropertyLocator::Name("sensitivity".to_string()),
                 value: Some(PositiveInt(3)),
             }
         );

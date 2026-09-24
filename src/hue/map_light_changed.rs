@@ -18,7 +18,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
     if let Some(dimming) = property.dimming {
         events.push(Event::NumberPropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "brightness".to_string(),
+            property_id: PropertyLocator::Name("brightness".to_string()),
             value: Some(Number::Float(dimming.brightness)),
         });
     }
@@ -31,7 +31,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
             }
             events.push(Event::NumberPropertyChanged {
                 device_id: property.owner.rid.to_string(),
-                property_id: "colorTemperature".to_string(),
+                property_id: PropertyLocator::Name("colorTemperature".to_string()),
                 value: Some(Number::PositiveInt(clamped.mirek_to_kelvin())),
             });
         }
@@ -126,7 +126,7 @@ mod tests {
             result[0],
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                property_id: "brightness".to_string(),
+                property_id: PropertyLocator::Name("brightness".to_string()),
                 value: Some(Float(20.8)),
             }
         );
@@ -152,7 +152,7 @@ mod tests {
             result[0],
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                property_id: "colorTemperature".to_string(),
+                property_id: PropertyLocator::Name("colorTemperature".to_string()),
                 value: Some(PositiveInt(6535))
             }
         );
@@ -198,7 +198,7 @@ mod tests {
             result[0],
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                property_id: "colorTemperature".to_string(),
+                property_id: PropertyLocator::Name("colorTemperature".to_string()),
                 value: Some(PositiveInt(expected_kelvin))
             }
         );

@@ -24,7 +24,7 @@ pub enum Event {
     },
     NumberPropertyChanged {
         device_id: String,
-        property_id: String,
+        property_id: PropertyLocator,
         value: Option<Number>,
     },
     EnumPropertyChanged {

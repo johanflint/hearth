@@ -141,11 +141,16 @@ impl Store {
                 result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id })
             }
             Event::NumberPropertyChanged { device_id, property_id, value } => {
-                let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &property_id.clone(), move |property: &mut NumberProperty| {
+                let Some(resolved_property_id) = resolve_property_id::<NumberProperty>(&self.devices, &device_id, &property_id) else {
+                    error!(device_id, ?property_id, "⚠️ Could not resolve number property for device '{}'", device_id);
+                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "number", "result" => "failure").increment(1);
+                    return None
+                };
+                let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &resolved_property_id, move |property: &mut NumberProperty| {
                     property.set_value(value)
                 });
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "number", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id })
+                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id })
             }
             Event::EnumPropertyChanged { device_id, property_id, value } => {
                 let Some(resolved_property_id) = resolve_property_id::<EnumProperty>(&self.devices, &device_id, &property_id) else {
