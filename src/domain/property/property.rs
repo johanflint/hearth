@@ -35,6 +35,8 @@ impl PartialEq for dyn Property {
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum PropertyType {
     Brightness,
+    Button,
+    ButtonLastChanged,
     Color,
     ColorTemperature,
     Enabled,

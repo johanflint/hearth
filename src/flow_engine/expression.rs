@@ -1,4 +1,4 @@
-use crate::domain::property::{BooleanProperty, DateTimeProperty, NumberProperty, PropertyType};
+use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, PropertyType};
 use crate::domain::{Number, Time, WeekdayCondition};
 use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
@@ -65,6 +65,7 @@ pub enum Value {
     Boolean(bool),
     DateTime(DateTime<Utc>),
     Number(Number),
+    String(String),
     None,
 }
 
@@ -170,6 +171,14 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 PropertyType::Brightness => {
                     let number_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
                     Ok(number_property.value().map(Value::Number).unwrap_or(Value::None))
+                }
+                PropertyType::Button => {
+                    let enum_property = property.as_any().downcast_ref::<EnumProperty>().unwrap();
+                    Ok(enum_property.value().map(|v| Value::String(v.to_string())).unwrap_or(Value::None))
+                },
+                PropertyType::ButtonLastChanged => {
+                    let button_last_changed = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
+                    Ok(button_last_changed.value().map(Value::DateTime).unwrap_or(Value::None))
                 }
                 PropertyType::Color => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
