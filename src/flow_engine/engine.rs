@@ -59,7 +59,7 @@ pub async fn execute(flow: Arc<Flow>, node_id: Option<String>, context: &Context
             End => None,
             Sleep { duration, next } => {
                 tx.send(SchedulerCommand::ScheduleOnce {
-                    flow_id: flow.id().to_string(),
+                    flow: flow.clone(),
                     node_id: next.id().to_string(),
                     delay: duration,
                 })
@@ -342,14 +342,16 @@ mod tests {
         );
 
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), Value::None)], FlowNodeKind::Start);
-        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
+        let original_flow = Arc::new(Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap());
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
 
-        execute(Arc::new(flow), None, &Context::default(), scheduler_tx).await.unwrap();
+        execute(original_flow.clone(), None, &Context::default(), scheduler_tx).await.unwrap();
         let received_command = scheduler_rx.recv().await;
-        if let Some(SchedulerCommand::ScheduleOnce { flow_id, node_id, delay }) = received_command {
-            assert_eq!(flow_id, "id");
+        if let Some(SchedulerCommand::ScheduleOnce { flow: scheduled_flow, node_id, delay }) = received_command {
+            // The id should not just match, the exact `Arc<Flow>` that started the sleep must match, so a later
+            // reload can't swap it out
+            assert!(Arc::ptr_eq(&original_flow, &scheduled_flow));
             assert_eq!(node_id, "end_node");
             assert_eq!(delay, Duration::from_secs(42));
         } else {
