@@ -1,3 +1,4 @@
+use crate::domain::BatteryState;
 use crate::domain::Connectivity;
 use crate::domain::device::Device;
 use crate::domain::property::{EnumProperty, NumberProperty, Property, PropertyType, Unit};
@@ -45,6 +46,14 @@ fn enrich_device_power(device: &mut Device, device_power_map: &HashMap<String, D
             .build()
     );
     device.properties.insert(battery_level_property.name().to_string(), battery_level_property);
+
+    let battery_state = battery_level.map(|b| BatteryState::from_percent(b).as_str().to_string());
+    let allowed_values: Vec<String> = BatteryState::iter().map(|c| c.as_str().to_string()).collect();
+    let battery_state_property = Box::new(
+        EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, battery_state, allowed_values)
+            .expect("battery state is always one of the declared allowed values")
+    );
+    device.properties.insert(battery_state_property.name().to_string(), battery_state_property);
 }
 
 #[cfg(test)]
@@ -100,6 +109,30 @@ mod tests {
         assert_eq!(battery_level.property_type(), PropertyType::BatteryLevel);
         assert!(battery_level.readonly());
         assert_eq!(battery_level.as_u64(), Some(76));
+
+        let battery_state = devices[0].properties.get("batteryState").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
+        assert_eq!(battery_state.property_type(), PropertyType::BatteryState);
+        assert!(battery_state.readonly());
+        assert_eq!(battery_state.value(), Some("normal"));
+    }
+
+    #[test]
+    fn enrich_devices_defaults_battery_properties_to_none_when_device_power_resource_has_no_reading() {
+        let device = DeviceBuilder::new("device").build();
+        let mut devices = vec![device];
+        let device_power_list = vec![DevicePowerGet {
+            id: "power".to_string(),
+            owner: Owner { rid: "device".to_string(), rtype: "device".to_string() },
+            power_state: PowerState { battery_level: None, battery_state: None },
+        }];
+
+        enrich_devices(vec![], device_power_list, &mut devices);
+
+        let battery_level = devices[0].properties.get("batteryLevel").unwrap().as_any().downcast_ref::<NumberProperty>().unwrap();
+        assert_eq!(battery_level.as_u64(), None);
+
+        let battery_state = devices[0].properties.get("batteryState").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
+        assert_eq!(battery_state.value(), None);
     }
 
     #[test]
@@ -109,6 +142,7 @@ mod tests {
 
         enrich_devices(vec![], vec![], &mut devices);
 
-        assert_eq!(devices[0].properties.get("batteryLevel").is_none());
+        assert!(devices[0].properties.get("batteryLevel").is_none());
+        assert!(devices[0].properties.get("batteryState").is_none());
     }
 }

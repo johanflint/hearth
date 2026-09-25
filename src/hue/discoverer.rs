@@ -144,7 +144,7 @@ pub enum DiscoverError {
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
-    use crate::domain::Connectivity;
+    use crate::domain::{BatteryState, Connectivity};
     use crate::domain::device::DeviceType;
     use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit};
     use crate::hue::client::new_client;
@@ -163,6 +163,11 @@ mod tests {
             .unit(Unit::Percentage)
             .positive_int(battery_level, Some(0), Some(100))
             .build())
+    }
+
+    fn battery_state_property(state: Option<&str>) -> Box<dyn Property> {
+        let allowed_battery_state_values: Vec<String> = BatteryState::iter().map(|s| s.as_str().to_string()).collect();
+        Box::new(EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, state.map(str::to_string), allowed_battery_state_values).unwrap())
     }
 
     #[tokio::test]
@@ -326,6 +331,7 @@ mod tests {
                     (on_property.name().to_string(), on_property),
                     ("connectivity".to_string(), connectivity_property("connected")),
                     ("batteryLevel".to_string(), battery_level_property(Some(2))),
+                    ("batteryState".to_string(), battery_state_property(Some("low"))),
                 ]),
                 external_id: None,
                 address: None,
@@ -350,6 +356,7 @@ mod tests {
                     (illuminance_last_changed_property.name().to_string(), illuminance_last_changed_property),
                     ("connectivity".to_string(), connectivity_property("issues")),
                     ("batteryLevel".to_string(), battery_level_property(Some(30))),
+                    ("batteryState".to_string(), battery_state_property(Some("normal"))),
                 ]),
                 external_id: None,
                 address: None,
@@ -370,6 +377,7 @@ mod tests {
                     (button_last_changed_property.name().to_string(), button_last_changed_property),
                     ("connectivity".to_string(), connectivity_property("unknown")),
                     ("batteryLevel".to_string(), battery_level_property(Some(1))),
+                    ("batteryState".to_string(), battery_state_property(Some("critical"))),
                 ]),
                 external_id: None,
                 address: None,

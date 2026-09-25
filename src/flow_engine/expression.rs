@@ -174,6 +174,10 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                     let number_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
                     Ok(number_property.value().map(Value::Number).unwrap_or(Value::None))
                 }
+                PropertyType::BatteryState => {
+                    let enum_property = property.as_any().downcast_ref::<EnumProperty>().unwrap();
+                    Ok(enum_property.value().map(|v| Value::String(v.to_string())).unwrap_or(Value::None))
+                }
                 PropertyType::Brightness => {
                     let number_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
                     Ok(number_property.value().map(Value::Number).unwrap_or(Value::None))
@@ -398,6 +402,10 @@ mod tests {
                 .build(),
         );
 
+        let battery_state_property: Box<dyn Property> = Box::new(
+            EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, Some("normal".to_string()), vec!["normal".to_string(), "low".to_string(), "critical".to_string()]).unwrap(),
+        );
+
         DeviceBuilder::new("ab917a9a-a7d5-4853-9518-75909236a182")
             .with_boolean_property("on", true)
             .with_color_property(
@@ -416,6 +424,7 @@ mod tests {
                 illuminance_property,
                 illuminance_last_changed_property,
                 battery_level_property,
+                battery_state_property
             ])
             .build()
     }
@@ -1058,6 +1067,7 @@ mod tests {
     #[case::illuminance("ab917a9a-a7d5-4853-9518-75909236a182", "illuminance", Ok(Value::Number(Number::Float(316.23))))]
     #[case::illuminance_last_changed("ab917a9a-a7d5-4853-9518-75909236a182", "illuminanceLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
     #[case::battery_level("ab917a9a-a7d5-4853-9518-75909236a182", "batteryLevel", Ok(Value::Number(Number::PositiveInt(42))))]
+    #[case::battery_state("ab917a9a-a7d5-4853-9518-75909236a182", "batteryState", Ok(Value::String("normal".to_string())))]
     fn property_value(#[case] device_id: &str, #[case] property_id: &str, #[case] expected: Result<Value, ExpressionError>) {
         let device = device();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
@@ -1259,6 +1269,25 @@ mod tests {
         let context = &context_with_polar_location().now(fixed_date_time).build();
         let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
         assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn property_value_evaluates_to_none_for_a_battery_state_without_a_reading() {
+        let battery_state_property: Box<dyn Property> = Box::new(
+            EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, None, vec!["normal".to_string(), "low".to_string(), "critical".to_string()]).unwrap(),
+        );
+        let device = DeviceBuilder::new("device")
+            .with_properties(vec![battery_state_property])
+            .build();
+        let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
+        let snapshot = StoreSnapshot { devices: Arc::new(devices) };
+
+        let result = evaluate(
+            &PropertyValue { device_id: "device".to_string(), property_id: "batteryState".to_string() },
+            &Context::builder().snapshot(snapshot).build(),
+        );
+
+        assert_eq!(result, Ok(Value::None));
     }
 
     #[rstest]

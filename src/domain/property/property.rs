@@ -35,6 +35,7 @@ impl PartialEq for dyn Property {
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum PropertyType {
     BatteryLevel,
+    BatteryState,
     Brightness,
     Button,
     ButtonLastChanged,
