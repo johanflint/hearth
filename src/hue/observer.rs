@@ -2,6 +2,7 @@ use crate::app_config::AppConfig;
 use crate::domain::events::Event;
 use crate::hue::domain::{ChangedProperty, ServerSentEventPayload, UnknownProperty};
 use crate::hue::map_connectivity_changed::map_connectivity_changed;
+use crate::hue::map_device_power_changed::map_device_power_changed;
 use crate::hue::map_light_changed::map_light_changed_property;
 use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
 use crate::hue::map_remotes_changed::map_remote_changed;
@@ -109,6 +110,13 @@ async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty) {
             for event in map_connectivity_changed(property) {
                 tx.send(event).await.unwrap_or_else(|e| {
                     warn!("⚠️ Unable to send changed connectivity event: {}", e);
+                });
+            }
+        }
+        ChangedProperty::DevicePower(property) => {
+            for event in map_device_power_changed(property) {
+                tx.send(event).await.unwrap_or_else(|e| {
+                    warn!("⚠️ Unable to send changed device power event: {}", e);
                 });
             }
         }

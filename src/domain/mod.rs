@@ -11,7 +11,9 @@ mod time;
 mod weekday;
 mod weekday_condition;
 mod connectivity;
+mod battery_state;
 
+pub use battery_state::BatteryState;
 pub use connectivity::Connectivity;
 pub use geo_location::GeoLocation;
 pub use number::Number;

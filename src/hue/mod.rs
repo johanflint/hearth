@@ -13,6 +13,7 @@ mod map_remotes_changed;
 mod enrich_devices;
 mod map_connectivity_changed;
 mod connectivity;
+mod map_device_power_changed;
 
 pub use client::new_client;
 pub use controller::HueController as Controller;

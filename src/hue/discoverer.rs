@@ -1,6 +1,6 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
-use crate::hue::domain::{ButtonGet, DeviceGet, HueResponse, LightGet, LightLevelGet, MotionGet, ZigbeeConnectivityGet};
+use crate::hue::domain::{ButtonGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, ZigbeeConnectivityGet};
 use crate::hue::enrich_devices::enrich_devices;
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
@@ -77,6 +77,16 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     let zigbee_connectivity_response = response.json::<HueResponse<ZigbeeConnectivityGet>>().await?;
     debug!("Retrieving zigbee connectivity... OK, {} found", zigbee_connectivity_response.data.len());
 
+    let response = client
+        .get(format!("{}/clip/v2/resource/device_power", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(to_discover_error)?;
+
+    let device_power_response = response.json::<HueResponse<DevicePowerGet>>().await?;
+    debug!("Retrieving device power... OK, {} found", device_power_response.data.len());
+
     let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
     let mut devices = vec![];
@@ -89,7 +99,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     devices.extend(buttons);
 
     // Enrich the devices with connectivity information
-    enrich_devices(zigbee_connectivity_response.data, &mut devices);
+    enrich_devices(zigbee_connectivity_response.data, device_power_response.data, &mut devices);
 
     if !device_map.is_empty() {
         log_unmapped_devices(&device_map);
@@ -134,7 +144,7 @@ pub enum DiscoverError {
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
-    use crate::domain::Connectivity;
+    use crate::domain::{BatteryState, Connectivity};
     use crate::domain::device::DeviceType;
     use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit};
     use crate::hue::client::new_client;
@@ -146,6 +156,18 @@ mod tests {
     fn connectivity_property(status: &str) -> Box<dyn Property> {
         let allowed_connectivity_values: Vec<String> = Connectivity::iter().map(|c| c.as_str().to_string()).collect();
         Box::new(EnumProperty::new("connectivity".to_string(), PropertyType::Connectivity, true, None, Some(status.to_string()), allowed_connectivity_values.clone()).unwrap())
+    }
+
+    fn battery_level_property(battery_level: Option<u64>) -> Box<dyn Property> {
+        Box::new(NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
+            .unit(Unit::Percentage)
+            .positive_int(battery_level, Some(0), Some(100))
+            .build())
+    }
+
+    fn battery_state_property(state: Option<&str>) -> Box<dyn Property> {
+        let allowed_battery_state_values: Vec<String> = BatteryState::iter().map(|s| s.as_str().to_string()).collect();
+        Box::new(EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, state.map(str::to_string), allowed_battery_state_values).unwrap())
     }
 
     #[tokio::test]
@@ -201,6 +223,14 @@ mod tests {
             .create_async()
             .await;
 
+        server
+            .mock("GET", "/clip/v2/resource/device_power")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_device_power_simplified_response.json"))
+            .create_async()
+            .await;
+
         let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
         let client = new_client(&app_config).unwrap();
 
@@ -242,14 +272,14 @@ mod tests {
             NumberProperty::builder("sensitivity".to_string(), PropertyType::MotionSensitivity, false)
                 .external_id("0af9eb8a-f38f-427c-b819-0c6850f55fe9".to_string())
                 .unit(Unit::None)
-                .positive_int(2, Some(0), Some(4))
+                .positive_int(Some(2), Some(0), Some(4))
                 .build(),
         );
 
         let illuminance_property: Box<dyn Property> = Box::new(
             NumberProperty::builder("illuminance".to_string(), PropertyType::Illuminance, true)
                 .unit(Unit::Lux)
-                .float(36.257679024119625, Some(0.0), None)
+                .float(Some(36.257679024119625), Some(0.0), None)
                 .build()
         );
 
@@ -300,6 +330,8 @@ mod tests {
                 properties: HashMap::from([
                     (on_property.name().to_string(), on_property),
                     ("connectivity".to_string(), connectivity_property("connected")),
+                    ("batteryLevel".to_string(), battery_level_property(Some(2))),
+                    ("batteryState".to_string(), battery_state_property(Some("low"))),
                 ]),
                 external_id: None,
                 address: None,
@@ -323,6 +355,8 @@ mod tests {
                     (illuminance_property.name().to_string(), illuminance_property),
                     (illuminance_last_changed_property.name().to_string(), illuminance_last_changed_property),
                     ("connectivity".to_string(), connectivity_property("issues")),
+                    ("batteryLevel".to_string(), battery_level_property(Some(30))),
+                    ("batteryState".to_string(), battery_state_property(Some("normal"))),
                 ]),
                 external_id: None,
                 address: None,
@@ -342,6 +376,8 @@ mod tests {
                     (button_property.name().to_string(), button_property),
                     (button_last_changed_property.name().to_string(), button_last_changed_property),
                     ("connectivity".to_string(), connectivity_property("unknown")),
+                    ("batteryLevel".to_string(), battery_level_property(Some(1))),
+                    ("batteryState".to_string(), battery_state_property(Some("critical"))),
                 ]),
                 external_id: None,
                 address: None,

@@ -170,6 +170,14 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             };
 
             match property.property_type() {
+                PropertyType::BatteryLevel => {
+                    let number_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
+                    Ok(number_property.value().map(Value::Number).unwrap_or(Value::None))
+                }
+                PropertyType::BatteryState => {
+                    let enum_property = property.as_any().downcast_ref::<EnumProperty>().unwrap();
+                    Ok(enum_property.value().map(|v| Value::String(v.to_string())).unwrap_or(Value::None))
+                }
                 PropertyType::Brightness => {
                     let number_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
                     Ok(number_property.value().map(Value::Number).unwrap_or(Value::None))
@@ -359,7 +367,7 @@ mod tests {
             NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false)
                 .external_id("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string())
                 .unit(Unit::Percentage)
-                .float(58.89, Some(2.0), Some(100.0))
+                .float(Some(58.89), Some(2.0), Some(100.0))
                 .build(),
         );
 
@@ -367,7 +375,7 @@ mod tests {
             NumberProperty::builder("colorTemperature".to_string(), PropertyType::ColorTemperature, false)
                 .external_id("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string())
                 .unit(Unit::Kelvin)
-                .positive_int(6535, Some(2000), Some(6535))
+                .positive_int(Some(6535), Some(2000), Some(6535))
                 .build(),
         );
 
@@ -379,12 +387,23 @@ mod tests {
             NumberProperty::builder("illuminance".to_string(), PropertyType::Illuminance, true)
                 .external_id("ab917a9a-a7d5-4853-9518-75909236a182".to_string())
                 .unit(Unit::Lux)
-                .float(316.23, Some(0.0), None)
+                .float(Some(316.23), Some(0.0), None)
                 .build(),
         );
 
         let illuminance_last_changed_property: Box<dyn Property> = Box::new(
             DateTimeProperty::new("illuminanceLastChanged".to_string(), PropertyType::IlluminanceLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
+        );
+
+        let battery_level_property: Box<dyn Property> = Box::new(
+            NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
+                .unit(Unit::Percentage)
+                .positive_int(Some(42), Some(0), Some(100))
+                .build(),
+        );
+
+        let battery_state_property: Box<dyn Property> = Box::new(
+            EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, Some("normal".to_string()), vec!["normal".to_string(), "low".to_string(), "critical".to_string()]).unwrap(),
         );
 
         DeviceBuilder::new("ab917a9a-a7d5-4853-9518-75909236a182")
@@ -403,7 +422,9 @@ mod tests {
                 color_temperature_property,
                 motion_last_changed_property,
                 illuminance_property,
-                illuminance_last_changed_property
+                illuminance_last_changed_property,
+                battery_level_property,
+                battery_state_property
             ])
             .build()
     }
@@ -1045,6 +1066,8 @@ mod tests {
     )]
     #[case::illuminance("ab917a9a-a7d5-4853-9518-75909236a182", "illuminance", Ok(Value::Number(Number::Float(316.23))))]
     #[case::illuminance_last_changed("ab917a9a-a7d5-4853-9518-75909236a182", "illuminanceLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
+    #[case::battery_level("ab917a9a-a7d5-4853-9518-75909236a182", "batteryLevel", Ok(Value::Number(Number::PositiveInt(42))))]
+    #[case::battery_state("ab917a9a-a7d5-4853-9518-75909236a182", "batteryState", Ok(Value::String("normal".to_string())))]
     fn property_value(#[case] device_id: &str, #[case] property_id: &str, #[case] expected: Result<Value, ExpressionError>) {
         let device = device();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
@@ -1246,6 +1269,25 @@ mod tests {
         let context = &context_with_polar_location().now(fixed_date_time).build();
         let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
         assert_eq!(result, Value::Boolean(true));
+    }
+
+    #[test]
+    fn property_value_evaluates_to_none_for_a_battery_state_without_a_reading() {
+        let battery_state_property: Box<dyn Property> = Box::new(
+            EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, None, vec!["normal".to_string(), "low".to_string(), "critical".to_string()]).unwrap(),
+        );
+        let device = DeviceBuilder::new("device")
+            .with_properties(vec![battery_state_property])
+            .build();
+        let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
+        let snapshot = StoreSnapshot { devices: Arc::new(devices) };
+
+        let result = evaluate(
+            &PropertyValue { device_id: "device".to_string(), property_id: "batteryState".to_string() },
+            &Context::builder().snapshot(snapshot).build(),
+        );
+
+        assert_eq!(result, Ok(Value::None));
     }
 
     #[rstest]

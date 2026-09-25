@@ -1,0 +1,44 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "92ee5dcb-244c-438e-8afc-cc27a0ad1cee",
+      "id_v1": "/sensors/6",
+      "owner": {
+        "rid": "079e0321-7e18-46bc-bc16-fcbc3dd09e30",
+        "rtype": "device"
+      },
+      "power_state": {
+        "battery_state": "low",
+        "battery_level": 2
+      },
+      "type": "device_power"
+    },
+    {
+      "id": "d72fa812-b6b4-4c76-b606-932989ffb1c3",
+      "id_v1": "/sensors/61",
+      "owner": {
+        "rid": "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3",
+        "rtype": "device"
+      },
+      "power_state": {
+        "battery_state": "normal",
+        "battery_level": 30
+      },
+      "type": "device_power"
+    },
+    {
+      "id": "deaaf657-2761-40ed-9b0a-0cf203495030",
+      "id_v1": "/sensors/12",
+      "owner": {
+        "rid": "3a3225cb-dcda-46fb-8f21-00a8c76024bc",
+        "rtype": "device"
+      },
+      "power_state": {
+        "battery_state": "critical",
+        "battery_level": 1
+      },
+      "type": "device_power"
+    }
+  ]
+}
