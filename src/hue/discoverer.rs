@@ -1,6 +1,6 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
-use crate::hue::domain::{ButtonGet, DeviceGet, HueResponse, LightGet, LightLevelGet, MotionGet, ZigbeeConnectivityGet};
+use crate::hue::domain::{ButtonGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, ZigbeeConnectivityGet};
 use crate::hue::enrich_devices::enrich_devices;
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
@@ -77,6 +77,16 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     let zigbee_connectivity_response = response.json::<HueResponse<ZigbeeConnectivityGet>>().await?;
     debug!("Retrieving zigbee connectivity... OK, {} found", zigbee_connectivity_response.data.len());
 
+    let response = client
+        .get(format!("{}/clip/v2/resource/device_power", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(to_discover_error)?;
+
+    let device_power_response = response.json::<HueResponse<DevicePowerGet>>().await?;
+    debug!("Retrieving device power... OK, {} found", device_power_response.data.len());
+
     let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
     let mut devices = vec![];
@@ -89,7 +99,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     devices.extend(buttons);
 
     // Enrich the devices with connectivity information
-    enrich_devices(zigbee_connectivity_response.data, &mut devices);
+    enrich_devices(zigbee_connectivity_response.data, device_power_response.data, &mut devices);
 
     if !device_map.is_empty() {
         log_unmapped_devices(&device_map);
@@ -148,6 +158,13 @@ mod tests {
         Box::new(EnumProperty::new("connectivity".to_string(), PropertyType::Connectivity, true, None, Some(status.to_string()), allowed_connectivity_values.clone()).unwrap())
     }
 
+    fn battery_level_property(battery_level: Option<u64>) -> Box<dyn Property> {
+        Box::new(NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
+            .unit(Unit::Percentage)
+            .positive_int(battery_level, Some(0), Some(100))
+            .build())
+    }
+
     #[tokio::test]
     async fn discover_returns_mapped_devices() -> Result<(), DiscoverError> {
         let mut server = mockito::Server::new_async().await;
@@ -198,6 +215,14 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(include_str!("../../tests/resources/hue_zigbee_connectivity_simplified_response.json"))
+            .create_async()
+            .await;
+
+        server
+            .mock("GET", "/clip/v2/resource/device_power")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_device_power_simplified_response.json"))
             .create_async()
             .await;
 
@@ -300,6 +325,7 @@ mod tests {
                 properties: HashMap::from([
                     (on_property.name().to_string(), on_property),
                     ("connectivity".to_string(), connectivity_property("connected")),
+                    ("batteryLevel".to_string(), battery_level_property(Some(2))),
                 ]),
                 external_id: None,
                 address: None,
@@ -323,6 +349,7 @@ mod tests {
                     (illuminance_property.name().to_string(), illuminance_property),
                     (illuminance_last_changed_property.name().to_string(), illuminance_last_changed_property),
                     ("connectivity".to_string(), connectivity_property("issues")),
+                    ("batteryLevel".to_string(), battery_level_property(Some(30))),
                 ]),
                 external_id: None,
                 address: None,
@@ -342,6 +369,7 @@ mod tests {
                     (button_property.name().to_string(), button_property),
                     (button_last_changed_property.name().to_string(), button_last_changed_property),
                     ("connectivity".to_string(), connectivity_property("unknown")),
+                    ("batteryLevel".to_string(), battery_level_property(Some(1))),
                 ]),
                 external_id: None,
                 address: None,

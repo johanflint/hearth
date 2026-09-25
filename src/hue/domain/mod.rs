@@ -6,13 +6,14 @@ mod motion_get;
 mod light_level_get;
 mod button_get;
 mod zigbee_connectivity_get;
+mod device_power_get;
 
 pub(super) use button_get::*;
 pub(super) use device_get::*;
+pub(super) use device_power_get::*;
 pub(super) use hue_response::*;
 pub(super) use light_get::*;
 pub(super) use light_level_get::*;
 pub(super) use motion_get::*;
 pub(super) use sse_payload::*;
 pub(super) use zigbee_connectivity_get::*;
-
