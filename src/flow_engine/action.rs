@@ -61,7 +61,7 @@ impl Action for LogAction {
 
     #[instrument(fields(action = self.kind()), skip_all)]
     async fn execute(&self, _context: &Context, _scope: &mut Scope) {
-        info!("{}", self.message);
+        info!(target: "hearth::flow_log", "{}", self.message);
     }
 
     fn as_any(&self) -> &dyn Any {
