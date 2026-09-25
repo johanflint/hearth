@@ -8,3 +8,10 @@ pub struct ZigbeeConnectivityGet {
     pub owner: Owner,
     pub status: String, // One of connected, disconnected, connectivity_issue, unidirectional_incoming
 }
+
+#[derive(Debug, Deserialize)]
+pub struct ZigbeeConnectivityChanged {
+    pub id: String,
+    pub owner: Owner,
+    pub status: Option<String>,
+}

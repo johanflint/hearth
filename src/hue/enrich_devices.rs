@@ -1,6 +1,7 @@
 use crate::domain::Connectivity;
 use crate::domain::device::Device;
 use crate::domain::property::{EnumProperty, Property, PropertyType};
+use crate::hue::connectivity::map_connectivity_status;
 use crate::hue::domain::ZigbeeConnectivityGet;
 use std::collections::HashMap;
 use strum::IntoEnumIterator;
@@ -24,21 +25,11 @@ pub fn enrich_devices(connectivity_list: Vec<ZigbeeConnectivityGet>, devices: &m
     }
 }
 
-fn map_connectivity_status(status: &str) -> Connectivity {
-    match status {
-        "connected" => Connectivity::Connected,
-        "connectivity_issue" | "unidirectional_incoming" => Connectivity::Issues,
-        "disconnected" => Connectivity::Disconnected,
-        _ => Connectivity::Unknown
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::hue::domain::Owner;
     use crate::test_support::DeviceBuilder;
-    use rstest::rstest;
 
     #[test]
     fn enrich_devices_adds_a_connectivity_property_matched_by_owner_rid() {
@@ -69,16 +60,5 @@ mod tests {
 
         let property = devices[0].properties.get("connectivity").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
         assert_eq!(property.value(), Some("unknown"));
-    }
-
-    #[rstest]
-    #[case::maps_connected("connected", Connectivity::Connected)]
-    #[case::maps_connectivity_issue("connectivity_issue", Connectivity::Issues)]
-    #[case::maps_unidirectional_incoming("unidirectional_incoming", Connectivity::Issues)]
-    #[case::maps_disconnected("disconnected", Connectivity::Disconnected)]
-    #[case::maps_unknown("some_unrecognized_value", Connectivity::Unknown)]
-    fn test_map_connectivity_status(#[case] value: String, #[case] expected: Connectivity) {
-        let result = map_connectivity_status(&value);
-        assert_eq!(result, expected);
     }
 }

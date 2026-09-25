@@ -11,6 +11,8 @@ mod map_motion_sensors_changed;
 mod map_remotes;
 mod map_remotes_changed;
 mod enrich_devices;
+mod map_connectivity_changed;
+mod connectivity;
 
 pub use client::new_client;
 pub use controller::HueController as Controller;
