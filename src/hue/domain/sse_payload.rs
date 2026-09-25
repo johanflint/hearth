@@ -1,4 +1,4 @@
-use crate::hue::domain::{ButtonChanged, LightChanged, MotionChanged, ZigbeeConnectivityChanged};
+use crate::hue::domain::{ButtonChanged, DevicePowerChanged, LightChanged, MotionChanged, ZigbeeConnectivityChanged};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, to_string_pretty};
 
@@ -28,6 +28,7 @@ pub enum ChangedProperty {
     Motion(MotionChanged),
     Button(ButtonChanged),
     ZigbeeConnectivity(ZigbeeConnectivityChanged),
+    DevicePower(DevicePowerChanged),
     #[serde(untagged)]
     Unknown(UnknownProperty),
 }
@@ -94,6 +95,49 @@ mod tests {
         let first_result = &result[0];
         assert_eq!(first_result.data.len(), 1);
         assert!(matches!(&first_result.data[0], ChangedProperty::Light(LightChanged { .. })));
+
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_a_device_power_property() -> Result<(), serde_json::Error> {
+        let json = r#"
+        [
+          {
+            "creationtime": "2025-03-07T19:13:41Z",
+            "data": [
+              {
+                "id": "5568ab93-2bef-4739-a667-8beb87898f78",
+                "owner": {
+                  "rid": "3a3225cb-dcda-46fb-8f21-00a8c76024bc",
+                  "rtype": "device"
+                },
+                "power_state": {
+                  "battery_level": 56,
+                  "battery_state": "normal"
+                },
+                "type": "device_power"
+              }
+            ],
+            "id": "11c2f169-9c29-444b-9ef6-4868f6d2daf6",
+            "type": "update"
+          }
+        ]
+        "#;
+
+        let result = serde_json::from_str::<Vec<ServerSentEventPayload>>(json)?;
+        assert_eq!(result.len(), 1);
+        let first_result = &result[0];
+        assert_eq!(first_result.data.len(), 1);
+        assert!(matches!(&first_result.data[0], ChangedProperty::DevicePower(DevicePowerChanged { .. })));
+        let ChangedProperty::DevicePower(DevicePowerChanged { id, owner, power_state }) = &first_result.data[0] else {
+            panic!("expected a DevicePower variant");
+        };
+        assert_eq!(id, "5568ab93-2bef-4739-a667-8beb87898f78");
+        assert_eq!(owner.rid, "3a3225cb-dcda-46fb-8f21-00a8c76024bc");
+        let power_state = power_state.as_ref().expect("power_state should be present");
+        assert_eq!(power_state.battery_level, Some(56));
+        assert_eq!(power_state.battery_state, Some("normal".to_string()));
 
         Ok(())
     }

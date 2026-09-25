@@ -14,3 +14,10 @@ pub struct PowerState {
     pub battery_level: Option<u8>, // 0-100
     pub battery_state: Option<String>, // One of normal, low, critical
 }
+
+#[derive(Debug, Deserialize)]
+pub struct DevicePowerChanged {
+    pub id: String,
+    pub owner: Owner,
+    pub power_state: Option<PowerState>,
+}
