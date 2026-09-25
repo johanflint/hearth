@@ -29,7 +29,7 @@ type ProposalMap = HashMap<(DeviceId, PropertyId), Vec<ProposedWrite>>;
 #[instrument(skip_all, fields(flow = flow.name(), node_id = node_id.as_deref().unwrap_or("<start>")))]
 pub async fn execute_flow(flow: Arc<Flow>, node_id: Option<String>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
     let context = Context::builder().snapshot(snapshot.clone()).location(geo_location).build();
-    let result = flow_engine::execute(&flow, node_id, &context, tx).await;
+    let result = flow_engine::execute(flow.clone(), node_id, &context, tx).await;
 
     let command_map = merge_command_maps(vec![(flow, result)]);
     dispatch_commands(&snapshot, command_map).await;
@@ -39,7 +39,7 @@ pub async fn execute_flow(flow: Arc<Flow>, node_id: Option<String>, snapshot: St
 pub async fn execute_flows(flows: Vec<Arc<Flow>>, snapshot: StoreSnapshot, changed: Option<PropertyChange>, tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
     let context = Context::builder().snapshot(snapshot.clone()).changed(changed).location(geo_location).build();
     let results = FuturesUnordered::from_iter(flows.into_iter().map(|flow| async {
-        let result = flow_engine::execute(&flow, None, &context, tx.clone()).await;
+        let result = flow_engine::execute(flow.clone(), None, &context, tx.clone()).await;
         (flow, result)
     }))
     .collect::<Vec<_>>()

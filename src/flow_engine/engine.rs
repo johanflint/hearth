@@ -8,6 +8,7 @@ use ExecuteNodeResult::*;
 use action_macros::track_failures;
 use std::any::Any;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
@@ -17,7 +18,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 #[track_failures(Metric::FlowExecutionFailures.name())]
 #[instrument(skip_all, fields(flow = flow.name(), metric_name = Metric::FlowExecutionDuration.name()))]
-pub async fn execute(flow: &Flow, node_id: Option<String>, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
+pub async fn execute(flow: Arc<Flow>, node_id: Option<String>, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
     // Only check the trigger for a fresh run, not when resuming after a Sleep node (node_id is Some).
     // The trigger already passed before the sleep was scheduled, re-checking it could incorrectly kill the
     // continuation for edge-trigged expressions like PropertyChanged, whose "changed" fact is only true for
@@ -223,7 +224,7 @@ mod tests {
         let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, None, &Context::default(), scheduler_tx).await;
+        let result = execute(Arc::new(flow), None, &Context::default(), scheduler_tx).await;
         assert!(result.is_ok());
     }
 
@@ -241,7 +242,7 @@ mod tests {
         .unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, None, &Context::default(), scheduler_tx).await;
+        let result = execute(Arc::new(flow), None, &Context::default(), scheduler_tx).await;
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.scope.is_empty());
@@ -287,7 +288,7 @@ mod tests {
             (end_node.id().to_string(), end_node.clone()),
         ]);
         let trigger = PropertyChanged { device_id: "device".to_string(), property_id: "on".to_string() };
-        let flow = Flow::new("id".to_string(), "flow".to_string(), None, Some(trigger), start_node, nodes_by_id).unwrap();
+        let flow = Arc::new(Flow::new("id".to_string(), "flow".to_string(), None, Some(trigger), start_node, nodes_by_id).unwrap());
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
 
@@ -295,12 +296,12 @@ mod tests {
         let triggering_context = Context::builder()
             .changed(Some(PropertyChange { device_id: "device".to_string(), property_id: "on".to_string() }))
             .build();
-        execute(&flow, None, &triggering_context, scheduler_tx.clone()).await.unwrap();
+        execute(flow.clone(), None, &triggering_context, scheduler_tx.clone()).await.unwrap();
         assert!(matches!(scheduler_rx.recv().await, Some(SchedulerCommand::ScheduleOnce { node_id, .. }) if node_id == "midNode"));
 
         // The scheduler resumes later with a fresh, "nothing changed" context
         let resume_context = Context::default();
-        execute(&flow, Some("midNode".to_string()), &resume_context, scheduler_tx).await.unwrap();
+        execute(flow, Some("midNode".to_string()), &resume_context, scheduler_tx).await.unwrap();
 
         // The continuation must still run (and reach the witness sleep) even though
         // the trigger would evaluate to false against this context
@@ -316,7 +317,7 @@ mod tests {
         let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, Some("unknown".to_string()), &Context::default(), scheduler_tx).await;
+        let result = execute(Arc::new(flow), Some("unknown".to_string()), &Context::default(), scheduler_tx).await;
         assert!(matches!(result, Err(FlowEngineError::MissingProvidedStartNode(_))));
     }
 
@@ -326,7 +327,7 @@ mod tests {
         let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, None, &Context::default(), scheduler_tx).await;
+        let result = execute(Arc::new(flow), None, &Context::default(), scheduler_tx).await;
         assert!(matches!(result, Err(FlowEngineError::MissingOutgoingNode(_))));
     }
 
@@ -345,7 +346,7 @@ mod tests {
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
 
-        execute(&flow, None, &Context::default(), scheduler_tx).await.unwrap();
+        execute(Arc::new(flow), None, &Context::default(), scheduler_tx).await.unwrap();
         let received_command = scheduler_rx.recv().await;
         if let Some(SchedulerCommand::ScheduleOnce { flow_id, node_id, delay }) = received_command {
             assert_eq!(flow_id, "id");
@@ -379,7 +380,7 @@ mod tests {
         let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node, nodes_by_id).unwrap();
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, Some("end_node".to_string()), &Context::default(), scheduler_tx).await.unwrap();
+        let result = execute(Arc::new(flow), Some("end_node".to_string()), &Context::default(), scheduler_tx).await.unwrap();
 
         // Ensure that nothing was scheduled
         assert!(scheduler_rx.try_recv().is_err(), "Expected no scheduler commands to be sent");
@@ -414,7 +415,7 @@ mod tests {
         let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node, nodes_by_id).unwrap();
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, None, &Context::default(), scheduler_tx).await.unwrap();
+        let result = execute(Arc::new(flow), None, &Context::default(), scheduler_tx).await.unwrap();
 
         assert!(scheduler_rx.try_recv().is_err(), "Expected no scheduler commands to be sent");
         assert!(result.scope.is_empty());
@@ -451,7 +452,7 @@ mod tests {
         let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node, nodes_by_id).unwrap();
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(&flow, None, &Context::default(), scheduler_tx).await;
+        let result = execute(Arc::new(flow), None, &Context::default(), scheduler_tx).await;
 
         assert!(scheduler_rx.try_recv().is_err(), "Expected no scheduler commands to be sent");
         assert!(matches!(result, Err(FlowEngineError::NoMatchingFlowLink { .. })));
