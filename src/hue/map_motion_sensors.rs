@@ -39,7 +39,7 @@ pub fn map_motion_sensors(sensors: Vec<MotionGet>, light_levels: Vec<LightLevelG
                 NumberProperty::builder("sensitivity".to_string(), PropertyType::MotionSensitivity, false)
                     .external_id(sensor.id.clone())
                     .unit(Unit::None)
-                    .positive_int(sensor.sensitivity.sensitivity, Some(0), Some(sensor.sensitivity.sensitivity_max))
+                    .positive_int(Some(sensor.sensitivity.sensitivity), Some(0), Some(sensor.sensitivity.sensitivity_max))
                     .build(),
             );
             properties.insert(sensitivity_property.name().to_owned(), sensitivity_property);
@@ -53,7 +53,7 @@ pub fn map_motion_sensors(sensors: Vec<MotionGet>, light_levels: Vec<LightLevelG
             let light_level_property = Box::new(
                 NumberProperty::builder("illuminance".to_string(), PropertyType::Illuminance, true)
                     .unit(Unit::Lux)
-                    .float(light_level_lx, Some(0.0), None)
+                    .float(Some(light_level_lx), Some(0.0), None)
                     .build(),
             );
             properties.insert(light_level_property.name().to_owned(), light_level_property);

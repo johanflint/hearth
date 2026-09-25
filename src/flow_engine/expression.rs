@@ -359,7 +359,7 @@ mod tests {
             NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false)
                 .external_id("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string())
                 .unit(Unit::Percentage)
-                .float(58.89, Some(2.0), Some(100.0))
+                .float(Some(58.89), Some(2.0), Some(100.0))
                 .build(),
         );
 
@@ -367,7 +367,7 @@ mod tests {
             NumberProperty::builder("colorTemperature".to_string(), PropertyType::ColorTemperature, false)
                 .external_id("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string())
                 .unit(Unit::Kelvin)
-                .positive_int(6535, Some(2000), Some(6535))
+                .positive_int(Some(6535), Some(2000), Some(6535))
                 .build(),
         );
 
@@ -379,7 +379,7 @@ mod tests {
             NumberProperty::builder("illuminance".to_string(), PropertyType::Illuminance, true)
                 .external_id("ab917a9a-a7d5-4853-9518-75909236a182".to_string())
                 .unit(Unit::Lux)
-                .float(316.23, Some(0.0), None)
+                .float(Some(316.23), Some(0.0), None)
                 .build(),
         );
 

@@ -242,14 +242,14 @@ mod tests {
             NumberProperty::builder("sensitivity".to_string(), PropertyType::MotionSensitivity, false)
                 .external_id("0af9eb8a-f38f-427c-b819-0c6850f55fe9".to_string())
                 .unit(Unit::None)
-                .positive_int(2, Some(0), Some(4))
+                .positive_int(Some(2), Some(0), Some(4))
                 .build(),
         );
 
         let illuminance_property: Box<dyn Property> = Box::new(
             NumberProperty::builder("illuminance".to_string(), PropertyType::Illuminance, true)
                 .unit(Unit::Lux)
-                .float(36.257679024119625, Some(0.0), None)
+                .float(Some(36.257679024119625), Some(0.0), None)
                 .build()
         );
 

@@ -24,7 +24,7 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
                     NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false)
                         .external_id(light.id.clone())
                         .unit(Unit::Percentage)
-                        .float(dimming.brightness, dimming.min_dim_level.or(Some(0.0)), Some(100.0))
+                        .float(Some(dimming.brightness), dimming.min_dim_level.or(Some(0.0)), Some(100.0))
                         .build(),
                 );
                 properties.insert(brightness_property.name().to_owned(), brightness_property);
@@ -38,7 +38,7 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
                         .external_id(light.id.clone())
                         .unit(Unit::Kelvin)
                         .positive_int(
-                            mirek_value.max(temperature.mirek_schema.mirek_minimum).mirek_to_kelvin(),
+                            Some(mirek_value.max(temperature.mirek_schema.mirek_minimum).mirek_to_kelvin()),
                             Some(temperature.mirek_schema.mirek_maximum.mirek_to_kelvin()), // Not a bug: mirek is inverse to K
                             Some(temperature.mirek_schema.mirek_minimum.mirek_to_kelvin()),
                         )
@@ -127,7 +127,7 @@ mod tests {
             NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false)
                 .external_id("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string())
                 .unit(Unit::Percentage)
-                .float(58.89, Some(2.0), Some(100.0))
+                .float(Some(58.89), Some(2.0), Some(100.0))
                 .build(),
         );
 
@@ -135,7 +135,7 @@ mod tests {
             NumberProperty::builder("colorTemperature".to_string(), PropertyType::ColorTemperature, false)
                 .external_id("43e4f3a7-8b35-4b0c-a2ba-e6ca8f4c099b".to_string())
                 .unit(Unit::Kelvin)
-                .positive_int(6535, Some(2000), Some(6535))
+                .positive_int(Some(6535), Some(2000), Some(6535))
                 .build(),
         );
 

@@ -161,22 +161,22 @@ impl NumberPropertyBuilder {
         self
     }
 
-    pub fn positive_int(mut self, value: u64, minimum: Option<u64>, maximum: Option<u64>) -> Self {
-        self.value = Some(Number::PositiveInt(value));
+    pub fn positive_int(mut self, value: Option<u64>, minimum: Option<u64>, maximum: Option<u64>) -> Self {
+        self.value = value.map(Number::PositiveInt);
         self.minimum = minimum.map(|v| Number::PositiveInt(v));
         self.maximum = maximum.map(|v| Number::PositiveInt(v));
         self
     }
 
-    pub fn negative_int(mut self, value: i64, minimum: Option<i64>, maximum: Option<i64>) -> Self {
-        self.value = Some(Number::NegativeInt(value));
+    pub fn negative_int(mut self, value: Option<i64>, minimum: Option<i64>, maximum: Option<i64>) -> Self {
+        self.value = value.map(Number::NegativeInt);
         self.minimum = minimum.map(|v| Number::NegativeInt(v));
         self.maximum = maximum.map(|v| Number::NegativeInt(v));
         self
     }
 
-    pub fn float(mut self, value: f64, minimum: Option<f64>, maximum: Option<f64>) -> Self {
-        self.value = Some(Number::Float(value));
+    pub fn float(mut self, value: Option<f64>, minimum: Option<f64>, maximum: Option<f64>) -> Self {
+        self.value = value.map(Number::Float);
         self.minimum = minimum.map(|v| Number::Float(v));
         self.maximum = maximum.map(|v| Number::Float(v));
         self
@@ -231,34 +231,34 @@ mod tests {
     }
 
     #[rstest]
-    #[case(builder(true).positive_int(42, None, None).build(), Some(42))]
-    #[case(builder(true).negative_int(42, None, None).build(), None)]
-    #[case(builder(true).float(42.0, None, None).build(), None)]
+    #[case(builder(true).positive_int(Some(42), None, None).build(), Some(42))]
+    #[case(builder(true).negative_int(Some(42), None, None).build(), None)]
+    #[case(builder(true).float(Some(42.0), None, None).build(), None)]
     fn as_u64(#[case] property: NumberProperty, #[case] expected: Option<u64>) {
         assert_eq!(property.as_u64(), expected);
     }
 
     #[rstest]
-    #[case(builder(true).positive_int(42, None, None).build(), Some(42))]
-    #[case(builder(true).positive_int(i64::MAX as u64 + 1, None, None).build(), None)]
-    #[case(builder(true).negative_int(42, None, None).build(), Some(42))]
-    #[case(builder(true).float(42.0, None, None).build(), None)]
+    #[case(builder(true).positive_int(Some(42), None, None).build(), Some(42))]
+    #[case(builder(true).positive_int(Some(i64::MAX as u64 + 1), None, None).build(), None)]
+    #[case(builder(true).negative_int(Some(42), None, None).build(), Some(42))]
+    #[case(builder(true).float(Some(42.0), None, None).build(), None)]
     fn as_i64(#[case] property: NumberProperty, #[case] expected: Option<i64>) {
         assert_eq!(property.as_i64(), expected);
     }
 
     #[rstest]
-    #[case(builder(true).positive_int(42, None, None).build(), Some(42.0))]
-    #[case(builder(true).positive_int(i64::MAX as u64 + 1, None, None).build(), Some(i64::MAX as f64 + 1.0))]
-    #[case(builder(true).negative_int(42, None, None).build(), Some(42.0))]
-    #[case(builder(true).float(42.0, None, None).build(), Some(42.0))]
+    #[case(builder(true).positive_int(Some(42), None, None).build(), Some(42.0))]
+    #[case(builder(true).positive_int(Some(i64::MAX as u64 + 1), None, None).build(), Some(i64::MAX as f64 + 1.0))]
+    #[case(builder(true).negative_int(Some(42), None, None).build(), Some(42.0))]
+    #[case(builder(true).float(Some(42.0), None, None).build(), Some(42.0))]
     fn as_f64(#[case] property: NumberProperty, #[case] expected: Option<f64>) {
         assert_eq!(property.as_f64(), expected);
     }
 
     #[test]
     fn returns_the_value() {
-        let property = builder(false).positive_int(42, None, None).build();
+        let property = builder(false).positive_int(Some(42), None, None).build();
 
         assert!(property.as_i64().is_some());
         assert_eq!(property.as_i64().unwrap(), 42i64);
@@ -275,7 +275,7 @@ mod tests {
     #[case(Number::NegativeInt(-7))]
     #[case(Number::Float(7.0))]
     fn validate_value_returns_valid_if_property_is_editable(#[case] value: Number) {
-        let property = builder(false).negative_int(42, Some(-100), Some(100)).build();
+        let property = builder(false).negative_int(Some(42), Some(-100), Some(100)).build();
 
         let result = property.validate_value(value.clone());
 
@@ -287,7 +287,7 @@ mod tests {
     #[case(Number::NegativeInt(-7))]
     #[case(Number::Float(7.0))]
     fn validate_value_returns_invalid_if_property_is_readonly(#[case] value: Number) {
-        let property = builder(true).positive_int(42, Some(1), Some(100)).build();
+        let property = builder(true).positive_int(Some(42), Some(1), Some(100)).build();
 
         let result = property.validate_value(value);
 
@@ -299,7 +299,7 @@ mod tests {
     #[case(Number::NegativeInt(-7))]
     #[case(Number::Float(7.0))]
     fn validate_value_returned_clamped_if_value_is_too_small(#[case] value: Number) {
-        let property = builder(false).positive_int(42, Some(10), Some(100)).build();
+        let property = builder(false).positive_int(Some(42), Some(10), Some(100)).build();
 
         let result = property.validate_value(value);
 
@@ -311,7 +311,7 @@ mod tests {
     #[case(Number::NegativeInt(42))]
     #[case(Number::Float(42.7))]
     fn validate_value_returned_clamped_if_value_is_too_large(#[case] value: Number) {
-        let property = builder(false).positive_int(42, Some(1), Some(10)).build();
+        let property = builder(false).positive_int(Some(42), Some(1), Some(10)).build();
 
         let result = property.validate_value(value);
 
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn set_value_updates_the_value_if_the_property_is_editable() {
-        let mut property = builder(false).negative_int(-2, None, None).build();
+        let mut property = builder(false).negative_int(Some(-2), None, None).build();
 
         let result = property.set_value(Some(Number::PositiveInt(42)));
 
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn set_value_updates_the_value_even_if_the_property_is_readonly() {
-        let mut property = builder(true).negative_int(-2, None, None).build();
+        let mut property = builder(true).negative_int(Some(-2), None, None).build();
 
         let result = property.set_value(Some(Number::PositiveInt(42)));
 
