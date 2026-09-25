@@ -86,6 +86,31 @@
         }
       ],
       "type": "device"
+    },
+    {
+      "id": "3a3225cb-dcda-46fb-8f21-00a8c76024bc",
+      "id_v1": "/sensors/106",
+      "product_data": {
+        "model_id": "RWL021",
+        "manufacturer_name": "Signify Netherlands B.V.",
+        "product_name": "Hue dimmer switch",
+        "product_archetype": "unknown_archetype",
+        "certified": true,
+        "software_version": "1.1.28573",
+        "hardware_platform_type": "100b-109"
+      },
+      "metadata": {
+        "name": "Dimmer",
+        "archetype": "unknown_archetype"
+      },
+      "identify": {},
+      "services": [
+        {
+          "rid": "f72e36a1-50e1-4d01-9c04-c9d44327285e",
+          "rtype": "button"
+        }
+      ],
+      "type": "device"
     }
   ]
 }

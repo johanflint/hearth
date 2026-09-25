@@ -1,10 +1,11 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
-use crate::hue::domain::{DeviceGet, HueResponse, LightGet, LightLevelGet, MotionGet};
+use crate::hue::domain::{ButtonGet, DeviceGet, HueResponse, LightGet, LightLevelGet, MotionGet};
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
+use crate::hue::map_remotes::{MapRemotesError, map_remotes};
 use reqwest::{Client, StatusCode};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use tracing::{debug, info, instrument, warn};
 
@@ -53,14 +54,28 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     let light_levels_response = response.json::<HueResponse<LightLevelGet>>().await?;
     debug!("Retrieving lights levels... OK, {} found", light_levels_response.data.len()); // Using debug as these aren't devices but services
 
+    let response = client
+        .get(format!("{}/clip/v2/resource/button", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(to_discover_error)?;
+
+    let button_response = response.json::<HueResponse<ButtonGet>>().await?;
+    // Count the devices, not the buttons that button_response contains
+    let remotes: HashSet<&str> = button_response.data.iter().map(|b| b.owner.rid.as_str()).collect();
+    info!("Retrieving remotes... OK, {} found", remotes.len());
+
     let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
     let mut devices = vec![];
     let lights = map_lights(light_response.data, &mut device_map)?;
     let motion_sensors = map_motion_sensors(motion_response.data, light_levels_response.data, &mut device_map)?;
+    let buttons = map_remotes(button_response.data, &mut device_map)?;
 
     devices.extend(lights);
     devices.extend(motion_sensors);
+    devices.extend(buttons);
 
     if !device_map.is_empty() {
         log_unmapped_devices(&device_map);
@@ -97,6 +112,8 @@ pub enum DiscoverError {
     MapLights(#[from] MapLightsError),
     #[error(transparent)]
     MapMotionSensors(#[from] MapMotionSensorsError),
+    #[error(transparent)]
+    MapRemotes(#[from] MapRemotesError),
 }
 
 #[cfg(test)]
@@ -104,7 +121,7 @@ mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
     use crate::domain::device::DeviceType;
-    use crate::domain::property::{BooleanProperty, DateTimeProperty, NumberProperty, Property, PropertyType, Unit};
+    use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;
@@ -144,6 +161,14 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(include_str!("../../tests/resources/hue_light_level_simplified_response.json"))
+            .create_async()
+            .await;
+
+        server
+            .mock("GET", "/clip/v2/resource/button")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_button_simplified_response.json"))
             .create_async()
             .await;
 
@@ -207,8 +232,33 @@ mod tests {
             Some("2026-09-23T15:37:20.001Z".parse().unwrap()),
         ));
 
+        let button_property: Box<dyn Property> = Box::new(
+            EnumProperty::new(
+                "button1".to_string(),
+                PropertyType::Button,
+                true,
+                Some("f72e36a1-50e1-4d01-9c04-c9d44327285e".to_string()),
+                Some("short_release".to_string()),
+                vec![
+                    "initial_press".to_string(),
+                    "repeat".to_string(),
+                    "short_release".to_string(),
+                    "long_release".to_string(),
+                    "long_press".to_string(),
+                ],
+            ).unwrap(),
+        );
+
+        let button_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "button1LastChanged".to_string(),
+            PropertyType::ButtonLastChanged,
+            true,
+            Some("f72e36a1-50e1-4d01-9c04-c9d44327285e".to_string()),
+            Some("2026-09-20T18:36:08.948Z".parse().unwrap()),
+        ));
+
         mock.assert();
-        assert_eq!(response.len(), 2);
+        assert_eq!(response.len(), 3);
         assert_eq!(
             response[0],
             Device {
@@ -240,6 +290,24 @@ mod tests {
                     (sensitivity_property.name().to_string(), sensitivity_property),
                     (illuminance_property.name().to_string(), illuminance_property),
                     (illuminance_last_changed_property.name().to_string(), illuminance_last_changed_property),
+                ]),
+                external_id: None,
+                address: None,
+                controller_id: Some("hue"),
+            }
+        );
+        assert_eq!(
+            response[2],
+            Device {
+                id: "3a3225cb-dcda-46fb-8f21-00a8c76024bc".to_string(),
+                r#type: DeviceType::Remote,
+                manufacturer: "Signify Netherlands B.V.".to_string(),
+                model_id: "RWL021".to_string(),
+                product_name: "Hue dimmer switch".to_string(),
+                name: "Dimmer".to_string(),
+                properties: HashMap::from([
+                    (button_property.name().to_string(), button_property),
+                    (button_last_changed_property.name().to_string(), button_last_changed_property),
                 ]),
                 external_id: None,
                 address: None,

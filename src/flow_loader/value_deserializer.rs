@@ -10,7 +10,8 @@ impl<'de> Deserialize<'de> for Value {
         match value {
             serde_json::Value::Bool(value) => Ok(Value::Boolean(value)),
             serde_json::Value::Number(value) => Ok(Value::Number((&value).into())),
-            _ => Err(serde::de::Error::custom("expected the value to be a boolean or a number")),
+            serde_json::Value::String(value) => Ok(Value::String(value)),
+            _ => Err(serde::de::Error::custom("expected the value to be a boolean, a number or a string")),
         }
     }
 }
@@ -24,7 +25,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn deserialize() {
+    fn deserialize_numbers() {
         let json = json!({
             "type": "equalTo",
             "lhs": {
@@ -46,7 +47,32 @@ mod tests {
                 value: Value::Number(Number::Float(42.0)),
             }),
         };
-        println!("{:#?}", expression);
+        assert_eq!(expression, expected);
+    }
+
+    #[test]
+    fn deserialize_strings() {
+        let json = json!({
+            "type": "equalTo",
+            "lhs": {
+              "type": "literal",
+              "value": "short_release"
+            },
+            "rhs": {
+              "type": "literal",
+              "value": "short_release"
+            }
+        });
+
+        let expression = serde_json::from_value::<Expression>(json).unwrap();
+        let expected = EqualTo {
+            lhs: Box::new(Literal {
+                value: Value::String("short_release".to_string()),
+            }),
+            rhs: Box::new(Literal {
+                value: Value::String("short_release".to_string()),
+            }),
+        };
         assert_eq!(expression, expected);
     }
 }

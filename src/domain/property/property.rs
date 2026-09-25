@@ -35,6 +35,8 @@ impl PartialEq for dyn Property {
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum PropertyType {
     Brightness,
+    Button,
+    ButtonLastChanged,
     Color,
     ColorTemperature,
     Enabled,
@@ -44,6 +46,14 @@ pub enum PropertyType {
     MotionLastChanged,
     MotionSensitivity,
     On,
+}
+
+// Identifies aproperty either by its well-known name or by the controller-owned
+// external_id resource.
+#[derive(PartialEq, Debug)]
+pub enum PropertyLocator {
+    Name(String),
+    ExternalId(String),
 }
 
 #[derive(Error, PartialEq, Debug)]
@@ -56,4 +66,8 @@ pub enum PropertyError {
     ValueTooLarge,
     #[error("missing property")]
     MissingProperty,
+    #[error("enum property must have at least oe allowed value")]
+    EmptyAllowedValues,
+    #[error("unknown value '{value}', allowed values: '{}'", allowed_values.join(", "))]
+    UnknownValue { value: String, allowed_values: Vec<String> },
 }

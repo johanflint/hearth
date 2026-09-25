@@ -1,6 +1,6 @@
 use crate::domain::Number;
 use crate::domain::events::Event;
-use crate::domain::property::CartesianCoordinate;
+use crate::domain::property::{CartesianCoordinate, PropertyLocator};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::LightChanged;
 use tracing::warn;
@@ -10,7 +10,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
     if let Some(on) = property.on {
         events.push(Event::BooleanPropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "on".to_string(),
+            property_id: PropertyLocator::Name("on".to_string()),
             value: on.on,
         });
     }
@@ -18,7 +18,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
     if let Some(dimming) = property.dimming {
         events.push(Event::NumberPropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "brightness".to_string(),
+            property_id: PropertyLocator::Name("brightness".to_string()),
             value: Some(Number::Float(dimming.brightness)),
         });
     }
@@ -31,7 +31,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
             }
             events.push(Event::NumberPropertyChanged {
                 device_id: property.owner.rid.to_string(),
-                property_id: "colorTemperature".to_string(),
+                property_id: PropertyLocator::Name("colorTemperature".to_string()),
                 value: Some(Number::PositiveInt(clamped.mirek_to_kelvin())),
             });
         }
@@ -40,7 +40,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
     if let Some(color) = property.color {
         events.push(Event::ColorPropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "color".to_string(),
+            property_id: PropertyLocator::Name("color".to_string()),
             xy: CartesianCoordinate::new(color.xy.x, color.xy.y),
             gamut: color.gamut.map(|mut g| g.take_gamut()),
         });
@@ -97,7 +97,7 @@ mod tests {
             result[0],
             BooleanPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                property_id: "on".to_string(),
+                property_id: PropertyLocator::Name("on".to_string()),
                 value: true
             }
         );
@@ -126,7 +126,7 @@ mod tests {
             result[0],
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                property_id: "brightness".to_string(),
+                property_id: PropertyLocator::Name("brightness".to_string()),
                 value: Some(Float(20.8)),
             }
         );
@@ -152,7 +152,7 @@ mod tests {
             result[0],
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                property_id: "colorTemperature".to_string(),
+                property_id: PropertyLocator::Name("colorTemperature".to_string()),
                 value: Some(PositiveInt(6535))
             }
         );
@@ -198,7 +198,7 @@ mod tests {
             result[0],
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                property_id: "colorTemperature".to_string(),
+                property_id: PropertyLocator::Name("colorTemperature".to_string()),
                 value: Some(PositiveInt(expected_kelvin))
             }
         );
@@ -231,7 +231,7 @@ mod tests {
             result[0],
             ColorPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                property_id: "color".to_string(),
+                property_id: PropertyLocator::Name("color".to_string()),
                 xy: CartesianCoordinate::new(0.0, 0.0),
                 gamut: Some(Gamut::new(
                     CartesianCoordinate::new(0.1, 0.2),

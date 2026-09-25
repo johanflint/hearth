@@ -1,5 +1,6 @@
 use crate::domain::Number;
 use crate::domain::events::Event;
+use crate::domain::property::PropertyLocator;
 use crate::hue::domain::{MotionChanged, SensitivityChanged, SensitivityStatus};
 
 pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
@@ -7,7 +8,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
     if let Some(enabled) = property.enabled {
         events.push(Event::BooleanPropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "enabled".to_string(),
+            property_id: PropertyLocator::Name("enabled".to_string()),
             value: enabled,
         });
     }
@@ -15,12 +16,12 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
     if let Some(report) = property.motion.and_then(|m| m.motion_report) {
         events.push(Event::BooleanPropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "motion".to_string(),
+            property_id: PropertyLocator::Name("motion".to_string()),
             value: report.motion,
         });
         events.push(Event::DateTimePropertyChanged {
             device_id: property.owner.rid.to_string(),
-            property_id: "motionLastChanged".to_string(),
+            property_id: PropertyLocator::Name("motionLastChanged".to_string()),
             value: Some(report.changed),
         })
     }
@@ -31,7 +32,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
         if matches!(status, Some(SensitivityStatus::Set)) {
             events.push(Event::NumberPropertyChanged {
                 device_id: property.owner.rid.to_string(),
-                property_id: "sensitivity".to_string(),
+                property_id: PropertyLocator::Name("sensitivity".to_string()),
                 value: Some(Number::PositiveInt(sensitivity)),
             });
         }
@@ -44,6 +45,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
 mod tests {
     use crate::domain::Number::PositiveInt;
     use crate::domain::events::Event::{BooleanPropertyChanged, DateTimePropertyChanged, NumberPropertyChanged};
+    use crate::domain::property::PropertyLocator;
     use crate::hue::domain::{Motion, MotionChanged, MotionReport, MotionType, Owner, SensitivityChanged, SensitivityStatus};
     use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
     use chrono::{TimeZone, Utc};
@@ -82,7 +84,7 @@ mod tests {
             result[0],
             BooleanPropertyChanged {
                 device_id: owner().rid,
-                property_id: "enabled".to_string(),
+                property_id: PropertyLocator::Name("enabled".to_string()),
                 value: true,
             }
         );
@@ -104,7 +106,7 @@ mod tests {
             result[0],
             BooleanPropertyChanged {
                 device_id: owner().rid,
-                property_id: "motion".to_string(),
+                property_id: PropertyLocator::Name("motion".to_string()),
                 value: true,
             }
         );
@@ -112,7 +114,7 @@ mod tests {
             result[1],
             DateTimePropertyChanged {
                 device_id: owner().rid,
-                property_id: "motionLastChanged".to_string(),
+                property_id: PropertyLocator::Name("motionLastChanged".to_string()),
                 value: Some(changed),
             }
         );
@@ -134,7 +136,7 @@ mod tests {
             result[0],
             NumberPropertyChanged {
                 device_id: owner().rid,
-                property_id: "sensitivity".to_string(),
+                property_id: PropertyLocator::Name("sensitivity".to_string()),
                 value: Some(PositiveInt(3)),
             }
         );
