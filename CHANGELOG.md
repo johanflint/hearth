@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.2.0 (2026-09-25)
+
+### Features
+
+- Add battery level and state to devices ([#49](https://github.com/johanflint/hearth/pull/49))
+- Connectivity ([#48](https://github.com/johanflint/hearth/pull/48))
+- Support remotes ([#47](https://github.com/johanflint/hearth/pull/47))
+- Support illuminance for motion sensors ([#46](https://github.com/johanflint/hearth/pull/46))
+- Trigger reactive flows only when the relevant property actually changes ([#45](https://github.com/johanflint/hearth/pull/45))
+- Support Hue motion sensors ([#43](https://github.com/johanflint/hearth/pull/43))
+- Provide an installer script ([#40](https://github.com/johanflint/hearth/pull/40))
+
+### Bug Fixes
+
+- Fix `LogAction` not logging because of the log configuration ([#50](https://github.com/johanflint/hearth/pull/50))
+- Allow setting readonly values from observers but not from flows ([#42](https://github.com/johanflint/hearth/pull/42))
+
+### Build System
+
+- Pin Rust version ([#44](https://github.com/johanflint/hearth/pull/44))
+
 ## v0.1.0 (2026-09-17)
 
 ### Features
