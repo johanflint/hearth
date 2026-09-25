@@ -184,6 +184,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 }
                 PropertyType::Color => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
+                PropertyType::Connectivity => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::MotionLastChanged => {
                     let motion_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
                     Ok(motion_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))

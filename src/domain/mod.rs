@@ -10,7 +10,9 @@ pub mod property;
 mod time;
 mod weekday;
 mod weekday_condition;
+mod connectivity;
 
+pub use connectivity::Connectivity;
 pub use geo_location::GeoLocation;
 pub use number::Number;
 pub use time::Time;
