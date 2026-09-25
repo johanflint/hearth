@@ -1,0 +1,21 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "b1e6d98c-09ca-4538-b4ea-b57c8c540b3e",
+      "owner": {
+        "rid": "079e0321-7e18-46bc-bc16-fcbc3dd09e30",
+        "rtype": "device"
+      },
+      "status": "connected"
+    },
+    {
+      "id": "c2f6d98c-09ca-4538-b4ea-b57c8c540b3e",
+      "owner": {
+        "rid": "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3",
+        "rtype": "device"
+      },
+      "status": "connectivity_issue"
+    }
+  ]
+}

@@ -39,6 +39,7 @@ pub enum PropertyType {
     ButtonLastChanged,
     Color,
     ColorTemperature,
+    Connectivity,
     Enabled,
     Illuminance,
     IlluminanceLastChanged,
