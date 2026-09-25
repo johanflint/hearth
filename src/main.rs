@@ -35,7 +35,9 @@ mod metrics_layer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,hearth::flow_engine=warn"));
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,hearth::flow_engine=warn"))
+        .add_directive("hearth::flow_log=info".parse()?);
     tracing_subscriber::registry()
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
