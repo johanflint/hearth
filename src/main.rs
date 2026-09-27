@@ -14,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+mod api;
 mod app_config;
 mod domain;
 mod execute_flows;
