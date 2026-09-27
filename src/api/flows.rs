@@ -16,6 +16,10 @@ pub fn router() -> Router<ApiState> {
 
 async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, Json(payload): Json<SerializedFlow>) -> Response {
     debug!("Received request to update flow '{id}'...");
+    if state.flow_registry.by_id(&id).is_none() {
+        return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response();
+    }
+
     let flow = match flow_loader::from_json(payload) {
         Ok(flow) => flow,
         Err(flow_factory_error) => {
@@ -49,11 +53,16 @@ struct UpdateFlowResponse {
 #[derive(Debug, Serialize)]
 struct ErrorResponse {
     pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
 impl ErrorResponse {
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         ErrorResponse { code: code.to_string(), message: Some(message.into()) }
+    }
+
+    pub fn new_code_only(code: &'static str) -> Self {
+        ErrorResponse { code: code.to_string(), message: None }
     }
 }

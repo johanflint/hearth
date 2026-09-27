@@ -2,6 +2,7 @@ use crate::flow_engine::flow::Flow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct FlowRegistry {
     flows: Vec<Arc<Flow>>,
     by_id: HashMap<String, usize>,
