@@ -1,5 +1,6 @@
 use crate::domain::GeoLocation;
 use crate::execute_flows::{execute_flow, execute_flows};
+use crate::flow_engine::flow::Flow;
 use crate::flow_registry::FlowRegistry;
 use crate::store::StoreSnapshot;
 use chrono::Local;
@@ -13,7 +14,9 @@ use tracing::{debug, error, info, instrument, warn};
 #[derive(Debug)]
 pub enum SchedulerCommand {
     Schedule { flow_id: String },
-    ScheduleOnce { flow_id: String, node_id: String, delay: Duration },
+    // An `Arc<Flow>` is passed instead of a flow_id to ensure it resumes with
+    // the same flow instance, even if a newer version is available
+    ScheduleOnce { flow: Arc<Flow>, node_id: String, delay: Duration },
 }
 
 // Pass config
@@ -64,13 +67,8 @@ pub async fn scheduler(
                 });
                 info!(schedule = schedule_str, "🕗 Scheduling flow '{}'... OK", flow_name);
             }
-            SchedulerCommand::ScheduleOnce { flow_id, node_id, delay } => {
-                let Some(flow) = flow_registry.by_id(&flow_id) else {
-                    warn!("🕗 Scheduling flow '{}'... failed, flow not found", flow_id);
-                    continue;
-                };
-
-                debug!("🕗 Scheduling flow '{}' to run node '{}' after {:?}... OK", flow_id, node_id, delay);
+            SchedulerCommand::ScheduleOnce { flow, node_id, delay } => {
+                debug!("🕗 Scheduling flow '{}' to run node '{}' after {:?}... OK", flow.id(), node_id, delay);
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
                 let geo_location_clone = geo_location.clone();
