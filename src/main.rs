@@ -1,3 +1,4 @@
+use crate::api::ApiState;
 use crate::app_config::AppConfig;
 use crate::domain::controller_registry;
 use crate::domain::events::Event;
@@ -6,6 +7,7 @@ use crate::flow_registry::FlowRegistry;
 use crate::metrics_layer::MetricsLayer;
 use crate::store::Store;
 use crate::store_listener::store_listener;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::{signal, task};
@@ -44,6 +46,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(tracing_subscriber::fmt::layer())
         .with(MetricsLayer)
         .init();
+
+    let prometheus_handle = PrometheusBuilder::new().install_recorder()?;
+    metrics::describe();
 
     info!("🪵 Starting {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 
@@ -92,7 +97,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store");
 
-    server::start(config.core().port()).await?;
+    let api_state = ApiState::new(prometheus_handle);
+    server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 
     let hue_devices = hue::discover(&hue_client, &config).await?;

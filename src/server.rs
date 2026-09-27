@@ -1,18 +1,13 @@
 use crate::api;
 use crate::api::ApiState;
 use axum::Router;
-use metrics_exporter_prometheus::{BuildError, PrometheusBuilder};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::task;
 use tracing::{error, info, warn};
 
-pub async fn start(port: usize) -> Result<(), ServerError> {
-    let prometheus_handle = PrometheusBuilder::new().install_recorder()?;
-    crate::metrics::describe();
-
-    let state = ApiState::new(prometheus_handle);
+pub async fn start(port: usize, state: ApiState) -> Result<(), ServerError> {
     let app = api::router(state);
 
     // Fatal: propagate so the process can be aborted. A port config being unusable is an environment problem
@@ -71,8 +66,6 @@ async fn bind_with_retries(port: usize, max_attempts: u32, delay: Duration) -> R
 
 #[derive(Error, Debug)]
 pub enum ServerError {
-    #[error(transparent)]
-    PrometheusError(#[from] BuildError),
     #[error("unable to bind to address '{address}' after {attempts} attempt(s): {error}")]
     TcpError { address: String, attempts: u32, error: std::io::Error },
 }
