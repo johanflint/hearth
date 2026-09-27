@@ -5,9 +5,12 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use thiserror::Error;
 
-pub fn from_json(json: &str) -> Result<Flow, FlowFactoryError> {
+pub fn from_json_string(json: &str) -> Result<Flow, FlowFactoryError> {
     let flow = serde_json::from_str::<SerializedFlow>(json)?;
+    from_json(flow)
+}
 
+pub fn from_json(flow: SerializedFlow) -> Result<Flow, FlowFactoryError> {
     if flow.schedule.is_some() {
         if let Some(trigger) = &flow.trigger {
             if trigger.contains_property_changed() {
@@ -191,7 +194,7 @@ mod tests {
     #[tokio::test]
     async fn returns_an_error_if_a_scheduled_flow_uses_a_property_changed_trigger() {
         let json = include_str!("../../tests/resources/flows/invalid/scheduledFlowWithPropertyChangedTrigger.json");
-        let result = from_json(json);
+        let result = from_json_string(json);
         assert!(matches!(result, Err(FlowFactoryError::PropertyChangedInScheduledFlow)));
     }
 
@@ -199,56 +202,56 @@ mod tests {
     async fn allows_a_scheduled_flow_without_a_property_changed_trigger() {
         // Regression guard: the validation must only reject PropertyChanged, not schedules in general
         let json = include_str!("../../tests/resources/flows/logFlowWithSchedule.json");
-        let result = from_json(json);
+        let result = from_json_string(json);
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn returns_an_error_if_an_unknown_node_type_is_found() {
         let json = include_str!("../../tests/resources/flows/invalid/unknownNodeTypeFlow.json");
-        let result = from_json(json);
+        let result = from_json_string(json);
         assert!(matches!(result, Err(FlowFactoryError::Deserialization(_))));
     }
 
     #[tokio::test]
     async fn returns_an_error_if_no_start_node_is_found() {
         let json = r#"{ "id": "id", "name": "flow", "nodes": [] }"#;
-        let result = from_json(json);
+        let result = from_json_string(json);
         assert!(matches!(result, Err(FlowFactoryError::MissingStartNode)));
     }
 
     #[tokio::test]
     async fn returns_an_error_if_multiple_start_nodes_are_found() {
         let json = include_str!("../../tests/resources/flows/invalid/multipleStartNodesFlow.json");
-        let result = from_json(json);
+        let result = from_json_string(json);
         assert!(matches!(result, Err(FlowFactoryError::TooManyStartNodes(2))));
     }
 
     #[tokio::test]
     async fn returns_an_error_if_no_end_node_is_found() {
         let json = include_str!("../../tests/resources/flows/invalid/missingEndNodeFlow.json");
-        let result = from_json(json);
+        let result = from_json_string(json);
         assert!(matches!(result, Err(FlowFactoryError::MissingEndNode)));
     }
 
     #[tokio::test]
     async fn returns_an_error_if_a_node_is_not_connected() {
         let json = include_str!("../../tests/resources/flows/invalid/unconnectedNodeFlow.json");
-        let result = from_json(json);
+        let result = from_json_string(json);
         assert!(matches!(result, Err(FlowFactoryError::NoConnectingNode { .. })));
     }
 
     #[tokio::test]
     async fn returns_an_error_if_not_all_nodes_are_connected() {
         let json = include_str!("../../tests/resources/flows/invalid/unusedNodesFlow.json");
-        let result = from_json(json);
+        let result = from_json_string(json);
         assert!(matches!(result, Err(FlowFactoryError::UnusedNodes { .. })));
     }
 
     #[tokio::test]
     async fn returns_an_error_if_a_node_has_multiple_parent_nodes() {
         let json = include_str!("../../tests/resources/flows/invalid/multipleParentNodesFlow.json");
-        let result = from_json(json);
+        let result = from_json_string(json);
         match result {
             Err(FlowFactoryError::TooManyParentNodes { node_id, parent_nodes }) => {
                 assert_eq!(node_id, "endNode");
@@ -262,7 +265,7 @@ mod tests {
     async fn returns_an_error_if_a_node_has_duplicate_link_values() {
         assert_eq!(Value::Boolean(true), Value::Boolean(true));
         let json = include_str!("../../tests/resources/flows/invalid/duplicateLinkValuesFlow.json");
-        let result = from_json(json);
+        let result = from_json_string(json);
         match result {
             Err(FlowFactoryError::DuplicateLinkValues { node_id, duplicates }) => {
                 assert_eq!(node_id, "conditionalNode");
@@ -276,7 +279,7 @@ mod tests {
     #[tokio::test]
     async fn creates_a_flow_with_a_start_and_end_node() {
         let json = include_str!("../../tests/resources/flows/emptyFlow.json");
-        let flow = from_json(json).unwrap();
+        let flow = from_json_string(json).unwrap();
 
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
         let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(end_node), Value::None)], FlowNodeKind::Start);
@@ -296,7 +299,7 @@ mod tests {
     #[tokio::test]
     async fn creates_a_flow_with_an_action_node_of_type_log() {
         let json = include_str!("../../tests/resources/flows/logFlow.json");
-        let flow = from_json(json).unwrap();
+        let flow = from_json_string(json).unwrap();
 
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
 
@@ -323,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn creates_a_flow_with_an_action_node_of_type_control_device() {
         let json = include_str!("../../tests/resources/flows/controlDeviceFlow.json");
-        let flow = from_json(json).unwrap();
+        let flow = from_json_string(json).unwrap();
 
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
 
@@ -353,7 +356,7 @@ mod tests {
     #[tokio::test]
     async fn creates_a_flow_with_a_conditional_node() {
         let json = include_str!("../../tests/resources/flows/conditionalFlow.json");
-        let flow = from_json(json).unwrap();
+        let flow = from_json_string(json).unwrap();
 
         let end_node_true = FlowNode::new("endNodeTrue".to_string(), vec![], FlowNodeKind::End);
         let end_node_false = FlowNode::new("endNodeFalse".to_string(), vec![], FlowNodeKind::End);
@@ -386,7 +389,7 @@ mod tests {
     #[tokio::test]
     async fn creates_a_flow_with_a_sleep_node() {
         let json = include_str!("../../tests/resources/flows/sleepFlow.json");
-        let flow = from_json(json).unwrap();
+        let flow = from_json_string(json).unwrap();
 
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
 
