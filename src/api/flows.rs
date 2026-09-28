@@ -42,14 +42,24 @@ async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, Json
         }
     };
 
+    // Reserve channel capacity before mutating the registry. This way, a cancelled
+    // request or a full channel can never leave the registry updated without a
+    // matching `Reconcile` guaranteed to follow.
+    let permit = match state.scheduler_tx.clone().reserve_owned().await {
+        Ok(permit) => permit,
+        Err(err) => {
+            error!("❌ Scheduler is unavailable: {err}");
+            return (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable"))).into_response();
+        }
+    };
+
     let Some(updated_revision) = state.flow_registry.replace_existing(flow) else {
         return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response();
     };
 
     // Always reconcile: the scheduler derives the desired schedule state itself
-    if let Err(err) = state.scheduler_tx.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: updated_revision }).await {
-        error!("❌ Failed to send scheduler command: {err}");
-    }
+    // Send on a reserved permit is synchronous and infallible
+    permit.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: updated_revision });
 
     info!("Received request to update flow '{id}'... OK, revision {updated_revision}");
     (StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response()
