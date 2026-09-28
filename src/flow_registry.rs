@@ -59,3 +59,89 @@ impl FlowRegistry {
         Some(revision)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flow_engine::Schedule;
+    use crate::flow_engine::flow::{FlowNode, FlowNodeKind};
+
+    fn reactive_flow(id: &str) -> Flow {
+        flow(id, None)
+    }
+
+    fn scheduled_flow(id: &str) -> Flow {
+        flow(id, Some(Schedule::Cron("* * * * * *".to_string())))
+    }
+
+    fn flow(id: &str, schedule: Option<Schedule>) -> Flow {
+        let start_node = FlowNode::new(format!("{id}_start"), vec![], FlowNodeKind::Start);
+        Flow::new(id.to_string(), id.to_string(), schedule, None, Arc::new(start_node), HashMap::new()).unwrap()
+    }
+
+    #[test]
+    fn reactive_flows_excludes_scheduled_flows() {
+        let registry = FlowRegistry::new(vec![reactive_flow("reactive"), scheduled_flow("scheduled")]);
+        let ids: Vec<_> = registry.reactive_flows().iter().map(|flow| flow.id().to_string()).collect();
+        assert_eq!(ids, vec!["reactive"]);
+    }
+
+    #[test]
+    fn scheduled_flows_excludes_reactive_flows() {
+        let registry = FlowRegistry::new(vec![reactive_flow("reactive"), scheduled_flow("scheduled")]);
+        let ids: Vec<_> = registry.scheduled_flows().iter().map(|flow| flow.id().to_string()).collect();
+        assert_eq!(ids, vec!["scheduled"]);
+    }
+
+    #[test]
+    fn by_id_returns_none_for_an_unknown_flow() {
+        let registry = FlowRegistry::new(vec![]);
+        assert!(registry.by_id("missing").is_none());
+    }
+
+    #[test]
+    fn by_id_returns_the_flow_when_present() {
+        let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+        assert_eq!(registry.by_id("flow").unwrap().id(), "flow");
+    }
+
+    #[test]
+    fn by_id_with_revision_starts_at_revision_zero() {
+        let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+        assert_eq!(registry.by_id_with_revision("flow").unwrap().revision, 0);
+    }
+
+    #[test]
+    fn by_id_with_revision_returns_none_for_an_unknown_flow() {
+        let registry = FlowRegistry::new(vec![]);
+        assert!(registry.by_id_with_revision("missing").is_none());
+    }
+
+    #[test]
+    fn replace_existing_returns_none_for_an_unknown_flow() {
+        let registry = FlowRegistry::new(vec![]);
+        assert!(registry.replace_existing(reactive_flow("missing")).is_none());
+    }
+
+    #[test]
+    fn replace_existing_installs_the_new_flow_and_bumps_the_revision() {
+        let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+
+        let revision = registry.replace_existing(scheduled_flow("flow")).unwrap();
+
+        assert_eq!(revision, 1);
+        let entry = registry.by_id_with_revision("flow").unwrap();
+        assert_eq!(entry.revision, 1);
+        assert!(entry.flow.schedule().is_some());
+    }
+
+    #[test]
+    fn replace_existing_bumps_the_revision_on_every_call() {
+        let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+
+        registry.replace_existing(reactive_flow("flow"));
+        let revision = registry.replace_existing(reactive_flow("flow")).unwrap();
+
+        assert_eq!(revision, 2);
+    }
+}
