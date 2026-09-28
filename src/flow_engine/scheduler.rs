@@ -67,7 +67,7 @@ pub async fn scheduler(
 
         match cmd {
             SchedulerCommand::Reconcile { flow_id, revision } => {
-                let entry = flow_registry.by_id_with_revision(&flow_id);
+                let entry = flow_registry.by_id(&flow_id);
                 let entry = match reconcile_action(entry.as_ref(), revision) {
                     ReconcileAction::SkipStaleRevision => {
                         let current = entry.expect("stale revision implies an entry exists").revision;

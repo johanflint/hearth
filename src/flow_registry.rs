@@ -41,11 +41,7 @@ impl FlowRegistry {
             .collect()
     }
 
-    pub fn by_id(&self, id: &str) -> Option<Arc<Flow>> {
-        self.entries.read().expect("flow registry lock poisoned").get(id).map(|entry| entry.flow.clone())
-    }
-
-    pub fn by_id_with_revision(&self, id: &str) -> Option<RegistryEntry> {
+    pub fn by_id(&self, id: &str) -> Option<RegistryEntry> {
         self.entries.read().expect("flow registry lock poisoned").get(id).cloned()
     }
 
@@ -102,21 +98,15 @@ mod tests {
     #[test]
     fn by_id_returns_the_flow_when_present() {
         let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
-        assert_eq!(registry.by_id("flow").unwrap().id(), "flow");
+        assert_eq!(registry.by_id("flow").unwrap().flow.id(), "flow");
     }
 
     #[test]
-    fn by_id_with_revision_starts_at_revision_zero() {
+    fn by_id_starts_at_revision_zero() {
         let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
-        assert_eq!(registry.by_id_with_revision("flow").unwrap().revision, 0);
+        assert_eq!(registry.by_id("flow").unwrap().revision, 0);
     }
-
-    #[test]
-    fn by_id_with_revision_returns_none_for_an_unknown_flow() {
-        let registry = FlowRegistry::new(vec![]);
-        assert!(registry.by_id_with_revision("missing").is_none());
-    }
-
+    
     #[test]
     fn replace_existing_returns_none_for_an_unknown_flow() {
         let registry = FlowRegistry::new(vec![]);
@@ -130,7 +120,7 @@ mod tests {
         let revision = registry.replace_existing(scheduled_flow("flow")).unwrap();
 
         assert_eq!(revision, 1);
-        let entry = registry.by_id_with_revision("flow").unwrap();
+        let entry = registry.by_id("flow").unwrap();
         assert_eq!(entry.revision, 1);
         assert!(entry.flow.schedule().is_some());
     }
