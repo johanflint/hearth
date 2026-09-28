@@ -1,7 +1,7 @@
 use crate::domain::GeoLocation;
 use crate::execute_flows::{execute_flow, execute_flows};
 use crate::flow_engine::flow::Flow;
-use crate::flow_registry::FlowRegistry;
+use crate::flow_registry::{FlowRegistry, RegistryEntry};
 use crate::store::StoreSnapshot;
 use chrono::Local;
 use std::collections::HashMap;
@@ -67,24 +67,30 @@ pub async fn scheduler(
 
         match cmd {
             SchedulerCommand::Reconcile { flow_id, revision } => {
-                let Some(entry) = flow_registry.by_id_with_revision(&flow_id) else {
-                    if cancel_existing_job(&flow_id, &mut scheduled_flows) {
-                        info!("🕗 Reconciling flow '{}'... cancelled, flow no longer exists", flow_id);
+                let entry = flow_registry.by_id_with_revision(&flow_id);
+                let entry = match reconcile_action(entry.as_ref(), revision) {
+                    ReconcileAction::SkipStaleRevision => {
+                        let current = entry.expect("stale revision implies an entry exists").revision;
+                        debug!("🕗 Reconciling flow '{}'... skipped, stale revision {} (current {})", flow_id, revision, current);
+                        continue;
                     }
-                    continue;
+                    ReconcileAction::CancelBecauseFlowRemoved => {
+                        if cancel_existing_job(&flow_id, &mut scheduled_flows) {
+                            info!("🕗 Reconciling flow '{}'... cancelled, flow no longer exists", flow_id);
+                        }
+                        continue;
+                    }
+                    ReconcileAction::CancelBecauseNotScheduled => {
+                        cancel_existing_job(&flow_id, &mut scheduled_flows);
+                        info!("🕗 Reconciling flow '{}'... OK, not scheduled", flow_id);
+                        continue;
+                    }
+                    ReconcileAction::CancelAndReschedule => {
+                        cancel_existing_job(&flow_id, &mut scheduled_flows);
+                        entry.expect("CancelAndReschedule implies an entry exists")
+                    }
                 };
-
-                if entry.revision != revision {
-                    debug!("🕗 Reconciling flow '{}'... skipped, stale revision {} (current {})", flow_id, revision, entry.revision);
-                    continue;
-                }
-
-                cancel_existing_job(&flow_id, &mut scheduled_flows);
-
-                let Some(schedule) = entry.flow.schedule() else {
-                    info!("🕗 Reconciling flow '{}'... OK, not scheduled", flow_id);
-                    continue;
-                };
+                let schedule = entry.flow.schedule().expect("CancelAndReschedule implies an entry exists");
 
                 let flow_name = entry.flow.name();
                 debug!("🕗 Scheduling flow '{}'...", flow_name);
@@ -191,9 +197,63 @@ fn evict_if_current_generation(scheduled_jobs: &mut HashMap<String, ScheduledJob
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ReconcileAction {
+    SkipStaleRevision,
+    CancelBecauseFlowRemoved,
+    CancelBecauseNotScheduled,
+    CancelAndReschedule,
+}
+
+fn reconcile_action(entry: Option<&RegistryEntry>, revision: u64) -> ReconcileAction {
+    let Some(entry) = entry else {
+        return ReconcileAction::CancelBecauseFlowRemoved;
+    };
+    if entry.revision != revision {
+        return ReconcileAction::SkipStaleRevision;
+    }
+    if entry.flow.schedule().is_none() {
+        return ReconcileAction::CancelBecauseNotScheduled;
+    }
+    ReconcileAction::CancelAndReschedule
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flow_engine::Schedule;
+    use crate::flow_engine::flow::{FlowNode, FlowNodeKind};
+
+    fn registry_entry(schedule: Option<Schedule>, revision: u64) -> RegistryEntry {
+        let start_node = FlowNode::new("start".to_string(), vec![], FlowNodeKind::Start);
+        let flow = Flow::new("flow".to_string(), "flow".to_string(), schedule, None, Arc::new(start_node), HashMap::new()).unwrap();
+        RegistryEntry { flow: Arc::new(flow), revision }
+    }
+
+    #[test]
+    fn reconcile_action_cancels_when_the_flow_was_removed() {
+        assert_eq!(reconcile_action(None, 0), ReconcileAction::CancelBecauseFlowRemoved);
+    }
+
+    #[test]
+    fn reconcile_action_skips_a_stale_revision() {
+        // The core race-fix guard: a command carrying an outdated revision must
+        // never act, even though an entry still exists for the flow.
+        let entry = registry_entry(None, 2);
+        assert_eq!(reconcile_action(Some(&entry), 1), ReconcileAction::SkipStaleRevision);
+    }
+
+    #[test]
+    fn reconcile_action_cancels_when_the_flow_has_no_schedule() {
+        let entry = registry_entry(None, 0);
+        assert_eq!(reconcile_action(Some(&entry), 0), ReconcileAction::CancelBecauseNotScheduled);
+    }
+
+    #[test]
+    fn reconcile_action_cancels_and_reschedules_when_matching_and_scheduled() {
+        let entry = registry_entry(Some(Schedule::Cron("* * * * * *".to_string())), 0);
+        assert_eq!(reconcile_action(Some(&entry), 0), ReconcileAction::CancelAndReschedule);
+    }
 
     #[test]
     fn cancel_existing_job_removes_and_cancels_when_present() {
