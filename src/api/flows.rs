@@ -1,4 +1,5 @@
 use crate::api::ApiState;
+use crate::flow_engine::SchedulerCommand;
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
 use axum::extract::{Path, State};
@@ -7,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::put;
 use axum::{Json, Router};
 use serde::Serialize;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 pub fn router() -> Router<ApiState> {
     Router::new()
@@ -16,8 +17,8 @@ pub fn router() -> Router<ApiState> {
 
 async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, Json(payload): Json<SerializedFlow>) -> Response {
     debug!("Received request to update flow '{id}'...");
-    if state.flow_registry.by_id(&id).is_none() {
-        return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response();
+    if id != payload.id {
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse::new("flowIdMismatch", format!("body id '{}' does not match path id '{}'", payload.id, id)))).into_response();
     }
 
     let flow = match flow_loader::from_json(payload) {
@@ -41,13 +42,23 @@ async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, Json
         }
     };
 
-    info!("Received request to update flow '{id}'... OK");
-    (StatusCode::OK, Json(UpdateFlowResponse { id })).into_response()
+    let Some(updated_revision) = state.flow_registry.replace_existing(flow) else {
+        return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response();
+    };
+
+    // Always reconcile: the scheduler derives the desired schedule state itself
+    if let Err(err) = state.scheduler_tx.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: updated_revision }).await {
+        error!("❌ Failed to send scheduler command: {err}");
+    }
+
+    info!("Received request to update flow '{id}'... OK, revision {updated_revision}");
+    (StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response()
 }
 
 #[derive(Debug, Serialize)]
 struct UpdateFlowResponse {
     pub id: String,
+    pub revision: u64,
 }
 
 #[derive(Debug, Serialize)]

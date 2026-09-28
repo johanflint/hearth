@@ -89,8 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let geo_location = config.geo_location().clone();
     let flow_registry_clone = flow_registry.clone();
+    let scheduler_tx_clone = scheduler_tx.clone();
     task::spawn(async move {
-        store_listener(store_reactive_rx, flow_registry_clone, scheduler_tx, geo_location).await;
+        store_listener(store_reactive_rx, flow_registry_clone, scheduler_tx_clone, geo_location).await;
     });
     info!("✅  Initialized store listener");
 
@@ -99,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store");
 
-    let api_state = ApiState::new(prometheus_handle, flow_registry);
+    let api_state = ApiState::new(prometheus_handle, flow_registry, scheduler_tx);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 
