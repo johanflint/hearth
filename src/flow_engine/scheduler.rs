@@ -16,7 +16,9 @@ use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Debug)]
 pub enum SchedulerCommand {
-    Schedule { flow_id: String },
+    // The `revision` must match the registry's current revision for this id,
+    // otherwise the command is stale (a newer mutation already landed) and is ignored.
+    Reconcile { flow_id: String, revision: u64 },
     // An `Arc<Flow>` is passed instead of a flow_id to ensure it resumes with
     // the same flow instance, even if a newer version is available
     ScheduleOnce { flow: Arc<Flow>, node_id: String, delay: Duration },
@@ -64,23 +66,29 @@ pub async fn scheduler(
         };
 
         match cmd {
-            SchedulerCommand::Schedule { flow_id } => {
-                let Some(flow) = flow_registry.by_id(&flow_id) else {
-                    warn!("🕗 Scheduling flow '{}'... failed, flow not found", flow_id);
+            SchedulerCommand::Reconcile { flow_id, revision } => {
+                let Some(entry) = flow_registry.by_id_with_revision(&flow_id) else {
+                    if cancel_existing_job(&flow_id, &mut scheduled_flows) {
+                        info!("🕗 Reconciling flow '{}'... cancelled, flow no longer exists", flow_id);
+                    }
                     continue;
                 };
 
-                let flow_name = flow.name().to_string();
-                debug!("🕗 Scheduling flow '{}'...", flow_name);
-
-                let Some(schedule) = flow.schedule() else {
-                    error!("🕗 Scheduling flow '{}'... failed, not a scheduled flow", flow_id);
+                if entry.revision != revision {
+                    debug!("🕗 Reconciling flow '{}'... skipped, stale revision {} (current {})", flow_id, revision, entry.revision);
                     continue;
-                };
-
-                let schedule_str = schedule.to_string();
+                }
 
                 cancel_existing_job(&flow_id, &mut scheduled_flows);
+
+                let Some(schedule) = entry.flow.schedule() else {
+                    info!("🕗 Reconciling flow '{}'... OK, not scheduled", flow_id);
+                    continue;
+                };
+
+                let flow_name = entry.flow.name();
+                debug!("🕗 Scheduling flow '{}'...", flow_name);
+                let schedule_str = schedule.to_string();
 
                 let generation = next_generation;
                 next_generation = next_generation.wrapping_add(1);
@@ -89,6 +97,7 @@ pub async fn scheduler(
                 let cancellation_clone = cancellation.clone();
 
                 // Job loop
+                let flow_id_clone = flow_id.clone();
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
                 let geo_location_clone = geo_location.clone();
@@ -102,18 +111,18 @@ pub async fn scheduler(
                         let scheduled_instant = Instant::now() + Duration::from_millis(duration.num_milliseconds() as u64);
 
                         if !scheduled_deadline_won(&cancellation, scheduled_instant).await {
-                            info!("🕗 Scheduling flow '{}'... cancelled while waiting", flow.id());
+                            info!("🕗 Scheduling flow '{}'... cancelled while waiting", flow_id_clone);
                             return;
                         }
 
-                        debug!("🕗 Running scheduled flow '{}'...", flow.id());
+                        debug!("🕗 Running scheduled flow '{}'...", flow_id_clone);
                         let snapshot = notifier_rx_clone.borrow().clone();
 
                         // During execution cancellation is deliberately ignored so a flow in progress always runs to completion
-                        execute_flows(vec![flow.clone()], snapshot, None, tx_clone.clone(), geo_location_clone.clone()).await;
+                        execute_flows(vec![entry.flow.clone()], snapshot, None, tx_clone.clone(), geo_location_clone.clone()).await;
 
                         if cancellation.is_cancelled() {
-                            info!("🕗 Scheduling flow '{}'... cancelled after execution, stopping", flow.id());
+                            info!("🕗 Scheduling flow '{}'... cancelled after execution, stopping", flow_id_clone);
                             return;
                         }
                     }

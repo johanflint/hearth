@@ -74,8 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for scheduled_flow in flow_registry.scheduled_flows() {
         scheduler_tx
-            .send(SchedulerCommand::Schedule {
+            .send(SchedulerCommand::Reconcile {
                 flow_id: scheduled_flow.id().to_string(),
+                revision: 0, // every flow starts at revision 0 in the `FlowRegistry::new`
             })
             .await?;
     }

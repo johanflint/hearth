@@ -4,27 +4,44 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct FlowRegistry {
-    flows: Vec<Arc<Flow>>,
-    by_id: HashMap<String, usize>,
+    entries: HashMap<String, RegistryEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RegistryEntry {
+    pub(crate) flow: Arc<Flow>,
+    pub(crate) revision: u64,
 }
 
 impl FlowRegistry {
     pub fn new(flows: Vec<Flow>) -> Self {
-        let by_id = flows.iter().enumerate().map(|(index, flow)| (flow.id().to_string(), index)).collect();
-        let flow_arcs = flows.into_iter().map(|flow| Arc::new(flow)).collect();
+        let entries = flows
+            .into_iter()
+            .map(|flow| (flow.id().to_string(), RegistryEntry { flow: Arc::new(flow), revision: 0 }))
+            .collect();
 
-        Self { flows: flow_arcs, by_id }
+        Self { entries }
     }
 
     pub fn reactive_flows(&self) -> Vec<Arc<Flow>> {
-        self.flows.iter().filter(|flow| flow.schedule().is_none()).cloned().collect()
+        self.entries.values()
+            .filter(|entry| entry.flow.schedule().is_none())
+            .map(|entry| entry.flow.clone())
+            .collect()
     }
 
     pub fn scheduled_flows(&self) -> Vec<Arc<Flow>> {
-        self.flows.iter().filter(|flow| flow.schedule().is_some()).cloned().collect()
+        self.entries.values()
+            .filter(|entry| entry.flow.schedule().is_some())
+            .map(|entry| entry.flow.clone())
+            .collect()
     }
 
     pub fn by_id(&self, id: &str) -> Option<Arc<Flow>> {
-        self.by_id.get(id).map(|&index| &self.flows[index]).cloned()
+        self.entries.get(id).map(|entry| entry.flow.clone())
+    }
+
+    pub fn by_id_with_revision(&self, id: &str) -> Option<RegistryEntry> {
+        self.entries.get(id).cloned()
     }
 }
