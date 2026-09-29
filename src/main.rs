@@ -1,3 +1,4 @@
+use crate::api::ApiState;
 use crate::app_config::AppConfig;
 use crate::domain::controller_registry;
 use crate::domain::events::Event;
@@ -6,6 +7,7 @@ use crate::flow_registry::FlowRegistry;
 use crate::metrics_layer::MetricsLayer;
 use crate::store::Store;
 use crate::store_listener::store_listener;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::{signal, task};
@@ -14,6 +16,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+mod api;
 mod app_config;
 mod domain;
 mod execute_flows;
@@ -44,6 +47,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(MetricsLayer)
         .init();
 
+    let prometheus_handle = PrometheusBuilder::new().install_recorder()?;
+    metrics::describe();
+
     info!("🪵 Starting {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 
     let config = Arc::new(AppConfig::load());
@@ -68,8 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for scheduled_flow in flow_registry.scheduled_flows() {
         scheduler_tx
-            .send(SchedulerCommand::Schedule {
+            .send(SchedulerCommand::Reconcile {
                 flow_id: scheduled_flow.id().to_string(),
+                revision: 0, // every flow starts at revision 0 in the `FlowRegistry::new`
             })
             .await?;
     }
@@ -81,8 +88,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Initialized controllers");
 
     let geo_location = config.geo_location().clone();
+    let flow_registry_clone = flow_registry.clone();
+    let scheduler_tx_clone = scheduler_tx.clone();
     task::spawn(async move {
-        store_listener(store_reactive_rx, flow_registry, scheduler_tx, geo_location).await;
+        store_listener(store_reactive_rx, flow_registry_clone, scheduler_tx_clone, geo_location).await;
     });
     info!("✅  Initialized store listener");
 
@@ -91,7 +100,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store");
 
-    server::start(config.core().port()).await?;
+    let api_state = ApiState::new(prometheus_handle, flow_registry, scheduler_tx);
+    server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 
     let hue_devices = hue::discover(&hue_client, &config).await?;

@@ -1,0 +1,22 @@
+use crate::flow_engine::SchedulerCommand;
+use crate::flow_registry::FlowRegistry;
+use metrics_exporter_prometheus::PrometheusHandle;
+use std::sync::Arc;
+use tokio::sync::mpsc::Sender;
+
+#[derive(Debug, Clone)]
+pub struct ApiState {
+    pub(super) prometheus_handle: Arc<PrometheusHandle>,
+    pub(super) flow_registry: Arc<FlowRegistry>,
+    pub(super) scheduler_tx: Sender<SchedulerCommand>,
+}
+
+impl ApiState {
+    pub fn new(prometheus_handle: PrometheusHandle, flow_registry: Arc<FlowRegistry>, scheduler_tx: Sender<SchedulerCommand>) -> Self {
+        ApiState {
+            prometheus_handle: Arc::new(prometheus_handle),
+            flow_registry,
+            scheduler_tx,
+        }
+    }
+}

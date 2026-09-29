@@ -1,7 +1,7 @@
 use crate::extensions::path_ext::FileName;
 use crate::flow_engine::flow::Flow;
 use crate::flow_loader::duplicate_ids::{duplicate_id_set, group_duplicates};
-use crate::flow_loader::factory::{FlowFactoryError, from_json};
+use crate::flow_loader::factory::{FlowFactoryError, from_json_string};
 use futures::stream::FuturesUnordered;
 use std::io;
 use std::path::PathBuf;
@@ -71,7 +71,7 @@ async fn load_files(paths: Vec<PathBuf>) -> Vec<Result<(PathBuf, Flow), LoaderEr
         match fs::read_to_string(&path).await {
             Ok(content) => {
                 let path_clone = path.clone();
-                task::spawn_blocking(move || from_json(&content).map_err(|e| LoaderError::FlowFactory { source: e, path: path_clone }))
+                task::spawn_blocking(move || from_json_string(&content).map_err(|e| LoaderError::FlowFactory { source: e, path: path_clone }))
                     .await?
                     .map(|flow| (path, flow))
             }
