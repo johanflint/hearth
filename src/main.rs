@@ -58,10 +58,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
 
-    FlowStore::open(Path::new(config.db().file_name()))?;
+    let flow_store = FlowStore::open(Path::new(config.db().file_name()))?;
     info!("✅  Started database");
 
-    let flows = flow_loader::load_flows_from(config.flows().directory(), "json").await.unwrap_or_else(|_| Vec::new()); // Errors are already logged in the function
+    let flows = flow_loader::load_flows_from_store(&flow_store).await?;
     let flow_registry = Arc::new(FlowRegistry::new(flows));
     info!("✅  Loaded flows");
 
