@@ -91,6 +91,7 @@ impl ErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flow_engine::VersionedFlow;
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
     use axum::http::Request;
@@ -131,7 +132,8 @@ mod tests {
     async fn update_flow_replaces_the_registry_entry_and_sends_a_reconcile_command() {
         let payload: SerializedFlow = serde_json::from_str(VALID_FLOW_JSON).unwrap();
         let flow = flow_loader::from_json(payload).unwrap();
-        let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![flow]));
+        let versioned_flow = VersionedFlow { flow: Arc::new(flow), revision: 0 };
+        let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![versioned_flow]));
 
         let response = call_update_flow(state, VALID_FLOW_ID, VALID_FLOW_JSON).await;
 
@@ -187,7 +189,8 @@ mod tests {
     async fn update_flow_returns_503_service_unavailable_and_leaves_the_registry_untouched_when_the_scheduler_is_unavailable() {
         let payload: SerializedFlow = serde_json::from_str(VALID_FLOW_JSON).unwrap();
         let flow = flow_loader::from_json(payload).unwrap();
-        let (state, scheduler_rx) = create_state(FlowRegistry::new(vec![flow]));
+        let versioned_flow = VersionedFlow { flow: Arc::new(flow), revision: 0 };
+        let (state, scheduler_rx) = create_state(FlowRegistry::new(vec![versioned_flow]));
 
         // Dropping the receiver simulates the scheduler being gone: `reserve_owned()`
         // then fails immediately instead of waiting for capacity, so the permit is

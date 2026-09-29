@@ -1,7 +1,8 @@
 use crate::domain::GeoLocation;
 use crate::execute_flows::{execute_flow, execute_flows};
+use crate::flow_engine::VersionedFlow;
 use crate::flow_engine::flow::Flow;
-use crate::flow_registry::{FlowRegistry, RegistryEntry};
+use crate::flow_registry::FlowRegistry;
 use crate::store::StoreSnapshot;
 use chrono::Local;
 use std::collections::HashMap;
@@ -68,7 +69,7 @@ pub async fn scheduler(
         match cmd {
             SchedulerCommand::Reconcile { flow_id, revision } => {
                 let entry = flow_registry.by_id(&flow_id);
-                let entry = match reconcile_action(entry.as_ref(), revision) {
+                let entry = match reconcile_action(entry.clone(), revision) {
                     ReconcileAction::SkipStaleRevision => {
                         let current = entry.expect("stale revision implies an entry exists").revision;
                         debug!("🕗 Reconciling flow '{}'... skipped, stale revision {} (current {})", flow_id, revision, current);
@@ -205,7 +206,7 @@ enum ReconcileAction {
     CancelAndReschedule,
 }
 
-fn reconcile_action(entry: Option<&RegistryEntry>, revision: u64) -> ReconcileAction {
+fn reconcile_action(entry: Option<VersionedFlow>, revision: u64) -> ReconcileAction {
     let Some(entry) = entry else {
         return ReconcileAction::CancelBecauseFlowRemoved;
     };
@@ -224,10 +225,10 @@ mod tests {
     use crate::flow_engine::Schedule;
     use crate::flow_engine::flow::{FlowNode, FlowNodeKind};
 
-    fn registry_entry(schedule: Option<Schedule>, revision: u64) -> RegistryEntry {
+    fn versioned_flow(schedule: Option<Schedule>, revision: u64) -> VersionedFlow {
         let start_node = FlowNode::new("start".to_string(), vec![], FlowNodeKind::Start);
         let flow = Flow::new("flow".to_string(), "flow".to_string(), schedule, None, Arc::new(start_node), HashMap::new()).unwrap();
-        RegistryEntry { flow: Arc::new(flow), revision }
+        VersionedFlow { flow: Arc::new(flow), revision }
     }
 
     #[test]
@@ -239,20 +240,20 @@ mod tests {
     fn reconcile_action_skips_a_stale_revision() {
         // The core race-fix guard: a command carrying an outdated revision must
         // never act, even though an entry still exists for the flow.
-        let entry = registry_entry(None, 2);
-        assert_eq!(reconcile_action(Some(&entry), 1), ReconcileAction::SkipStaleRevision);
+        let entry = versioned_flow(None, 2);
+        assert_eq!(reconcile_action(Some(entry), 1), ReconcileAction::SkipStaleRevision);
     }
 
     #[test]
     fn reconcile_action_cancels_when_the_flow_has_no_schedule() {
-        let entry = registry_entry(None, 0);
-        assert_eq!(reconcile_action(Some(&entry), 0), ReconcileAction::CancelBecauseNotScheduled);
+        let entry = versioned_flow(None, 0);
+        assert_eq!(reconcile_action(Some(entry), 0), ReconcileAction::CancelBecauseNotScheduled);
     }
 
     #[test]
     fn reconcile_action_cancels_and_reschedules_when_matching_and_scheduled() {
-        let entry = registry_entry(Some(Schedule::Cron("* * * * * *".to_string())), 0);
-        assert_eq!(reconcile_action(Some(&entry), 0), ReconcileAction::CancelAndReschedule);
+        let entry = versioned_flow(Some(Schedule::Cron("* * * * * *".to_string())), 0);
+        assert_eq!(reconcile_action(Some(entry), 0), ReconcileAction::CancelAndReschedule);
     }
 
     #[test]

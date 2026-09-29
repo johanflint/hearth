@@ -1,5 +1,6 @@
 use crate::domain::GeoLocation;
 use crate::execute_flows::execute_flows;
+use crate::flow_engine::VersionedFlow;
 use crate::flow_registry::FlowRegistry;
 use crate::scheduler::SchedulerCommand;
 use crate::store::ReactiveUpdate;
@@ -10,6 +11,10 @@ use tracing::instrument;
 #[instrument(skip_all)]
 pub async fn store_listener(mut rx: Receiver<ReactiveUpdate>, flow_registry: Arc<FlowRegistry>, scheduler_tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
     while let Some(update) = rx.recv().await {
-        execute_flows(flow_registry.reactive_flows(), update.snapshot, update.changed, scheduler_tx.clone(), geo_location.clone()).await;
+        let flows = flow_registry.reactive_flows()
+            .into_iter()
+            .map(VersionedFlow::into_flow)
+            .collect::<Vec<_>>();
+        execute_flows(flows, update.snapshot, update.changed, scheduler_tx.clone(), geo_location.clone()).await;
     }
 }
