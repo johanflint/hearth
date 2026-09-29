@@ -906,6 +906,7 @@ dependencies = [
  "cron",
  "ctor",
  "futures",
+ "http-body-util",
  "humantime-serde",
  "metrics",
  "metrics-exporter-prometheus",
@@ -924,6 +925,7 @@ dependencies = [
  "tokio-retry",
  "tokio-stream",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

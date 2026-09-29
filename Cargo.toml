@@ -36,7 +36,9 @@ ctor = "1.0"
 
 [dev-dependencies]
 cargo-llvm-cov = "0.9"
+http-body-util = "0.1"
 mockito = "1.7"
 pretty_assertions = "1.4"
 rstest = "0.27"
 test-log = { version = "0.2", features = ["trace"] }
+tower = { version = "0.5", features = ["util"] }
