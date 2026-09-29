@@ -2,6 +2,7 @@ use crate::api::ApiState;
 use crate::flow_engine::SchedulerCommand;
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
+use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -15,8 +16,18 @@ pub fn router() -> Router<ApiState> {
         .route("/api/flow/{id}", put(update_flow))
 }
 
-async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, Json(payload): Json<SerializedFlow>) -> Response {
+async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body: Bytes) -> Response {
     debug!("Received request to update flow '{id}'...");
+    let body_str = match str::from_utf8(&body) {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(ErrorResponse::new_code_only("invalidUtf8"))).into_response(),
+    };
+
+    let payload: SerializedFlow = match serde_json::from_str(body_str) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("invalidJson", e.to_string()))).into_response(),
+    };
+
     if id != payload.id {
         return (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse::new("flowIdMismatch", format!("body id '{}' does not match path id '{}'", payload.id, id)))).into_response();
     }
@@ -52,6 +63,11 @@ async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, Json
             return (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable"))).into_response();
         }
     };
+
+    if let Err(err) = state.flow_store.upsert(&id, body_str).await {
+        error!("❌ Failed to persist flow to store: {err}");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
+    }
 
     let Some(updated_revision) = state.flow_registry.replace_existing(flow) else {
         return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response();
@@ -93,6 +109,7 @@ mod tests {
     use super::*;
     use crate::flow_engine::VersionedFlow;
     use crate::flow_registry::FlowRegistry;
+    use crate::flow_store::FlowStore;
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
@@ -109,7 +126,8 @@ mod tests {
     fn create_state(flow_registry: FlowRegistry) -> (ApiState, mpsc::Receiver<SchedulerCommand>) {
         let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
         let handle = PrometheusBuilder::new().build_recorder().handle();
-        (ApiState::new(handle, Arc::new(flow_registry), scheduler_tx), scheduler_rx)
+        let flow_store = FlowStore::open(std::path::Path::new(":memory:")).expect("failed to open in-memory flow store");
+        (ApiState::new(handle, Arc::new(flow_registry), Arc::new(flow_store), scheduler_tx), scheduler_rx)
     }
 
     async fn call_update_flow(state: ApiState, id: &str, body: &str) -> Response {

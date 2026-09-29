@@ -2,7 +2,7 @@ use crate::flow_engine::flow::Flow;
 use crate::flow_loader::{FlowFactoryError, from_json_string};
 use crate::flow_store::FlowStoreError::UnsupportedSchemaVersion;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, Row};
+use rusqlite::{Connection, Row, params};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -32,6 +32,27 @@ impl FlowStore {
             let mut statement = conn.prepare("SELECT id, revision, document, created_at, updated_at FROM flows ORDER BY id")?;
             let rows = statement.query_map([], row_to_stored_flow)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(FlowStoreError::from)
+        }).await?
+    }
+
+    pub async fn upsert(&self, id: &str, serialized_flow_json: &str) -> Result<StoredFlow, FlowStoreError> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        let serialized_flow_json = serialized_flow_json.to_string();
+        task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
+            let now = Utc::now().to_rfc3339();
+            conn.query_row(
+                "INSERT INTO flows (id, revision, document, created_at, updated_at)
+                VALUES (?1, 0, ?2, ?3, ?3)
+                ON CONFLICT(id) DO UPDATE SET
+                    revision = revision + 1,
+                    document = excluded.document,
+                    updated_at = excluded.updated_at
+                RETURNING id, revision, document, created_at, updated_at",
+                params![id, serialized_flow_json, now],
+                row_to_stored_flow,
+            ).map_err(FlowStoreError::from)
         }).await?
     }
 }
@@ -220,5 +241,25 @@ mod tests {
         // Should fail with InvalidRevision error
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FlowStoreError::Sqlite(_)));
+    }
+
+    #[tokio::test]
+    async fn upsert_inserts_a_new_flow() {
+        let store = open_in_memory();
+        let json = r#"{"id":"flow","name":"Test","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]}"#;
+
+        let result = store.upsert("flow", json).await.expect("upsert succeeded");
+        assert_eq!(result.id, "flow");
+        assert_eq!(result.revision, 0);
+    }
+
+    #[tokio::test]
+    async fn upsert_updates_existing_flow_and_bumps_revision() {
+        let store = open_in_memory();
+        let json = r#"{"id":"flow","name":"Test","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]}"#;
+
+        store.upsert("flow", json).await.expect("first upsert");
+        let result = store.upsert("flow", json).await.expect("second upsert");
+        assert_eq!(result.revision, 1);
     }
 }

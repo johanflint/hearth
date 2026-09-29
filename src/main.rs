@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
 
-    let flow_store = FlowStore::open(Path::new(config.db().file_name()))?;
+    let flow_store = Arc::new(FlowStore::open(Path::new(config.db().file_name()))?);
     info!("✅  Started database");
 
     let flows = flow_loader::load_flows_from_store(&flow_store).await?;
@@ -106,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store");
 
-    let api_state = ApiState::new(prometheus_handle, flow_registry, scheduler_tx);
+    let api_state = ApiState::new(prometheus_handle, flow_registry, flow_store, scheduler_tx);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 
