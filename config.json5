@@ -5,6 +5,9 @@
     "client_connection_timeout_ms": 300,
     "client_request_timeout_ms": 1000
   },
+  "db": {
+    "file_name": "hearth.db"
+  },
   "flows": {
     "directory": ""
   },

@@ -4,10 +4,12 @@ use crate::domain::controller_registry;
 use crate::domain::events::Event;
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
+use crate::flow_store::FlowStore;
 use crate::metrics_layer::MetricsLayer;
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use metrics_exporter_prometheus::PrometheusBuilder;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::{signal, task};
@@ -35,6 +37,7 @@ mod server;
 #[cfg(test)]
 mod test_support;
 mod metrics_layer;
+mod flow_store;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -54,6 +57,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
+
+    FlowStore::open(Path::new(config.db().file_name()))?;
+    info!("✅  Started database");
 
     let flows = flow_loader::load_flows_from(config.flows().directory(), "json").await.unwrap_or_else(|_| Vec::new()); // Errors are already logged in the function
     let flow_registry = Arc::new(FlowRegistry::new(flows));

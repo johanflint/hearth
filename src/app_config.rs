@@ -6,6 +6,7 @@ use std::time::Duration;
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
     core: Core,
+    db: Db,
     flows: Flows,
     hue: Hue,
     location: GeoLocation,
@@ -28,6 +29,8 @@ impl AppConfig {
     pub fn core(&self) -> &Core {
         &self.core
     }
+
+    pub fn db(&self) -> &Db { &self.db }
 
     pub fn flows(&self) -> &Flows {
         &self.flows
@@ -65,6 +68,17 @@ impl Core {
 
     pub fn client_request_timeout_ms(&self) -> Duration {
         Duration::from_millis(self.client_request_timeout_ms)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Db {
+    file_name: String,
+}
+
+impl Db {
+    pub fn file_name(&self) -> &str {
+        &self.file_name
     }
 }
 
@@ -130,6 +144,9 @@ impl AppConfigBuilder {
                     store_buffer_size: 1,
                     client_connection_timeout_ms: 100,
                     client_request_timeout_ms: 100,
+                },
+                db: Db {
+                    file_name: "hearth.db".to_string(),
                 },
                 flows: Flows { directory: "flows".to_string() },
                 hue: Hue {
