@@ -16,7 +16,7 @@ use tracing::{debug, error, info};
 
 pub fn router() -> Router<ApiState> {
     Router::new()
-        .route("/api/flow/{id}", put(update_flow))
+        .route("/api/flows/{id}", put(update_flow))
 }
 
 async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body: Bytes) -> Response {
@@ -170,7 +170,7 @@ mod tests {
     async fn call_update_flow(state: ApiState, id: &str, body: &str) -> Response {
         let request = Request::builder()
             .method("PUT")
-            .uri(format!("/api/flow/{id}"))
+            .uri(format!("/api/flows/{id}"))
             .header("content-type", "application/json")
             .body(Body::from(body.to_string()))
             .unwrap();
@@ -279,7 +279,7 @@ mod tests {
         let (state, mut scheduler_rx) = create_seeded_state().await;
         let request = Request::builder()
             .method("PUT")
-            .uri(format!("/api/flow/{VALID_FLOW_ID}"))
+            .uri(format!("/api/flows/{VALID_FLOW_ID}"))
             .header("content-type", "application/json")
             .body(Body::from(vec![0xff, 0xfe]))
             .unwrap();
