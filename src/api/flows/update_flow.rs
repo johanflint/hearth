@@ -1,4 +1,5 @@
 use crate::api::ApiState;
+use crate::api::error::ErrorResponse;
 use crate::flow_engine::{SchedulerCommand, VersionedFlow};
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
@@ -58,7 +59,7 @@ pub(super) async fn update_flow(Path(id): Path<String>, State(state): State<ApiS
     };
 
     // Reserve channel capacity before mutating anything, so an unavailable scheduler is rejected
-    // up front and the `Reconcile`send after the commit is infallible
+    // up front and the `Reconcile` send after the commit is infallible
     let permit = match state.scheduler_tx.clone().reserve_owned().await {
         Ok(permit) => permit,
         Err(err) => {
@@ -117,22 +118,6 @@ struct UpdateFlowResponse {
     pub revision: u64,
 }
 
-#[derive(Debug, Serialize)]
-struct ErrorResponse {
-    pub code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-impl ErrorResponse {
-    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
-        ErrorResponse { code: code.to_string(), message: Some(message.into()) }
-    }
-
-    pub fn new_code_only(code: &'static str) -> Self {
-        ErrorResponse { code: code.to_string(), message: None }
-    }
-}
 
 #[cfg(test)]
 mod tests {

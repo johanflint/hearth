@@ -1,6 +1,7 @@
 mod flows;
 mod metrics;
 mod state;
+mod error;
 
 use axum::Router;
 pub use state::ApiState;
