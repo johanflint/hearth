@@ -2,7 +2,7 @@ use crate::api::ApiState;
 use crate::flow_engine::{SchedulerCommand, VersionedFlow};
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
-use crate::flow_registry::ReplaceResult;
+use crate::flow_registry::RegisterResult;
 use crate::flow_store::FlowStoreError;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -85,18 +85,17 @@ async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body
         }
     };
 
-    match state.flow_registry.replace_existing(VersionedFlow { flow: Arc::new(flow), revision: updated_revision }) {
+    match state.flow_registry.register(VersionedFlow { flow: Arc::new(flow), revision: updated_revision }) {
         // Always reconcile: the scheduler derives the desired schedule state itself
         // Send on a reserved permit is synchronous and infallible
-        ReplaceResult::Replaced => {
+        RegisterResult::Added | RegisterResult::Replaced => {
             permit.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: updated_revision });
             info!("Received request to update flow '{id}'... OK, revision {updated_revision}");
         }
         // A concurrent update with a newer revision already landed and sent its own Reconcile
-        ReplaceResult::Stale { current_revision } => {
+        RegisterResult::Stale { current_revision } => {
             debug!("Received request to update flow '{id}'... superseded, revision {updated_revision} is older than revision {current_revision}");
         },
-        ReplaceResult::NotFound => return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
     }
 
     (StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response()
@@ -354,16 +353,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_flow_returns_404_not_found_when_the_flow_is_stored_but_not_registered() {
+    async fn update_flow_returns_registers_and_reconciles_a_flow_that_is_stored_but_not_registered() {
         // E.g. a stored flow that failed to load at boot
         let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![]));
         state.flow_store.insert(VALID_FLOW_ID, VALID_FLOW_JSON).await.expect("seed store");
+        let flow_registry = state.flow_registry.clone();
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;
 
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        assert_eq!(body_json(response).await["code"], "flowNotFound");
-        assert!(scheduler_rx.try_recv().is_err());
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_json(response).await["revision"], 1);
+        assert_eq!(flow_registry.by_id(VALID_FLOW_ID).expect("flow registered").revision, 1);
+        match scheduler_rx.try_recv().expect("expected a Reconcile command") {
+            SchedulerCommand::Reconcile { flow_id, revision } => {
+                assert_eq!(flow_id, VALID_FLOW_ID);
+                assert_eq!(revision, 1);
+            }
+            other => panic!("expected Reconcile command, got {:?}", other),
+        }
     }
 
     #[tokio::test]

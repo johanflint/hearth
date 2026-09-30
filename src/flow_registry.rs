@@ -39,27 +39,29 @@ impl FlowRegistry {
         self.entries.read().expect("flow registry lock poisoned").get(id).cloned()
     }
 
-    pub fn replace_existing(&self, versioned_flow: VersionedFlow) -> ReplaceResult {
+    pub fn register(&self, versioned_flow: VersionedFlow) -> RegisterResult {
         let mut entries = self.entries.write().expect("flow registry lock poisoned");
         let Some(entry) = entries.get_mut(versioned_flow.flow.id()) else {
-            return ReplaceResult::NotFound;
+            // Can happen with a stored flow that failed to load at boot and is now fixed
+            entries.insert(versioned_flow.flow.id().to_string(), versioned_flow);
+            return RegisterResult::Added;
         };
 
         if versioned_flow.revision <= entry.revision {
-            return ReplaceResult::Stale { current_revision: entry.revision };
+            return RegisterResult::Stale { current_revision: entry.revision };
         }
 
         *entry = versioned_flow;
-        ReplaceResult::Replaced
+        RegisterResult::Replaced
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ReplaceResult {
+pub enum RegisterResult {
+    Added,
     Replaced,
     // A newer (or equal) revision is already stored; the registry is unchanged
     Stale { current_revision: u64 },
-    NotFound,
 }
 
 #[cfg(test)]
@@ -122,19 +124,19 @@ mod tests {
     }
     
     #[test]
-    fn replace_existing_returns_not_found_for_an_unknown_flow() {
+    fn register_returns_added_for_an_unknown_flow() {
         let registry = FlowRegistry::new(vec![]);
 
-        assert_eq!(registry.replace_existing(reactive_flow("missing")), ReplaceResult::NotFound);
-        assert!(registry.by_id("missing").is_none());
+        assert_eq!(registry.register(reactive_flow("missing")), RegisterResult::Added);
+        assert_eq!(registry.by_id("missing").expect("flow inserted").revision, 0);
     }
 
     #[test]
-    fn replace_existing_installs_a_newer_revision() {
+    fn register_stores_a_newer_revision() {
         let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
         let replacement = VersionedFlow { flow: Arc::new(flow("flow", Some(Schedule::Cron("* * * * * *".to_string())))), revision: 1 };
 
-        assert_eq!(registry.replace_existing(replacement), ReplaceResult::Replaced);
+        assert_eq!(registry.register(replacement), RegisterResult::Replaced);
 
         let entry = registry.by_id("flow").unwrap();
         assert_eq!(entry.revision, 1);
@@ -142,21 +144,21 @@ mod tests {
     }
 
     #[test]
-    fn replace_existing_accepts_a_revision_gap() {
+    fn register_accepts_a_revision_gap() {
         // Concurrent updates may land out of order; newest wins even if it skips a revision
         let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
         let replacement = VersionedFlow { flow: Arc::new(flow("flow", None)), revision: 4 };
 
-        assert_eq!(registry.replace_existing(replacement), ReplaceResult::Replaced);
+        assert_eq!(registry.register(replacement), RegisterResult::Replaced);
         assert_eq!(registry.by_id("flow").unwrap().revision, 4);
     }
 
     #[test]
-    fn replace_existing_rejects_an_older_revision() {
+    fn register_rejects_an_older_revision() {
         let registry = FlowRegistry::new(vec![VersionedFlow { flow: Arc::new(flow("flow", None)), revision: 2 }]);
         let stale = VersionedFlow { flow: Arc::new(flow("flow", None)), revision: 1 };
 
-        assert_eq!(registry.replace_existing(stale), ReplaceResult::Stale { current_revision: 2 });
+        assert_eq!(registry.register(stale), RegisterResult::Stale { current_revision: 2 });
 
         let entry = registry.by_id("flow").unwrap();
         assert_eq!(entry.revision, 2);
@@ -164,11 +166,11 @@ mod tests {
     }
 
     #[test]
-    fn replace_existing_rejects_the_same_revision() {
+    fn register_rejects_the_same_revision() {
         let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
         let same = VersionedFlow { flow: Arc::new(flow("flow", None)), revision: 0 };
 
-        assert_eq!(registry.replace_existing(same), ReplaceResult::Stale { current_revision: 0 });
+        assert_eq!(registry.register(same), RegisterResult::Stale { current_revision: 0 });
         assert!(registry.by_id("flow").unwrap().flow.schedule().is_none());
     }
 }
