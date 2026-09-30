@@ -4,22 +4,16 @@ use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
 use crate::flow_registry::RegisterResult;
 use crate::flow_store::FlowStoreError;
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::put;
-use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
-pub fn router() -> Router<ApiState> {
-    Router::new()
-        .route("/api/flows/{id}", put(update_flow))
-}
-
-async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body: Bytes) -> Response {
+pub(super) async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body: Bytes) -> Response {
     debug!("Received request to update flow '{id}'...");
     let body_str = match str::from_utf8(&body) {
         Ok(s) => s,
@@ -97,7 +91,7 @@ async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body
             // A concurrent update with a newer revision already landed and sent its own Reconcile
             RegisterResult::Stale { current_revision } => {
                 debug!("Received request to update flow '{id}'... superseded, revision {updated_revision} is older than revision {current_revision}");
-            },
+            }
         }
 
         (StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response()
@@ -107,7 +101,6 @@ async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body
             error!("❌ Flow update task failed: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("internalError"))).into_response()
         })
-
 }
 
 #[derive(Deserialize)]
@@ -144,6 +137,7 @@ impl ErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::flows::router;
     use crate::flow_registry::FlowRegistry;
     use crate::flow_store::FlowStore;
     use axum::body::Body;
@@ -156,9 +150,9 @@ mod tests {
     use tower::ServiceExt;
 
     const VALID_FLOW_ID: &str = "01K7KK6H5R7Y72QJEJSJQCKMRQ";
-    const VALID_FLOW_JSON: &str = include_str!("../../tests/resources/flows/logFlow.json");
+    const VALID_FLOW_JSON: &str = include_str!("../../../tests/resources/flows/logFlow.json");
     const INVALID_FLOW_ID: &str = "01K7KKNRMMQZCBRKMM914VK75R";
-    const INVALID_FLOW_JSON: &str = include_str!("../../tests/resources/flows/invalid/missingEndNodeFlow.json");
+    const INVALID_FLOW_JSON: &str = include_str!("../../../tests/resources/flows/invalid/missingEndNodeFlow.json");
 
     fn create_state(flow_registry: FlowRegistry) -> (ApiState, mpsc::Receiver<SchedulerCommand>) {
         let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
