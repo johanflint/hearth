@@ -2,7 +2,7 @@ use crate::flow_engine::flow::Flow;
 use crate::flow_loader::{FlowFactoryError, from_json_string};
 use crate::flow_store::FlowStoreError::UnsupportedSchemaVersion;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -35,24 +35,51 @@ impl FlowStore {
         }).await?
     }
 
-    pub async fn upsert(&self, id: &str, serialized_flow_json: &str) -> Result<StoredFlow, FlowStoreError> {
+    pub async fn insert(&self, id: &str, serialized_flow: &str) -> Result<u64, FlowStoreError> {
         let conn = Arc::clone(&self.conn);
         let id = id.to_string();
-        let serialized_flow_json = serialized_flow_json.to_string();
+        let json = serialized_flow.to_string();
         task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
             let now = Utc::now().to_rfc3339();
-            conn.query_row(
-                "INSERT INTO flows (id, revision, document, created_at, updated_at)
-                VALUES (?1, 0, ?2, ?3, ?3)
-                ON CONFLICT(id) DO UPDATE SET
-                    revision = revision + 1,
-                    document = excluded.document,
-                    updated_at = excluded.updated_at
-                RETURNING id, revision, document, created_at, updated_at",
-                params![id, serialized_flow_json, now],
-                row_to_stored_flow,
-            ).map_err(FlowStoreError::from)
+            let result = conn.execute(
+                "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, 0, ?2, ?3, ?3)",
+                params![id, json, now],
+            );
+
+            match result {
+                Ok(_) => Ok(0),
+                Err(rusqlite::Error::SqliteFailure(err, _)) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY => Err(FlowStoreError::AlreadyExists),
+                Err(err) => Err(FlowStoreError::from(err)),
+            }
+        }).await?
+    }
+
+    pub async fn update(&self, id: &str, base_revision: u64, serialized_flow: &str) -> Result<u64, FlowStoreError> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        let serialized_flow_clone = serialized_flow.to_string();
+        task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
+            let now = Utc::now().to_rfc3339();
+            let updated: Option<i64> = conn.query_row(
+                "UPDATE flows SET document = ?3, revision = revision + 1, updated_at = ?4
+                WHERE id = ?1 AND revision = ?2
+                RETURNING revision",
+                params![id, base_revision as i64, serialized_flow_clone, now],
+                |row| row.get(0),
+            ).optional()?;
+
+            if let Some(revision) = updated {
+                return to_revision(revision);
+            }
+
+            // No row matched; either the flow doesn't exist or someone else updated it first
+            let current: Option<i64> = conn.query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0)).optional()?;
+            match current {
+                None => Err(FlowStoreError::NotFound),
+                Some(current) => Err(FlowStoreError::RevisionConflict { base_revision, current_revision: to_revision(current)? }),
+            }
         }).await?
     }
 }
@@ -89,9 +116,8 @@ fn run_migrations(conn: &mut Connection) -> Result<(), FlowStoreError> {
 
 fn row_to_stored_flow(row: &Row) -> rusqlite::Result<StoredFlow> {
     let id = row.get(0)?;
-    let revision: i64 = row.get(1)?;
-    let revision = u64::try_from(revision)
-        .map_err(|_| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Integer, Box::new(FlowStoreError::InvalidRevision(revision))))?;
+    let revision = to_revision(row.get(1)?)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Integer, Box::new(err)))?;
 
     let document_json: String = row.get(2)?;
     let flow = from_json_string(&document_json);
@@ -99,7 +125,7 @@ fn row_to_stored_flow(row: &Row) -> rusqlite::Result<StoredFlow> {
     let created_at: String = row.get(3)?;
     let created_at = DateTime::parse_from_rfc3339(&created_at)
         .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err)))?;
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(err)))?;
 
     let updated_at: Option<String> = row.get(4)?;
     let updated_at = updated_at.map(|updated_at| {
@@ -109,6 +135,10 @@ fn row_to_stored_flow(row: &Row) -> rusqlite::Result<StoredFlow> {
     }).transpose()?;
 
     Ok(StoredFlow { id, revision, flow, created_at, updated_at })
+}
+
+fn to_revision(revision: i64) -> Result<u64, FlowStoreError> {
+    u64::try_from(revision).map_err(|_| FlowStoreError::InvalidRevision(revision))
 }
 
 #[derive(Error, Debug)]
@@ -121,8 +151,14 @@ pub enum FlowStoreError {
     PoisonedConnection,
     #[error("stored revision {0} is out of range for u64")]
     InvalidRevision(i64),
+    #[error("flow not found")]
+    NotFound,
+    #[error("flow already exists")]
+    AlreadyExists,
     #[error("database schema {found} is newer than the {supported} version(s) supported")]
     UnsupportedSchemaVersion { found: usize, supported: usize },
+    #[error("revision conflict: update is based on revision {base_revision}, but the current revision is {current_revision}")]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
 }
 
 const MIGRATIONS: &[&str] = &[
@@ -139,6 +175,8 @@ const MIGRATIONS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const FLOW_JSON: &str = r#"{"id":"flow","name":"Test","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]}"#;
 
     fn open_in_memory() -> FlowStore {
         FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store")
@@ -194,11 +232,11 @@ mod tests {
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params!("badFlow", "1", "not valid json", &now, &now),
+            params!("badFlow", "1", "not valid json", &now, &now),
         ).expect("insert bad");
         conn.execute(
             "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params!("good-flow", "0", r#"{"id":"good-flow","name":"Good","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]}"#, &now, &now),
+            params!("good-flow", "0", r#"{"id":"good-flow","name":"Good","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]}"#, &now, &now),
         ).expect("insert good");
         drop(conn);
 
@@ -216,7 +254,7 @@ mod tests {
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params!("flow", "0", r#"{"id":"flow","name":"Test","nodes":[]}"#, &now, None::<String>),
+            params!("flow", "0", r#"{"id":"flow","name":"Test","nodes":[]}"#, &now, None::<String>),
         ).expect("insert");
         drop(conn);
 
@@ -244,22 +282,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upsert_inserts_a_new_flow() {
+    async fn insert_stores_a_new_flow_at_revision_0() {
         let store = open_in_memory();
-        let json = r#"{"id":"flow","name":"Test","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]}"#;
 
-        let result = store.upsert("flow", json).await.expect("upsert succeeded");
-        assert_eq!(result.id, "flow");
-        assert_eq!(result.revision, 0);
+        let revision = store.insert("flow", FLOW_JSON).await.expect("insert succeeded");
+
+        assert_eq!(revision, 0);
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "flow");
+        assert_eq!(rows[0].revision, 0);
     }
 
     #[tokio::test]
-    async fn upsert_updates_existing_flow_and_bumps_revision() {
+    async fn insert_returns_already_exists_for_a_duplicate_id() {
         let store = open_in_memory();
-        let json = r#"{"id":"flow","name":"Test","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]}"#;
+        store.insert("flow", FLOW_JSON).await.expect("first insert");
 
-        store.upsert("flow", json).await.expect("first upsert");
-        let result = store.upsert("flow", json).await.expect("second upsert");
-        assert_eq!(result.revision, 1);
+        let result = store.insert("flow", FLOW_JSON).await;
+
+        assert!(matches!(result, Err(FlowStoreError::AlreadyExists)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn update_bumps_the_revision_when_the_base_revision_matches() {
+        let store = open_in_memory();
+        store.insert("flow", FLOW_JSON).await.expect("insert");
+
+        let revision = store.update("flow", 0, FLOW_JSON).await.expect("update succeeded");
+
+        assert_eq!(revision, 1);
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows[0].revision, 1);
+        assert!(rows[0].updated_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn update_returns_revision_conflict_for_a_stale_base_revision() {
+        let store = open_in_memory();
+        store.insert("flow", FLOW_JSON).await.expect("insert");
+        store.update("flow", 0, FLOW_JSON).await.expect("first update");
+
+        let result = store.update("flow", 0, FLOW_JSON).await;
+
+        assert!(matches!(result, Err(FlowStoreError::RevisionConflict { base_revision: 0, current_revision: 1 })), "got {result:?}");
+        assert_eq!(store.list().await.unwrap()[0].revision, 1, "revision must be unchanged");
+    }
+
+    #[tokio::test]
+    async fn update_returns_revision_conflict_for_a_future_base_revision() {
+        let store = open_in_memory();
+        store.insert("flow", FLOW_JSON).await.expect("insert");
+
+        let result = store.update("flow", 7, FLOW_JSON).await;
+
+        assert!(matches!(result, Err(FlowStoreError::RevisionConflict { base_revision: 7, current_revision: 0 })), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn update_returns_not_found_for_an_unknown_flow() {
+        let store = open_in_memory();
+
+        let result = store.update("flow", 0, FLOW_JSON).await;
+
+        assert!(matches!(result, Err(FlowStoreError::NotFound)), "got {result:?}");
+        assert!(store.list().await.unwrap().is_empty(), "update must not insert");
     }
 }
