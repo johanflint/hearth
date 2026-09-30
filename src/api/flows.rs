@@ -63,9 +63,8 @@ async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body
         }
     };
 
-    // Reserve channel capacity before mutating the registry. This way, a cancelled
-    // request or a full channel can never leave the registry updated without a
-    // matching `Reconcile` guaranteed to follow.
+    // Reserve channel capacity before mutating anything, so an unavailable scheduler is rejected
+    // up front and the `Reconcile`send after the commit is infallible
     let permit = match state.scheduler_tx.clone().reserve_owned().await {
         Ok(permit) => permit,
         Err(err) => {
@@ -74,31 +73,41 @@ async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body
         }
     };
 
-    // The flow store owns the revision; the registry mirrors it
-    let updated_revision = match state.flow_store.update(&id, request.base_revision, &flow_json).await {
-        Ok(revision) => revision,
-        Err(FlowStoreError::NotFound) => return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
-        Err(err @ FlowStoreError::RevisionConflict { .. }) => return (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
-        Err(err) => {
-            error!("❌ Failed to persist flow to store: {err}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
-        }
-    };
+    // Spawned so a client disconnect can't cancel the request between the store update and the registry update,
+    // the commit always runs to completion.
+    tokio::spawn(async move {
+        // The flow store owns the revision; the registry mirrors it
+        let updated_revision = match state.flow_store.update(&id, request.base_revision, &flow_json).await {
+            Ok(revision) => revision,
+            Err(FlowStoreError::NotFound) => return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
+            Err(err @ FlowStoreError::RevisionConflict { .. }) => return (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
+            Err(err) => {
+                error!("❌ Failed to persist flow to store: {err}");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
+            }
+        };
 
-    match state.flow_registry.register(VersionedFlow { flow: Arc::new(flow), revision: updated_revision }) {
-        // Always reconcile: the scheduler derives the desired schedule state itself
-        // Send on a reserved permit is synchronous and infallible
-        RegisterResult::Added | RegisterResult::Replaced => {
-            permit.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: updated_revision });
-            info!("Received request to update flow '{id}'... OK, revision {updated_revision}");
+        match state.flow_registry.register(VersionedFlow { flow: Arc::new(flow), revision: updated_revision }) {
+            // Always reconcile: the scheduler derives the desired schedule state itself
+            // Send on a reserved permit is synchronous and infallible
+            RegisterResult::Added | RegisterResult::Replaced => {
+                permit.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: updated_revision });
+                info!("Received request to update flow '{id}'... OK, revision {updated_revision}");
+            }
+            // A concurrent update with a newer revision already landed and sent its own Reconcile
+            RegisterResult::Stale { current_revision } => {
+                debug!("Received request to update flow '{id}'... superseded, revision {updated_revision} is older than revision {current_revision}");
+            },
         }
-        // A concurrent update with a newer revision already landed and sent its own Reconcile
-        RegisterResult::Stale { current_revision } => {
-            debug!("Received request to update flow '{id}'... superseded, revision {updated_revision} is older than revision {current_revision}");
-        },
-    }
 
-    (StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response()
+        (StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response()
+    })
+        .await
+        .unwrap_or_else(|err| {
+            error!("❌ Flow update task failed: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("internalError"))).into_response()
+        })
+
 }
 
 #[derive(Deserialize)]
@@ -142,6 +151,7 @@ mod tests {
     use http_body_util::BodyExt;
     use metrics_exporter_prometheus::PrometheusBuilder;
     use std::sync::Arc;
+    use std::time::Duration;
     use tokio::sync::mpsc;
     use tower::ServiceExt;
 
@@ -390,5 +400,27 @@ mod tests {
         assert_eq!(body_json(response).await["code"], "schedulerUnavailable");
         assert_eq!(flow_store.list().await.unwrap()[0].revision, 0);
         assert_eq!(registry.by_id(VALID_FLOW_ID).unwrap().revision, 0);
+    }
+
+    #[tokio::test]
+    async fn update_flow_completes_the_registry_update_and_reconcile_when_the_request_is_cancelled() {
+        let (state, mut scheduler_rx) = create_seeded_state().await;
+        let registry = state.flow_registry.clone();
+
+        // Poll the request once, up to the pending store write, then drop it like a client disconnect
+        let body = update_request(0, VALID_FLOW_JSON);
+        let mut request = Box::pin(call_update_flow(state, VALID_FLOW_ID, &body));
+        let poll = request.as_mut().poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        assert!(poll.is_pending(), "request should still be in flight");
+        drop(request);
+
+        match tokio::time::timeout(Duration::from_secs(1), scheduler_rx.recv()).await {
+            Ok(Some(SchedulerCommand::Reconcile { flow_id, revision })) => {
+                assert_eq!(flow_id, VALID_FLOW_ID);
+                assert_eq!(revision, 1);
+            }
+            other => panic!("expected Reconcile command, got {:?}", other),
+        }
+        assert_eq!(registry.by_id(VALID_FLOW_ID).expect("flow in registry").revision, 1);
     }
 }
