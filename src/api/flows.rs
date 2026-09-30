@@ -1,7 +1,8 @@
 use crate::api::ApiState;
-use crate::flow_engine::SchedulerCommand;
+use crate::flow_engine::{SchedulerCommand, VersionedFlow};
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
+use crate::flow_registry::ReplaceResult;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -9,6 +10,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::put;
 use axum::{Json, Router};
 use serde::Serialize;
+use std::sync::Arc;
 use tracing::{debug, error, info};
 
 pub fn router() -> Router<ApiState> {
@@ -64,20 +66,29 @@ async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body
         }
     };
 
-    if let Err(err) = state.flow_store.upsert(&id, body_str).await {
-        error!("❌ Failed to persist flow to store: {err}");
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
-    }
-
-    let Some(updated_revision) = state.flow_registry.replace_existing(flow) else {
-        return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response();
+    // The flow store owns the revision; the registry mirrors it
+    let updated_revision = match state.flow_store.upsert(&id, body_str).await {
+        Ok(stored_flow) => stored_flow.revision,
+        Err(err) => {
+            error!("❌ Failed to persist flow to store: {err}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
+        }
     };
 
-    // Always reconcile: the scheduler derives the desired schedule state itself
-    // Send on a reserved permit is synchronous and infallible
-    permit.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: updated_revision });
+    match state.flow_registry.replace_existing(VersionedFlow { flow: Arc::new(flow), revision: updated_revision }) {
+        // Always reconcile: the scheduler derives the desired schedule state itself
+        // Send on a reserved permit is synchronous and infallible
+        ReplaceResult::Replaced => {
+            permit.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: updated_revision });
+            info!("Received request to update flow '{id}'... OK, revision {updated_revision}");
+        }
+        // A concurrent update with a newer revision already landed and sent its own Reconcile
+        ReplaceResult::Stale { current_revision } => {
+            debug!("Received request to update flow '{id}'... superseded, revision {updated_revision} is superseded by revision {current_revision}");
+        },
+        ReplaceResult::NotFound => return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
+    }
 
-    info!("Received request to update flow '{id}'... OK, revision {updated_revision}");
     (StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response()
 }
 
@@ -147,11 +158,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_flow_persists_flow_to_store() {
+        // First verify upsert itself works
+        let store = FlowStore::open(std::path::Path::new(":memory:")).expect("failed to open");
+        let result = store.upsert(VALID_FLOW_ID, VALID_FLOW_JSON).await.expect("upsert");
+        assert_eq!(result.revision, 0);
+
+        let flows = store.list().await.expect("list");
+        assert_eq!(flows.len(), 1, "upsert should have persisted a flow");
+    }
+
+    #[tokio::test]
+    async fn update_flow_via_api_persists_flow_to_store() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .try_init();
+        let payload: SerializedFlow = serde_json::from_str(VALID_FLOW_JSON).unwrap();
+        let flow = flow_loader::from_json(payload).unwrap();
+        let versioned_flow = VersionedFlow { flow: Arc::new(flow), revision: 0 };
+        let (state, _scheduler_rx) = create_state(FlowRegistry::new(vec![versioned_flow]));
+        let flow_store = state.flow_store.clone();
+        let registry = state.flow_registry.clone();
+        // At boot the registry is loaded from the store, so seed both at revision 0
+        flow_store.upsert(VALID_FLOW_ID, VALID_FLOW_JSON).await.expect("seed store");
+
+        let response = call_update_flow(state, VALID_FLOW_ID, VALID_FLOW_JSON).await;
+
+        let status = response.status();
+        let body_val = body_json(response).await;
+        assert_eq!(status, StatusCode::OK, "Handler failed with: {}", body_val);
+
+        let stored_flows = flow_store.list().await.expect("list succeeded");
+
+        assert_eq!(stored_flows.len(), 1, "expected a single flow in the FlowStore");
+        assert_eq!(stored_flows[0].id, VALID_FLOW_ID);
+        assert_eq!(stored_flows[0].revision, 1);
+
+        assert_eq!(registry.by_id(VALID_FLOW_ID).expect("flow in registry").revision, 1);
+    }
+
+    #[tokio::test]
+    async fn update_flow_leaves_the_registry_untouched_and_skips_reconcile_when_a_newer_revision_already_landed() {
+        let payload: SerializedFlow = serde_json::from_str(VALID_FLOW_JSON).unwrap();
+        let flow = Arc::new(flow_loader::from_json(payload).unwrap());
+        // Registry that is ahead of the store simulates a concurrent update that landed first
+        let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![VersionedFlow { flow: Arc::clone(&flow), revision: 5 }]));
+        let registry = state.flow_registry.clone();
+
+        let response = call_update_flow(state, VALID_FLOW_ID, VALID_FLOW_JSON).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_json(response).await["revision"], 0);
+        let entry = registry.by_id(VALID_FLOW_ID).expect("flow in registry");
+        assert_eq!(entry.revision, 5);
+        assert!(Arc::ptr_eq(&entry.flow, &flow), "registry entry must not be replaced");
+        assert!(scheduler_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn update_flow_replaces_the_registry_entry_and_sends_a_reconcile_command() {
         let payload: SerializedFlow = serde_json::from_str(VALID_FLOW_JSON).unwrap();
         let flow = flow_loader::from_json(payload).unwrap();
         let versioned_flow = VersionedFlow { flow: Arc::new(flow), revision: 0 };
         let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![versioned_flow]));
+        state.flow_store.upsert(VALID_FLOW_ID, VALID_FLOW_JSON).await.expect("seed store");
 
         let response = call_update_flow(state, VALID_FLOW_ID, VALID_FLOW_JSON).await;
 
