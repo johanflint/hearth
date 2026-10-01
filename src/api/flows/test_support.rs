@@ -12,6 +12,10 @@ use tokio::sync::mpsc;
 pub(super) const VALID_FLOW_ID: &str = "01K7KK6H5R7Y72QJEJSJQCKMRQ";
 pub(super) const VALID_FLOW_JSON: &str = include_str!("../../../tests/resources/flows/logFlow.json");
 
+pub(super) fn valid_flow_document() -> serde_json::Value {
+    serde_json::from_str(VALID_FLOW_JSON).expect("valid flow JSON")
+}
+
 pub(super) fn create_state(flow_registry: FlowRegistry) -> (ApiState, mpsc::Receiver<SchedulerCommand>) {
     let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
     let handle = PrometheusBuilder::new().build_recorder().handle();

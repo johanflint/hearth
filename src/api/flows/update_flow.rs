@@ -26,9 +26,7 @@ pub(super) async fn update_flow(Path(id): Path<String>, State(state): State<ApiS
         Err(e) => return (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("invalidJson", e.to_string()))).into_response(),
     };
 
-    // Store the flow itself, not the request envelope
-    let flow_json = request.flow.to_string();
-    let payload: SerializedFlow = match serde_json::from_value(request.flow) {
+    let payload: SerializedFlow = match SerializedFlow::deserialize(&request.flow) {
         Ok(payload) => payload,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("invalidJson", e.to_string()))).into_response(),
     };
@@ -71,8 +69,8 @@ pub(super) async fn update_flow(Path(id): Path<String>, State(state): State<ApiS
     // Spawned so a client disconnect can't cancel the request between the store update and the registry update,
     // the commit always runs to completion.
     tokio::spawn(async move {
-        // The flow store owns the revision; the registry mirrors it
-        let updated_revision = match state.flow_store.update(&id, request.base_revision, &flow_json).await {
+        // The flow store owns the revision; the registry mirrors it. Store the flow itself, not the request envelope
+        let updated_revision = match state.flow_store.update(&id, request.base_revision, request.flow).await {
             Ok(revision) => revision,
             Err(UpdateError::NotFound) => return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
             Err(err @ UpdateError::RevisionConflict { .. }) => return (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
@@ -123,7 +121,7 @@ struct UpdateFlowResponse {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state};
+    use crate::api::flows::test_support::{VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document};
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
     use axum::http::Request;
@@ -158,7 +156,7 @@ mod tests {
     /// Seeds the store and registry with the valid flow at revision 0, like at boot
     async fn create_seeded_state() -> (ApiState, mpsc::Receiver<SchedulerCommand>) {
         let (state, scheduler_rx) = create_state(FlowRegistry::new(vec![valid_versioned_flow(0)]));
-        state.flow_store.insert(VALID_FLOW_ID, VALID_FLOW_JSON).await.expect("seed store");
+        state.flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
         (state, scheduler_rx)
     }
 
@@ -176,7 +174,7 @@ mod tests {
         assert_eq!(stored_flows[0].id, VALID_FLOW_ID);
         assert_eq!(stored_flows[0].revision, 1);
         // Fails if the request envelope was stored instead of the flow
-        assert!(stored_flows[0].flow.is_ok(), "stored document must be the flow: {:?}", stored_flows[0].flow);
+        assert_eq!(stored_flows[0].document, valid_flow_document(), "stored document must be the flow");
         assert_eq!(registry.by_id(VALID_FLOW_ID).expect("flow in registry").revision, 1);
     }
 
@@ -205,7 +203,7 @@ mod tests {
         // Registry that is ahead of the store simulates a concurrent update that landed first
         let newer = valid_versioned_flow(5);
         let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![newer.clone()]));
-        state.flow_store.insert(VALID_FLOW_ID, VALID_FLOW_JSON).await.expect("seed store");
+        state.flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
         let registry = state.flow_registry.clone();
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;
@@ -224,7 +222,7 @@ mod tests {
         let flow_store = state.flow_store.clone();
         let registry = state.flow_registry.clone();
         // Someone else updated the flow first
-        flow_store.update(VALID_FLOW_ID, 0, VALID_FLOW_JSON).await.expect("concurrent update");
+        flow_store.update(VALID_FLOW_ID, 0, valid_flow_document()).await.expect("concurrent update");
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;
 
@@ -329,7 +327,7 @@ mod tests {
     async fn update_flow_returns_registers_and_reconciles_a_flow_that_is_stored_but_not_registered() {
         // E.g. a stored flow that failed to load at boot
         let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![]));
-        state.flow_store.insert(VALID_FLOW_ID, VALID_FLOW_JSON).await.expect("seed store");
+        state.flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
         let flow_registry = state.flow_registry.clone();
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;

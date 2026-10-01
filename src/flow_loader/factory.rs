@@ -10,6 +10,11 @@ pub fn from_json_string(json: &str) -> Result<Flow, FlowFactoryError> {
     from_json(flow)
 }
 
+pub fn from_json_value(json: serde_json::Value) -> Result<Flow, FlowFactoryError> {
+    let flow = serde_json::from_value(json)?;
+    from_json(flow)
+}
+
 pub fn from_json(flow: SerializedFlow) -> Result<Flow, FlowFactoryError> {
     if flow.schedule.is_some() {
         if let Some(trigger) = &flow.trigger {
@@ -189,7 +194,21 @@ mod tests {
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
     use pretty_assertions::assert_eq;
+    use serde_json::json;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn from_json_value_parses_valid_json() {
+        let json = json!({"id": "01K7KK65D87SZGGZE7VB8QYT20","name": "emptyFlow","nodes": [{"id": "startNode","type": "startNode","outgoingNode": "endNode"},{"id": "endNode","type": "endNode"}]});
+        let result = from_json_value(json);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn from_json_value_returns_a_deserialization_error_for_a_document_that_is_not_a_flow() {
+        let result = from_json_value(json!({"id": "01K7KK65D87SZGGZE7VB8QYT20"}));
+        assert!(matches!(result, Err(FlowFactoryError::Deserialization(_))), "got {result:?}");
+    }
 
     #[tokio::test]
     async fn returns_an_error_if_a_scheduled_flow_uses_a_property_changed_trigger() {
