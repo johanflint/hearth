@@ -123,28 +123,17 @@ struct UpdateFlowResponse {
 mod tests {
     use super::*;
     use crate::api::flows::router;
+    use crate::api::flows::test_support::{VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state};
     use crate::flow_registry::FlowRegistry;
-    use crate::flow_store::FlowStore;
     use axum::body::Body;
     use axum::http::Request;
-    use http_body_util::BodyExt;
-    use metrics_exporter_prometheus::PrometheusBuilder;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::mpsc;
     use tower::ServiceExt;
 
-    const VALID_FLOW_ID: &str = "01K7KK6H5R7Y72QJEJSJQCKMRQ";
-    const VALID_FLOW_JSON: &str = include_str!("../../../tests/resources/flows/logFlow.json");
     const INVALID_FLOW_ID: &str = "01K7KKNRMMQZCBRKMM914VK75R";
     const INVALID_FLOW_JSON: &str = include_str!("../../../tests/resources/flows/invalid/missingEndNodeFlow.json");
-
-    fn create_state(flow_registry: FlowRegistry) -> (ApiState, mpsc::Receiver<SchedulerCommand>) {
-        let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
-        let handle = PrometheusBuilder::new().build_recorder().handle();
-        let flow_store = FlowStore::open(std::path::Path::new(":memory:")).expect("failed to open in-memory flow store");
-        (ApiState::new(handle, Arc::new(flow_registry), Arc::new(flow_store), scheduler_tx), scheduler_rx)
-    }
 
     async fn call_update_flow(state: ApiState, id: &str, body: &str) -> Response {
         let request = Request::builder()
@@ -155,11 +144,6 @@ mod tests {
             .unwrap();
 
         router().with_state(state).oneshot(request).await.unwrap()
-    }
-
-    async fn body_json(response: Response) -> serde_json::Value {
-        let bytes = response.into_body().collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&bytes).unwrap()
     }
 
     fn update_request(base_revision: u64, flow_json: &str) -> String {

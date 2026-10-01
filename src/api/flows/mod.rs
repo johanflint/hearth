@@ -1,5 +1,7 @@
 mod update_flow;
 mod list_flows;
+#[cfg(test)]
+mod test_support;
 
 use crate::api::ApiState;
 use crate::api::flows::list_flows::list_flows;

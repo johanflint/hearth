@@ -37,3 +37,54 @@ struct FlowSummary {
     created_at: DateTime<Utc>,
     updated_at: Option<DateTime<Utc>>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::flows::router;
+    use crate::api::flows::test_support::{VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state};
+    use crate::flow_registry::FlowRegistry;
+    use axum::body::Body;
+    use axum::http::Request;
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    async fn call_list_flows(state: ApiState) -> Response {
+        let request = Request::builder()
+            .method("GET")
+            .uri("/api/flows")
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+
+        router().with_state(state).oneshot(request).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn list_flows_returns_an_empty_list_for_an_empty_store() {
+        let (state, _scheduler_rx) = create_state(FlowRegistry::new(Vec::new()));
+
+        let response = call_list_flows(state).await;
+
+        assert_eq!(StatusCode::OK, response.status());
+        assert_eq!(body_json(response).await, json!({ "flows": [] }));
+    }
+
+    #[tokio::test]
+    async fn list_flows_returns_the_stored_flows_with_camel_case_fields() {
+        let (state, _scheduler_rx) = create_state(FlowRegistry::new(vec![]));
+        state.flow_store.insert(VALID_FLOW_ID, VALID_FLOW_JSON).await.expect("seed store");
+        state.flow_store.update(VALID_FLOW_ID, 0, VALID_FLOW_JSON).await.expect("update store");
+
+        let response = call_list_flows(state).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        let flows = body["flows"].as_array().expect("flows array");
+        assert_eq!(flows.len(), 1);
+        assert_eq!(flows[0]["id"], VALID_FLOW_ID);
+        assert_eq!(flows[0]["revision"], 1);
+        assert!(flows[0]["createdAt"].is_string(), "got {body}");
+        assert!(flows[0]["updatedAt"].is_string(), "got {body}");
+    }
+}
