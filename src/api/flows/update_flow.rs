@@ -4,7 +4,7 @@ use crate::flow_engine::{SchedulerCommand, VersionedFlow};
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
 use crate::flow_registry::RegisterResult;
-use crate::flow_store::FlowStoreError;
+use crate::flow_store::UpdateError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -74,9 +74,9 @@ pub(super) async fn update_flow(Path(id): Path<String>, State(state): State<ApiS
         // The flow store owns the revision; the registry mirrors it
         let updated_revision = match state.flow_store.update(&id, request.base_revision, &flow_json).await {
             Ok(revision) => revision,
-            Err(FlowStoreError::NotFound) => return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
-            Err(err @ FlowStoreError::RevisionConflict { .. }) => return (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
-            Err(err) => {
+            Err(UpdateError::NotFound) => return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
+            Err(err @ UpdateError::RevisionConflict { .. }) => return (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
+            Err(UpdateError::Store(err)) => {
                 error!("❌ Failed to persist flow to store: {err}");
                 return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
             }

@@ -35,7 +35,7 @@ impl FlowStore {
         }).await?
     }
 
-    pub async fn insert(&self, id: &str, serialized_flow: &str) -> Result<u64, FlowStoreError> {
+    pub async fn insert(&self, id: &str, serialized_flow: &str) -> Result<u64, InsertError> {
         let conn = Arc::clone(&self.conn);
         let id = id.to_string();
         let json = serialized_flow.to_string();
@@ -49,13 +49,13 @@ impl FlowStore {
 
             match result {
                 Ok(_) => Ok(0),
-                Err(rusqlite::Error::SqliteFailure(err, _)) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY => Err(FlowStoreError::AlreadyExists),
-                Err(err) => Err(FlowStoreError::from(err)),
+                Err(rusqlite::Error::SqliteFailure(err, _)) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY => Err(InsertError::AlreadyExists),
+                Err(err) => Err(err.into()),
             }
-        }).await?
+        }).await.map_err(FlowStoreError::from)? // Handle the join JoinError
     }
 
-    pub async fn update(&self, id: &str, base_revision: u64, serialized_flow: &str) -> Result<u64, FlowStoreError> {
+    pub async fn update(&self, id: &str, base_revision: u64, serialized_flow: &str) -> Result<u64, UpdateError> {
         let conn = Arc::clone(&self.conn);
         let id = id.to_string();
         let serialized_flow_clone = serialized_flow.to_string();
@@ -71,16 +71,16 @@ impl FlowStore {
             ).optional()?;
 
             if let Some(revision) = updated {
-                return to_revision(revision);
+                return Ok(to_revision(revision)?);
             }
 
             // No row matched; either the flow doesn't exist or someone else updated it first
             let current: Option<i64> = conn.query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0)).optional()?;
             match current {
-                None => Err(FlowStoreError::NotFound),
-                Some(current) => Err(FlowStoreError::RevisionConflict { base_revision, current_revision: to_revision(current)? }),
+                None => Err(UpdateError::NotFound),
+                Some(current) => Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? }),
             }
-        }).await?
+        }).await.map_err(FlowStoreError::from)? // Handle the join JoinError
     }
 }
 
@@ -151,14 +151,41 @@ pub enum FlowStoreError {
     PoisonedConnection,
     #[error("stored revision {0} is out of range for u64")]
     InvalidRevision(i64),
-    #[error("flow not found")]
-    NotFound,
-    #[error("flow already exists")]
-    AlreadyExists,
     #[error("database schema {found} is newer than the {supported} version(s) supported")]
     UnsupportedSchemaVersion { found: usize, supported: usize },
+
+}
+
+#[derive(Error, Debug)]
+pub enum InsertError {
+    #[error("flow already exists")]
+    AlreadyExists,
+    #[error(transparent)]
+    Store(#[from] FlowStoreError),
+}
+
+// `?` applies a single `From`, so `rusqlite::Error` can't reach `Store` via `FlowStoreError` on its own
+impl From<rusqlite::Error> for InsertError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum UpdateError {
+    #[error("flow not found")]
+    NotFound,
     #[error("revision conflict: update is based on revision {base_revision}, but the current revision is {current_revision}")]
     RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error(transparent)]
+    Store(#[from] FlowStoreError),
+}
+
+// `?` applies a single `From`, so `rusqlite::Error` can't reach `Store` via `FlowStoreError` on its own
+impl From<rusqlite::Error> for UpdateError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
 }
 
 const MIGRATIONS: &[&str] = &[
@@ -301,7 +328,7 @@ mod tests {
 
         let result = store.insert("flow", FLOW_JSON).await;
 
-        assert!(matches!(result, Err(FlowStoreError::AlreadyExists)), "got {result:?}");
+        assert!(matches!(result, Err(InsertError::AlreadyExists)), "got {result:?}");
     }
 
     #[tokio::test]
@@ -325,7 +352,7 @@ mod tests {
 
         let result = store.update("flow", 0, FLOW_JSON).await;
 
-        assert!(matches!(result, Err(FlowStoreError::RevisionConflict { base_revision: 0, current_revision: 1 })), "got {result:?}");
+        assert!(matches!(result, Err(UpdateError::RevisionConflict { base_revision: 0, current_revision: 1 })), "got {result:?}");
         assert_eq!(store.list().await.unwrap()[0].revision, 1, "revision must be unchanged");
     }
 
@@ -336,7 +363,7 @@ mod tests {
 
         let result = store.update("flow", 7, FLOW_JSON).await;
 
-        assert!(matches!(result, Err(FlowStoreError::RevisionConflict { base_revision: 7, current_revision: 0 })), "got {result:?}");
+        assert!(matches!(result, Err(UpdateError::RevisionConflict { base_revision: 7, current_revision: 0 })), "got {result:?}");
     }
 
     #[tokio::test]
@@ -345,7 +372,7 @@ mod tests {
 
         let result = store.update("flow", 0, FLOW_JSON).await;
 
-        assert!(matches!(result, Err(FlowStoreError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
         assert!(store.list().await.unwrap().is_empty(), "update must not insert");
     }
 }
