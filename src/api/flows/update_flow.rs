@@ -1,9 +1,6 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
-use crate::flow_engine::{SchedulerCommand, VersionedFlow};
-use crate::flow_loader;
-use crate::flow_loader::{FlowFactoryError, SerializedFlow};
-use crate::flow_registry::RegisterResult;
+use crate::api::flows::commit::{parse_request, register_and_reconcile, reserve_scheduler_permit, run_to_completion, validate_flow_document};
 use crate::flow_store::UpdateError;
 use axum::Json;
 use axum::body::Bytes;
@@ -11,95 +8,37 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::{debug, error, info};
 
-pub(super) async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body: Bytes) -> Response {
+pub(super) async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body: Bytes) -> Result<Response, Response> {
     debug!("Received request to update flow '{id}'...");
-    let body_str = match str::from_utf8(&body) {
-        Ok(s) => s,
-        Err(_) => return (StatusCode::BAD_REQUEST, Json(ErrorResponse::new_code_only("invalidUtf8"))).into_response(),
-    };
+    let request: UpdateFlowRequest = parse_request(&body)?;
+    let flow = validate_flow_document(&request.flow)?;
 
-    let request: UpdateFlowRequest = match serde_json::from_str(body_str) {
-        Ok(request) => request,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("invalidJson", e.to_string()))).into_response(),
-    };
-
-    let payload: SerializedFlow = match SerializedFlow::deserialize(&request.flow) {
-        Ok(payload) => payload,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("invalidJson", e.to_string()))).into_response(),
-    };
-
-    if id != payload.id {
-        return (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse::new("flowIdMismatch", format!("body id '{}' does not match path id '{}'", payload.id, id)))).into_response();
+    if id != flow.id() {
+        let response = ErrorResponse::new("flowIdMismatch", format!("body id '{}' does not match path id '{}'", flow.id(), id));
+        return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(response)).into_response());
     }
 
-    let flow = match flow_loader::from_json(payload) {
-        Ok(flow) => flow,
-        Err(flow_factory_error) => {
-            let message = flow_factory_error.to_string();
-            let error_response = match flow_factory_error {
-                FlowFactoryError::Deserialization(_) => unreachable!("payload is already deserialized into a SerializedFlow"),
-                FlowFactoryError::MissingStartNode => ErrorResponse::new("missingStartNode", message),
-                FlowFactoryError::TooManyStartNodes(_) => ErrorResponse::new("tooManyStartNodes", message),
-                FlowFactoryError::MissingEndNode => ErrorResponse::new("missingEndNode", message),
-                FlowFactoryError::NoConnectingNode { .. } => ErrorResponse::new("noConnectingNode", message),
-                FlowFactoryError::MissingNode { .. } => ErrorResponse::new("missingNode", message),
-                FlowFactoryError::TooManyParentNodes { .. } => ErrorResponse::new("tooManyParentNodes", message),
-                FlowFactoryError::UnusedNodes { .. } => ErrorResponse::new("unusedNodes", message),
-                FlowFactoryError::DuplicateLinkValues { .. } => ErrorResponse::new("duplicateLinkValues", message),
-                FlowFactoryError::PropertyChangedInScheduledFlow => ErrorResponse::new("propertyChangedInScheduledFlow", message),
-            };
+    let permit = reserve_scheduler_permit(&state).await?;
 
-            return (StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response();
+    run_to_completion(async move {
+        let updated_revision = state.flow_store.update(&id, request.base_revision, request.flow).await.map_err(update_error_response)?;
+        register_and_reconcile(&state, flow, updated_revision, permit);
+        info!("📥 Received request to update flow '{id}'... OK, revision {updated_revision}");
+        Ok((StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response())
+    }).await
+}
+
+fn update_error_response(err: UpdateError) -> Response {
+    match err {
+        UpdateError::NotFound => (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
+        UpdateError::RevisionConflict { .. } => (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
+        UpdateError::Store(err) => {
+            error!("❌ Failed to persist flow to store: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
-    };
-
-    // Reserve channel capacity before mutating anything, so an unavailable scheduler is rejected
-    // up front and the `Reconcile` send after the commit is infallible
-    let permit = match state.scheduler_tx.clone().reserve_owned().await {
-        Ok(permit) => permit,
-        Err(err) => {
-            error!("❌ Scheduler is unavailable: {err}");
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable"))).into_response();
-        }
-    };
-
-    // Spawned so a client disconnect can't cancel the request between the store update and the registry update,
-    // the commit always runs to completion.
-    tokio::spawn(async move {
-        // The flow store owns the revision; the registry mirrors it. Store the flow itself, not the request envelope
-        let updated_revision = match state.flow_store.update(&id, request.base_revision, request.flow).await {
-            Ok(revision) => revision,
-            Err(UpdateError::NotFound) => return (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
-            Err(err @ UpdateError::RevisionConflict { .. }) => return (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
-            Err(UpdateError::Store(err)) => {
-                error!("❌ Failed to persist flow to store: {err}");
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
-            }
-        };
-
-        match state.flow_registry.register(VersionedFlow { flow: Arc::new(flow), revision: updated_revision }) {
-            // Always reconcile: the scheduler derives the desired schedule state itself
-            // Send on a reserved permit is synchronous and infallible
-            RegisterResult::Added | RegisterResult::Replaced => {
-                permit.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: updated_revision });
-                info!("Received request to update flow '{id}'... OK, revision {updated_revision}");
-            }
-            // A concurrent update with a newer revision already landed and sent its own Reconcile
-            RegisterResult::Stale { current_revision } => {
-                debug!("Received request to update flow '{id}'... superseded, revision {updated_revision} is older than revision {current_revision}");
-            }
-        }
-
-        (StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response()
-    })
-        .await
-        .unwrap_or_else(|err| {
-            error!("❌ Flow update task failed: {err}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("internalError"))).into_response()
-        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -122,6 +61,9 @@ mod tests {
     use super::*;
     use crate::api::flows::router;
     use crate::api::flows::test_support::{VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document};
+    use crate::flow_engine::{SchedulerCommand, VersionedFlow};
+    use crate::flow_loader;
+    use crate::flow_loader::SerializedFlow;
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
     use axum::http::Request;
