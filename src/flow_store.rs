@@ -33,6 +33,17 @@ impl FlowStore {
         }).await?
     }
 
+    pub async fn by_id(&self, id: &str) -> Result<Option<StoredFlow>, FlowStoreError> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
+            conn.query_row("SELECT id, revision, document, created_at, updated_at FROM flows WHERE id = ?1", [id], row_to_stored_flow)
+                .optional()
+                .map_err(FlowStoreError::from)
+        }).await?
+    }
+
     pub async fn insert(&self, id: &str, document: serde_json::Value) -> Result<u64, InsertError> {
         let conn = Arc::clone(&self.conn);
         let id = id.to_string();
@@ -81,7 +92,6 @@ impl FlowStore {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct StoredFlow {
     pub id: String,
     pub revision: u64,
@@ -299,6 +309,27 @@ mod tests {
         // Should fail with InvalidRevision error
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FlowStoreError::Sqlite(_)));
+    }
+
+    #[tokio::test]
+    async fn by_id_returns_the_stored_flow() {
+        let store = open_in_memory();
+        store.insert("flow", flow_document()).await.expect("insert");
+
+        let stored_flow = store.by_id("flow").await.expect("by_id succeeded").expect("flow exists");
+
+        assert_eq!(stored_flow.id, "flow");
+        assert_eq!(stored_flow.revision, 0);
+        assert_eq!(stored_flow.document, flow_document());
+    }
+
+    #[tokio::test]
+    async fn by_id_returns_none_for_an_unknown_flow() {
+        let store = open_in_memory();
+
+        let result = store.by_id("flow").await.expect("by_id succeeded");
+
+        assert!(result.is_none(), "got {result:?}");
     }
 
     #[tokio::test]
