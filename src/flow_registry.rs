@@ -1,73 +1,89 @@
-use crate::flow_engine::flow::Flow;
+use crate::flow_engine::VersionedFlow;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 #[derive(Debug)]
 pub struct FlowRegistry {
-    entries: RwLock<HashMap<String, RegistryEntry>>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RegistryEntry {
-    pub(crate) flow: Arc<Flow>,
-    pub(crate) revision: u64,
+    entries: RwLock<HashMap<String, VersionedFlow>>,
 }
 
 impl FlowRegistry {
-    pub fn new(flows: Vec<Flow>) -> Self {
+    pub fn new(flows: Vec<VersionedFlow>) -> Self {
         let entries = flows
             .into_iter()
-            .map(|flow| (flow.id().to_string(), RegistryEntry { flow: Arc::new(flow), revision: 0 }))
+            .map(|versioned_flow| (versioned_flow.flow.id().to_string(), versioned_flow))
             .collect();
 
         Self { entries: RwLock::new(entries) }
     }
 
-    pub fn reactive_flows(&self) -> Vec<Arc<Flow>> {
+    pub fn reactive_flows(&self) -> Vec<VersionedFlow> {
         self.entries
             .read().expect("flow registry lock poisoned")
             .values()
-            .filter(|entry| entry.flow.schedule().is_none())
-            .map(|entry| entry.flow.clone())
+            .filter(|entry| entry.schedule().is_none())
+            .cloned()
             .collect()
     }
 
-    pub fn scheduled_flows(&self) -> Vec<Arc<Flow>> {
+    pub fn scheduled_flows(&self) -> Vec<VersionedFlow> {
         self.entries
             .read().expect("flow registry lock poisoned")
             .values()
-            .filter(|entry| entry.flow.schedule().is_some())
-            .map(|entry| entry.flow.clone())
+            .filter(|entry| entry.schedule().is_some())
+            .cloned()
             .collect()
     }
 
-    pub fn by_id(&self, id: &str) -> Option<RegistryEntry> {
+    pub fn by_id(&self, id: &str) -> Option<VersionedFlow> {
         self.entries.read().expect("flow registry lock poisoned").get(id).cloned()
     }
 
-    pub fn replace_existing(&self, flow: Flow) -> Option<u64> {
+    pub fn register(&self, versioned_flow: VersionedFlow) -> RegisterResult {
         let mut entries = self.entries.write().expect("flow registry lock poisoned");
-        let existing_flow = entries.get(flow.id())?;
-        let revision = existing_flow.revision + 1;
+        let Some(entry) = entries.get_mut(versioned_flow.flow.id()) else {
+            // Can happen with a stored flow that failed to load at boot and is now fixed
+            entries.insert(versioned_flow.flow.id().to_string(), versioned_flow);
+            return RegisterResult::Added;
+        };
 
-        entries.insert(flow.id().to_string(), RegistryEntry { flow: Arc::new(flow), revision });
+        if versioned_flow.revision <= entry.revision {
+            return RegisterResult::Stale { current_revision: entry.revision };
+        }
 
-        Some(revision)
+        *entry = versioned_flow;
+        RegisterResult::Replaced
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RegisterResult {
+    Added,
+    Replaced,
+    // A newer (or equal) revision is already stored; the registry is unchanged
+    Stale { current_revision: u64 },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::flow_engine::Schedule;
-    use crate::flow_engine::flow::{FlowNode, FlowNodeKind};
+    use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
+    use std::sync::Arc;
 
-    fn reactive_flow(id: &str) -> Flow {
-        flow(id, None)
+    fn reactive_flow(id: &str) -> VersionedFlow {
+        versioned_flow(id, None)
     }
 
-    fn scheduled_flow(id: &str) -> Flow {
-        flow(id, Some(Schedule::Cron("* * * * * *".to_string())))
+    fn scheduled_flow(id: &str) -> VersionedFlow {
+        versioned_flow(id, Some(Schedule::Cron("* * * * * *".to_string())))
+    }
+
+    fn versioned_flow(id: &str, schedule: Option<Schedule>) -> VersionedFlow {
+        VersionedFlow {
+            flow: Arc::new(flow(id, schedule)),
+            revision: 0,
+        }
     }
 
     fn flow(id: &str, schedule: Option<Schedule>) -> Flow {
@@ -78,14 +94,14 @@ mod tests {
     #[test]
     fn reactive_flows_excludes_scheduled_flows() {
         let registry = FlowRegistry::new(vec![reactive_flow("reactive"), scheduled_flow("scheduled")]);
-        let ids: Vec<_> = registry.reactive_flows().iter().map(|flow| flow.id().to_string()).collect();
+        let ids: Vec<_> = registry.reactive_flows().into_iter().map(|flow| flow.id().to_string()).collect();
         assert_eq!(ids, vec!["reactive"]);
     }
 
     #[test]
     fn scheduled_flows_excludes_reactive_flows() {
         let registry = FlowRegistry::new(vec![reactive_flow("reactive"), scheduled_flow("scheduled")]);
-        let ids: Vec<_> = registry.scheduled_flows().iter().map(|flow| flow.id().to_string()).collect();
+        let ids: Vec<_> = registry.scheduled_flows().into_iter().map(|flow| flow.id().to_string()).collect();
         assert_eq!(ids, vec!["scheduled"]);
     }
 
@@ -108,30 +124,53 @@ mod tests {
     }
     
     #[test]
-    fn replace_existing_returns_none_for_an_unknown_flow() {
+    fn register_returns_added_for_an_unknown_flow() {
         let registry = FlowRegistry::new(vec![]);
-        assert!(registry.replace_existing(reactive_flow("missing")).is_none());
+
+        assert_eq!(registry.register(reactive_flow("missing")), RegisterResult::Added);
+        assert_eq!(registry.by_id("missing").expect("flow inserted").revision, 0);
     }
 
     #[test]
-    fn replace_existing_installs_the_new_flow_and_bumps_the_revision() {
+    fn register_stores_a_newer_revision() {
         let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+        let replacement = VersionedFlow { flow: Arc::new(flow("flow", Some(Schedule::Cron("* * * * * *".to_string())))), revision: 1 };
 
-        let revision = registry.replace_existing(scheduled_flow("flow")).unwrap();
+        assert_eq!(registry.register(replacement), RegisterResult::Replaced);
 
-        assert_eq!(revision, 1);
         let entry = registry.by_id("flow").unwrap();
         assert_eq!(entry.revision, 1);
         assert!(entry.flow.schedule().is_some());
     }
 
     #[test]
-    fn replace_existing_bumps_the_revision_on_every_call() {
+    fn register_accepts_a_revision_gap() {
+        // Concurrent updates may land out of order; newest wins even if it skips a revision
         let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+        let replacement = VersionedFlow { flow: Arc::new(flow("flow", None)), revision: 4 };
 
-        registry.replace_existing(reactive_flow("flow"));
-        let revision = registry.replace_existing(reactive_flow("flow")).unwrap();
+        assert_eq!(registry.register(replacement), RegisterResult::Replaced);
+        assert_eq!(registry.by_id("flow").unwrap().revision, 4);
+    }
 
-        assert_eq!(revision, 2);
+    #[test]
+    fn register_rejects_an_older_revision() {
+        let registry = FlowRegistry::new(vec![VersionedFlow { flow: Arc::new(flow("flow", None)), revision: 2 }]);
+        let stale = VersionedFlow { flow: Arc::new(flow("flow", None)), revision: 1 };
+
+        assert_eq!(registry.register(stale), RegisterResult::Stale { current_revision: 2 });
+
+        let entry = registry.by_id("flow").unwrap();
+        assert_eq!(entry.revision, 2);
+        assert!(entry.flow.schedule().is_none());
+    }
+
+    #[test]
+    fn register_rejects_the_same_revision() {
+        let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+        let same = VersionedFlow { flow: Arc::new(flow("flow", None)), revision: 0 };
+
+        assert_eq!(registry.register(same), RegisterResult::Stale { current_revision: 0 });
+        assert!(registry.by_id("flow").unwrap().flow.schedule().is_none());
     }
 }

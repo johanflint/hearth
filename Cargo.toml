@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.90.0"
 
 [dependencies]
+rusqlite = { version = "0.40.1", features = ["bundled"] }
 reqwest = { version = "0.13", features = ["stream", "json"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 tokio-util = "0.7.19"

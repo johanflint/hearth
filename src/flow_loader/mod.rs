@@ -10,8 +10,9 @@ mod value_deserializer;
 mod weekday_condition_deserializer;
 mod weekday_deserializer;
 mod duplicate_ids;
+mod store_loader;
 
-pub use factory::{FlowFactoryError, from_json};
+pub use factory::{FlowFactoryError, from_json, from_json_string};
 pub use loader::load_flows_from;
 pub use serialized_flow::SerializedFlow;
-
+pub use store_loader::load_flows_from_store;
