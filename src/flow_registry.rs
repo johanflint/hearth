@@ -54,6 +54,20 @@ impl FlowRegistry {
         *entry = versioned_flow;
         RegisterResult::Replaced
     }
+
+    pub fn unregister(&self, id: &str, base_revision: u64) -> UnregisterResult {
+        let mut entries = self.entries.write().expect("flow registry lock poisoned");
+        let Some(entry) = entries.get(id) else {
+            return UnregisterResult::NotFound;
+        };
+
+        if entry.revision > base_revision {
+            return UnregisterResult::Stale { current_revision: entry.revision };
+        }
+
+        entries.remove(id);
+        UnregisterResult::Deleted
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -61,6 +75,14 @@ pub enum RegisterResult {
     Added,
     Replaced,
     // A newer (or equal) revision is already stored; the registry is unchanged
+    Stale { current_revision: u64 },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum UnregisterResult {
+    NotFound,
+    Deleted,
+    // A newer revision is registered; the registry is unchanged
     Stale { current_revision: u64 },
 }
 
@@ -172,5 +194,53 @@ mod tests {
 
         assert_eq!(registry.register(same), RegisterResult::Stale { current_revision: 0 });
         assert!(registry.by_id("flow").unwrap().flow.schedule().is_none());
+    }
+
+    #[test]
+    fn unregister_removes_a_flow() {
+        let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+
+        let result = registry.unregister("flow", 0);
+
+        assert_eq!(result, UnregisterResult::Deleted);
+        let entry = registry.by_id("flow");
+        assert!(entry.is_none(), "expected the flow to be unregistered");
+    }
+
+    #[test]
+    fn unregister_rejects_an_unknown_flow() {
+        let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+
+        let result = registry.unregister("unknownFlow", 0);
+
+        assert_eq!(result, UnregisterResult::NotFound);
+        let entry = registry.by_id("flow");
+        assert!(entry.is_some(), "expected the flow to be there");
+    }
+
+    #[test]
+    fn unregister_rejects_an_older_revision_than_registered() {
+        let flow = VersionedFlow {
+            flow: Arc::new(flow("flow", None)),
+            revision: 1,
+        };
+        let registry = FlowRegistry::new(vec![flow]);
+
+        let result = registry.unregister("flow", 0);
+
+        assert_eq!(result, UnregisterResult::Stale { current_revision: 1 });
+        let entry = registry.by_id("flow");
+        assert!(entry.is_some(), "expected the flow to be there");
+    }
+
+    #[test]
+    fn unregister_removes_an_entry_that_lags_behind() {
+        let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
+
+        let result = registry.unregister("flow", 1);
+
+        assert_eq!(result, UnregisterResult::Deleted);
+        let entry = registry.by_id("flow");
+        assert!(entry.is_none(), "expected the flow to be unregistered");
     }
 }

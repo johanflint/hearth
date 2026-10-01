@@ -89,6 +89,25 @@ impl FlowStore {
             }
         }).await.map_err(FlowStoreError::from)? // Handle the join JoinError
     }
+
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
+            let rows_deleted: usize = conn.execute("DELETE FROM flows WHERE id = ?1 AND revision = ?2", params![id, base_revision as i64])?;
+            if rows_deleted == 1 {
+                return Ok(());
+            }
+
+            // No row matched: either the flow doesn't exist or someone else updated it first
+            let current: Option<i64> = conn.query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0)).optional()?;
+            match current {
+                Some(current) => Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? }),
+                None => Err(DeleteError::NotFound),
+            }
+        }).await.map_err(FlowStoreError::from)? // Handle the join JoinError
+    }
 }
 
 #[derive(Debug)]
@@ -188,6 +207,23 @@ pub enum UpdateError {
 
 // `?` applies a single `From`, so `rusqlite::Error` can't reach `Store` via `FlowStoreError` on its own
 impl From<rusqlite::Error> for UpdateError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum DeleteError {
+    #[error("flow not found")]
+    NotFound,
+    #[error("revision conflict: delete is based on revision {base_revision}, but the current revision is {current_revision}")]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error(transparent)]
+    Store(#[from] FlowStoreError),
+}
+
+// `?` applies a single `From`, so `rusqlite::Error` can't reach `Store` via `FlowStoreError` on its own
+impl From<rusqlite::Error> for DeleteError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Store(err.into())
     }
@@ -400,5 +436,61 @@ mod tests {
 
         assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
         assert!(store.list().await.unwrap().is_empty(), "update must not insert");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_flow_when_the_base_revision_matches() {
+        let store = open_in_memory();
+        store.insert("flow", flow_document()).await.expect("insert");
+        store.update("flow", 0, flow_document()).await.expect("update");
+
+        store.delete("flow", 1).await.expect("delete succeeded");
+
+        assert!(store.by_id("flow").await.unwrap().is_none(), "flow must be deleted");
+    }
+
+    #[tokio::test]
+    async fn delete_returns_revision_conflict_for_a_stale_base_revision() {
+        let store = open_in_memory();
+        store.insert("flow", flow_document()).await.expect("insert");
+        store.update("flow", 0, flow_document()).await.expect("update");
+
+        let result = store.delete("flow", 0).await;
+
+        assert!(matches!(result, Err(DeleteError::RevisionConflict { base_revision: 0, current_revision: 1 })), "got {result:?}");
+        assert!(store.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
+    }
+
+    #[tokio::test]
+    async fn delete_returns_revision_conflict_for_a_future_base_revision() {
+        let store = open_in_memory();
+        store.insert("flow", flow_document()).await.expect("insert");
+
+        let result = store.delete("flow", 7).await;
+
+        assert!(matches!(result, Err(DeleteError::RevisionConflict { base_revision: 7, current_revision: 0 })), "got {result:?}");
+        assert!(store.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
+    }
+
+    #[tokio::test]
+    async fn delete_returns_not_found_for_an_unknown_flow() {
+        let store = open_in_memory();
+
+        let result = store.delete("flow", 0).await;
+
+        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_only_removes_the_given_flow() {
+        let store = open_in_memory();
+        store.insert("flow", flow_document()).await.expect("insert");
+        store.insert("other", flow_document()).await.expect("insert");
+
+        store.delete("flow", 0).await.expect("delete succeeded");
+
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "other");
     }
 }
