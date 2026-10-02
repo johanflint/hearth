@@ -1,41 +1,20 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
-use crate::api::flows::commit::{reserve_scheduler_permit, run_to_completion};
-use crate::flow_engine::SchedulerCommand;
-use crate::flow_registry::UnregisterResult;
-use crate::flow_store::DeleteError;
+use crate::flow_service::DeleteFlowError;
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 pub(super) async fn delete_flow(Path(id): Path<String>, query: Result<Query<DeleteFlowQuery>, QueryRejection>, State(state): State<ApiState>) -> Result<Response, Response> {
     let Query(DeleteFlowQuery { base_revision }) = query.map_err(invalid_query)?;
-    let permit = reserve_scheduler_permit(&state).await?;
+    state.flow_service.delete_flow(&id, base_revision).await.map_err(delete_error_response)?;
+    info!("📥 Received request to delete flow '{id}'... OK, revision {base_revision}");
 
-    // Known race, accepted: an update that wrote this revision to the store, but hasn't registered it yet,
-    // re-adds the flow to the registry after this delete removes it. The flow then keeps running until the
-    // next boot, which loads from the store. Rare (needs a concurrent update and delete of the same flow),
-    // so not worth a per-flow lock.
-    run_to_completion(async move {
-        state.flow_store.delete(&id, base_revision).await.map_err(delete_error_response)?;
-
-        // The store is authoritative, so the flow is deleted no matter the registry
-        match state.flow_registry.unregister(&id, base_revision) {
-            UnregisterResult::Deleted => {
-                // The reconcile will detect that the flow is gone from the registry and cancel any schedules
-                permit.send(SchedulerCommand::Reconcile { flow_id: id.clone(), revision: base_revision });
-            }
-            UnregisterResult::NotFound => debug!("Flow '{id}' was not registered, e.g. because it failed to load at boot"),
-            UnregisterResult::Stale { current_revision } => debug!("Flow '{id}' revision {base_revision} is superseded by revision {current_revision}"),
-        };
-
-        info!("📥 Received request to delete flow '{id}'... OK, revision {base_revision}");
-        Ok(StatusCode::NO_CONTENT.into_response())
-    }).await
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,13 +27,21 @@ fn invalid_query(err: QueryRejection) -> Response {
     (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("invalidQuery", err.body_text()))).into_response()
 }
 
-fn delete_error_response(err: DeleteError) -> Response {
+fn delete_error_response(err: DeleteFlowError) -> Response {
     match err {
-        DeleteError::NotFound => (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
-        DeleteError::RevisionConflict { .. } => (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
-        DeleteError::Store(err) => {
+        DeleteFlowError::SchedulerUnavailable => {
+            error!("❌ Scheduler is unavailable");
+            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable"))).into_response()
+        }
+        DeleteFlowError::NotFound => (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
+        DeleteFlowError::RevisionConflict { .. } => (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
+        DeleteFlowError::Internal(err) => {
             error!("❌ Failed to delete flow from store: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
+        }
+        DeleteFlowError::CommitFailed(err) => {
+            error!("❌ Flow commit task failed: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("internalError"))).into_response()
         }
     }
 }
@@ -191,6 +178,21 @@ mod tests {
         assert!(flow_store.by_id(VALID_FLOW_ID).await.unwrap().is_some(), "flow must not be deleted from the store");
         assert!(registry.by_id(VALID_FLOW_ID).is_some(), "flow must not be deleted from the registry");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+    }
+
+    #[tokio::test]
+    async fn delete_flow_returns_503_service_unavailable_when_the_scheduler_is_gone() {
+        let (state, scheduler_rx) = create_seeded_state(0).await;
+        let flow_store = state.flow_store.clone();
+        let registry = state.flow_registry.clone();
+        drop(scheduler_rx);
+
+        let response = call_delete_flow(state, &delete_uri(VALID_FLOW_ID, 0)).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body_json(response).await["code"], "schedulerUnavailable");
+        assert!(flow_store.by_id(VALID_FLOW_ID).await.unwrap().is_some(), "flow must not be deleted from the store");
+        assert!(registry.by_id(VALID_FLOW_ID).is_some(), "flow must not be deleted from the registry");
     }
 
     #[tokio::test]

@@ -2,8 +2,8 @@ use crate::flow_engine::flow::Flow;
 use crate::flow_engine::{SchedulerCommand, VersionedFlow};
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
-use crate::flow_registry::{FlowRegistry, RegisterResult};
-use crate::flow_store::{FlowStore, FlowStoreError, InsertError, StoredFlow, UpdateError};
+use crate::flow_registry::{FlowRegistry, RegisterResult, UnregisterResult};
+use crate::flow_store::{DeleteError, FlowStore, FlowStoreError, InsertError, StoredFlow, UpdateError};
 use serde::Deserialize;
 use std::sync::Arc;
 use thiserror::Error;
@@ -59,6 +59,32 @@ impl FlowService {
             let revision = flow_store.update(&id, base_revision, document).await?;
             register_and_reconcile(&flow_registry, flow, revision, permit);
             Ok(revision)
+        }).await
+    }
+
+    pub async fn delete_flow(&self, id: &str, base_revision: u64) -> Result<(), DeleteFlowError> {
+        let permit = self.reserve_scheduler_permit().await.ok_or(DeleteFlowError::SchedulerUnavailable)?;
+
+        // Known race, accepted: an update that wrote this revision to the store, but hasn't registered it yet,
+        // re-adds the flow to the registry after this delete removes it. The flow then keeps running until the
+        // next boot, which loads from the store. Rare (needs a concurrent update and delete of the same flow),
+        // so not worth a per-flow lock.
+        let flow_store = Arc::clone(&self.flow_store);
+        let flow_registry = Arc::clone(&self.flow_registry);
+        let id = id.to_string();
+        run_to_completion(async move {
+            flow_store.delete(&id, base_revision).await?;
+
+            // The store is authoritative, so the flow is deleted no matter the registry
+            match flow_registry.unregister(&id, base_revision) {
+                UnregisterResult::Deleted => {
+                    // The reconcile will detect that the flow is gone from the registry and cancel any schedules
+                    permit.send(SchedulerCommand::Reconcile { flow_id: id, revision: base_revision });
+                }
+                UnregisterResult::NotFound => debug!("Flow '{id}' was not registered, e.g. because it failed to load at boot"),
+                UnregisterResult::Stale { current_revision } => debug!("Flow '{id}' revision {base_revision} is superseded by revision {current_revision}"),
+            };
+            Ok(())
         }).await
     }
 
@@ -174,6 +200,30 @@ impl From<UpdateError> for UpdateFlowError {
             UpdateError::NotFound => UpdateFlowError::NotFound,
             UpdateError::RevisionConflict { base_revision, current_revision } => UpdateFlowError::RevisionConflict { base_revision, current_revision },
             UpdateError::Store(err) => UpdateFlowError::Internal(err),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum DeleteFlowError {
+    #[error("scheduler is unavailable")]
+    SchedulerUnavailable,
+    #[error("flow not found")]
+    NotFound,
+    #[error("revision conflict: delete is based on revision {base_revision}, but the current revision is {current_revision}")]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error(transparent)]
+    Internal(FlowStoreError),
+    #[error("flow commit task failed: {0}")]
+    CommitFailed(#[from] JoinError),
+}
+
+impl From<DeleteError> for DeleteFlowError {
+    fn from(err: DeleteError) -> Self {
+        match err {
+            DeleteError::NotFound => DeleteFlowError::NotFound,
+            DeleteError::RevisionConflict { base_revision, current_revision } => DeleteFlowError::RevisionConflict { base_revision, current_revision },
+            DeleteError::Store(err) => DeleteFlowError::Internal(err),
         }
     }
 }
@@ -444,6 +494,119 @@ mod tests {
 
             assert!(matches!(result, Err(UpdateFlowError::RevisionConflict { base_revision: 0, current_revision: 1 })), "got {result:?}");
             assert_unchanged(&mut fixture, 1).await;
+        }
+    }
+
+    mod delete_flow {
+        use super::*;
+
+        /// Seeds the store and registry with the flow at revision 0, like at boot
+        async fn create_seeded_service() -> Fixture {
+            let fixture = create_service(FlowRegistry::new(vec![VersionedFlow { flow: Arc::new(flow()), revision: 0 }]));
+            fixture.flow_store.insert("flow", flow_document()).await.expect("seed store");
+            fixture
+        }
+
+        async fn assert_unchanged(fixture: &mut Fixture) {
+            assert!(fixture.flow_store.by_id("flow").await.unwrap().is_some(), "flow must not be deleted from the store");
+            assert!(fixture.flow_registry.by_id("flow").is_some(), "flow must not be deleted from the registry");
+            assert!(fixture.scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+        }
+
+        #[tokio::test]
+        async fn deletes_unregisters_and_reconciles_the_flow() {
+            let Fixture { service, flow_store, flow_registry, mut scheduler_rx } = create_seeded_service().await;
+
+            service.delete_flow("flow", 0).await.expect("delete_flow succeeded");
+
+            assert!(flow_store.by_id("flow").await.unwrap().is_none(), "flow must be deleted from the store");
+            assert!(flow_registry.by_id("flow").is_none(), "flow must be deleted from the registry");
+            assert!(matches!(scheduler_rx.try_recv(), Ok(SchedulerCommand::Reconcile { flow_id, revision: 0 }) if flow_id == "flow"));
+        }
+
+        #[tokio::test]
+        async fn deletes_a_registry_entry_that_lags_behind_the_store() {
+            let Fixture { service, flow_store, flow_registry, mut scheduler_rx } = create_seeded_service().await;
+            flow_store.update("flow", 0, flow_document()).await.expect("update store");
+
+            service.delete_flow("flow", 1).await.expect("delete_flow succeeded");
+
+            assert!(flow_store.by_id("flow").await.unwrap().is_none(), "flow must be deleted from the store");
+            assert!(flow_registry.by_id("flow").is_none(), "flow must be deleted from the registry");
+            assert!(matches!(scheduler_rx.try_recv(), Ok(SchedulerCommand::Reconcile { flow_id, revision: 1 }) if flow_id == "flow"));
+        }
+
+        #[tokio::test]
+        async fn deletes_a_stored_flow_that_is_not_registered() {
+            // E.g. a flow that failed to load at boot
+            let Fixture { service, flow_store, mut scheduler_rx, .. } = create_service(FlowRegistry::new(vec![]));
+            flow_store.insert("flow", flow_document()).await.expect("seed store");
+            let capacity = service.scheduler_tx.capacity();
+
+            service.delete_flow("flow", 0).await.expect("delete_flow succeeded");
+
+            assert!(flow_store.by_id("flow").await.unwrap().is_none(), "flow must be deleted from the store");
+            assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+            assert_eq!(service.scheduler_tx.capacity(), capacity, "permit must be released");
+        }
+
+        #[tokio::test]
+        async fn deletes_but_does_not_unregister_when_the_registry_has_a_newer_revision() {
+            // A concurrent update stored and registered revision 1 after this delete's store write
+            let Fixture { service, flow_store, flow_registry, mut scheduler_rx } = create_service(FlowRegistry::new(vec![VersionedFlow { flow: Arc::new(flow()), revision: 1 }]));
+            flow_store.insert("flow", flow_document()).await.expect("seed store");
+            let capacity = service.scheduler_tx.capacity();
+
+            service.delete_flow("flow", 0).await.expect("delete_flow succeeded");
+
+            assert!(flow_store.by_id("flow").await.unwrap().is_none(), "flow must be deleted from the store");
+            assert_eq!(flow_registry.by_id("flow").expect("flow in registry").revision, 1, "registry must be unchanged");
+            assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+            assert_eq!(service.scheduler_tx.capacity(), capacity, "permit must be released");
+        }
+
+        #[tokio::test]
+        async fn returns_scheduler_unavailable_when_the_scheduler_is_gone() {
+            let Fixture { service, flow_store, flow_registry, scheduler_rx } = create_seeded_service().await;
+            drop(scheduler_rx);
+
+            let result = service.delete_flow("flow", 0).await;
+
+            assert!(matches!(result, Err(DeleteFlowError::SchedulerUnavailable)), "got {result:?}");
+            assert!(flow_store.by_id("flow").await.unwrap().is_some(), "flow must not be deleted from the store");
+            assert!(flow_registry.by_id("flow").is_some(), "flow must not be deleted from the registry");
+        }
+
+        #[tokio::test]
+        async fn returns_not_found_for_an_unknown_flow() {
+            let mut fixture = create_seeded_service().await;
+
+            let result = fixture.service.delete_flow("other", 0).await;
+
+            assert!(matches!(result, Err(DeleteFlowError::NotFound)), "got {result:?}");
+            assert_unchanged(&mut fixture).await;
+        }
+
+        #[tokio::test]
+        async fn returns_revision_conflict_for_a_stale_base_revision() {
+            let mut fixture = create_seeded_service().await;
+            // Someone else updated the flow first
+            fixture.flow_store.update("flow", 0, flow_document()).await.expect("concurrent update");
+
+            let result = fixture.service.delete_flow("flow", 0).await;
+
+            assert!(matches!(result, Err(DeleteFlowError::RevisionConflict { base_revision: 0, current_revision: 1 })), "got {result:?}");
+            assert_unchanged(&mut fixture).await;
+        }
+
+        #[tokio::test]
+        async fn returns_revision_conflict_for_a_future_base_revision() {
+            let mut fixture = create_seeded_service().await;
+
+            let result = fixture.service.delete_flow("flow", 1).await;
+
+            assert!(matches!(result, Err(DeleteFlowError::RevisionConflict { base_revision: 1, current_revision: 0 })), "got {result:?}");
+            assert_unchanged(&mut fixture).await;
         }
     }
 
