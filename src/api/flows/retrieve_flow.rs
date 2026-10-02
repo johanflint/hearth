@@ -1,5 +1,6 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
+use crate::flow_service::RetrieveFlowError;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -8,15 +9,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tracing::error;
 
-pub(super) async fn retrieve_flow(Path(id): Path<String>, State(state): State<ApiState>) -> Response {
-    let stored_flow = match state.flow_store.by_id(&id).await {
-        Ok(Some(stored_flow)) => stored_flow,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(err) => {
-            error!("❌ Failed to retrieve flow '{id}' from store: {err}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
-        }
-    };
+pub(super) async fn retrieve_flow(Path(id): Path<String>, State(state): State<ApiState>) -> Result<Response, Response> {
+    let stored_flow = state.flow_service.retrieve_flow(&id).await.map_err(|err| retrieve_error_response(&id, err))?;
 
     let response = RetrieveFlowResponse {
         id: stored_flow.id,
@@ -25,7 +19,7 @@ pub(super) async fn retrieve_flow(Path(id): Path<String>, State(state): State<Ap
         created_at: stored_flow.created_at,
         updated_at: stored_flow.updated_at,
     };
-    (StatusCode::OK, Json(response)).into_response()
+    Ok((StatusCode::OK, Json(response)).into_response())
 }
 
 #[derive(Debug, Serialize)]
@@ -36,6 +30,16 @@ struct RetrieveFlowResponse {
     pub flow: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+fn retrieve_error_response(id: &str, err: RetrieveFlowError) -> Response {
+    match err {
+        RetrieveFlowError::NotFound => StatusCode::NOT_FOUND.into_response(),
+        RetrieveFlowError::Internal(err) => {
+            error!("❌ Failed to retrieve flow '{id}' from store: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
+        }
+    }
 }
 
 #[cfg(test)]
