@@ -1,7 +1,7 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
-use crate::api::flows::commit::{parse_request, register_and_reconcile, reserve_scheduler_permit, run_to_completion, validate_flow_document};
-use crate::flow_store::InsertError;
+use crate::api::flows::commit::{flow_factory_error_response, invalid_json, parse_request};
+use crate::flow_service::{CreateFlowError, CreatedFlow};
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -13,18 +13,11 @@ use tracing::{error, info};
 
 pub(super) async fn create_flow(State(state): State<ApiState>, body: Bytes) -> Result<Response, Response> {
     let request: CreateFlowRequest = parse_request(&body)?;
-    let flow = validate_flow_document(&request.flow)?;
-    let permit = reserve_scheduler_permit(&state).await?;
+    let CreatedFlow { id, revision } = state.flow_service.create_flow(request.flow).await.map_err(create_error_response)?;
+    info!("📥 Received request to create flow '{id}'... OK, revision {revision}");
 
-    run_to_completion(async move {
-        let id = flow.id().to_string();
-        let revision = state.flow_store.insert(&id, request.flow).await.map_err(insert_error_response)?;
-        register_and_reconcile(&state, flow, revision, permit);
-        info!("📥 Received request to create flow '{id}'... OK, revision {revision}");
-
-        let location = format!("/api/flows/{id}");
-        Ok((StatusCode::CREATED, [(header::LOCATION, location)], Json(CreateFlowResponse { id, revision })).into_response())
-    }).await
+    let location = format!("/api/flows/{id}");
+    Ok((StatusCode::CREATED, [(header::LOCATION, location)], Json(CreateFlowResponse { id, revision })).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,12 +32,22 @@ struct CreateFlowResponse {
     revision: u64,
 }
 
-fn insert_error_response(err: InsertError) -> Response {
+fn create_error_response(err: CreateFlowError) -> Response {
     match err {
-        InsertError::AlreadyExists => (StatusCode::CONFLICT, Json(ErrorResponse::new_code_only("flowAlreadyExists"))).into_response(),
-        InsertError::Store(err) => {
+        CreateFlowError::InvalidDocument(err) => invalid_json(err),
+        CreateFlowError::InvalidFlow(err) => flow_factory_error_response(err),
+        CreateFlowError::SchedulerUnavailable => {
+            error!("❌ Scheduler is unavailable");
+            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable"))).into_response()
+        }
+        CreateFlowError::AlreadyExists => (StatusCode::CONFLICT, Json(ErrorResponse::new_code_only("flowAlreadyExists"))).into_response(),
+        CreateFlowError::Internal(err) => {
             error!("❌ Failed to persist flow to store: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
+        }
+        CreateFlowError::CommitFailed(err) => {
+            error!("❌ Flow commit task failed: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("internalError"))).into_response()
         }
     }
 }

@@ -62,11 +62,11 @@ pub(super) fn register_and_reconcile(state: &ApiState, flow: Flow, revision: u64
     }
 }
 
-fn invalid_json(err: serde_json::Error) -> Response {
+pub(super) fn invalid_json(err: serde_json::Error) -> Response {
     (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("invalidJson", err.to_string()))).into_response()
 }
 
-fn flow_factory_error_response(err: FlowFactoryError) -> Response {
+pub(super) fn flow_factory_error_response(err: FlowFactoryError) -> Response {
     let message = err.to_string();
     let error_response = match err {
         FlowFactoryError::Deserialization(_) => unreachable!("payload is already deserialized into a SerializedFlow"),

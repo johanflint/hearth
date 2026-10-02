@@ -22,8 +22,9 @@ pub(super) fn create_state(flow_registry: FlowRegistry) -> (ApiState, mpsc::Rece
     let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
     let handle = PrometheusBuilder::new().build_recorder().handle();
     let flow_store = Arc::new(FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store"));
-    let flow_service = Arc::new(FlowService::new(Arc::clone(&flow_store)));
-    (ApiState::new(handle, flow_service, Arc::new(flow_registry), flow_store, scheduler_tx), scheduler_rx)
+    let flow_registry = Arc::new(flow_registry);
+    let flow_service = Arc::new(FlowService::new(Arc::clone(&flow_store), Arc::clone(&flow_registry), scheduler_tx.clone()));
+    (ApiState::new(handle, flow_service, flow_registry, flow_store, scheduler_tx), scheduler_rx)
 }
 
 pub(super) async fn body_json(response: Response) -> serde_json::Value {
