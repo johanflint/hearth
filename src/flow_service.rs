@@ -13,9 +13,9 @@ use tracing::debug;
 
 #[derive(Debug)]
 pub struct FlowService {
-    pub(super) flow_store: Arc<FlowStore>,
-    pub(super) flow_registry: Arc<FlowRegistry>,
-    pub(super) scheduler_tx: Sender<SchedulerCommand>,
+    flow_store: Arc<FlowStore>,
+    flow_registry: Arc<FlowRegistry>,
+    scheduler_tx: Sender<SchedulerCommand>,
 }
 
 impl FlowService {
