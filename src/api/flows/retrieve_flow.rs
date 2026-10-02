@@ -46,7 +46,7 @@ fn retrieve_error_response(id: &str, err: RetrieveFlowError) -> Response {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{VALID_FLOW_ID, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{VALID_FLOW_ID, Fixture, body_json, create_state, valid_flow_document};
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
     use axum::http::Request;
@@ -60,8 +60,8 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_flow_returns_the_stored_flow_as_a_json_object() {
-        let (state, _scheduler_rx) = create_state(FlowRegistry::new(vec![]));
-        state.flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
+        let Fixture { state, flow_store, .. } = create_state(FlowRegistry::new(vec![]));
+        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
 
         let response = call_retrieve_flow(state, VALID_FLOW_ID).await;
 
@@ -76,7 +76,7 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_flow_returns_404_not_found_without_a_body_for_an_unknown_flow() {
-        let (state, _scheduler_rx) = create_state(FlowRegistry::new(vec![]));
+        let Fixture { state, .. } = create_state(FlowRegistry::new(vec![]));
 
         let response = call_retrieve_flow(state, VALID_FLOW_ID).await;
 

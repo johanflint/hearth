@@ -56,7 +56,7 @@ fn create_error_response(err: CreateFlowError) -> Response {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{INVALID_FLOW_JSON, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{INVALID_FLOW_JSON, VALID_FLOW_ID, VALID_FLOW_JSON, Fixture, body_json, create_state, valid_flow_document};
     use crate::flow_engine::SchedulerCommand;
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
@@ -81,9 +81,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_flow_stores_registers_and_reconciles_a_new_flow() {
-        let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![]));
-        let flow_store = state.flow_store.clone();
-        let registry = state.flow_registry.clone();
+        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_state(FlowRegistry::new(vec![]));
 
         let response = call_create_flow(state, &create_request(VALID_FLOW_JSON)).await;
 
@@ -92,28 +90,26 @@ mod tests {
         assert_eq!(body_json(response).await, json!({"id": VALID_FLOW_ID, "revision": 0}));
         let stored_flow = flow_store.by_id(VALID_FLOW_ID).await.expect("by_id succeeded").expect("flow stored");
         assert_eq!(stored_flow.document, valid_flow_document(), "stored document must be the flow");
-        assert_eq!(registry.by_id(VALID_FLOW_ID).expect("flow in registry").revision, 0);
+        assert_eq!(flow_registry.by_id(VALID_FLOW_ID).expect("flow in registry").revision, 0);
         assert!(matches!(scheduler_rx.try_recv(), Ok(SchedulerCommand::Reconcile { revision: 0, .. })));
     }
 
     #[tokio::test]
     async fn create_flow_returns_409_conflict_for_an_existing_flow() {
-        let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![]));
-        state.flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
-        let registry = state.flow_registry.clone();
+        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_state(FlowRegistry::new(vec![]));
+        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
 
         let response = call_create_flow(state, &create_request(VALID_FLOW_JSON)).await;
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
         assert_eq!(body_json(response).await["code"], "flowAlreadyExists");
-        assert!(registry.by_id(VALID_FLOW_ID).is_none(), "registry must be unchanged");
+        assert!(flow_registry.by_id(VALID_FLOW_ID).is_none(), "registry must be unchanged");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
     }
 
     #[tokio::test]
     async fn create_flow_returns_422_unprocessable_entity_for_a_semantically_invalid_flow() {
-        let (state, mut scheduler_rx) = create_state(FlowRegistry::new(vec![]));
-        let flow_store = state.flow_store.clone();
+        let Fixture { state, flow_store, mut scheduler_rx, .. } = create_state(FlowRegistry::new(vec![]));
 
         let response = call_create_flow(state, &create_request(INVALID_FLOW_JSON)).await;
 
@@ -125,7 +121,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_flow_returns_400_bad_request_without_a_flow_envelope() {
-        let (state, _scheduler_rx) = create_state(FlowRegistry::new(vec![]));
+        let Fixture { state, .. } = create_state(FlowRegistry::new(vec![]));
 
         let response = call_create_flow(state, VALID_FLOW_JSON).await;
 
