@@ -123,6 +123,7 @@ mod tests {
     #[tokio::test]
     async fn update_flow_replaces_the_registry_entry_and_sends_a_reconcile_command() {
         let (state, mut scheduler_rx) = create_seeded_state().await;
+        let registry = state.flow_registry.clone();
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;
 
@@ -130,6 +131,8 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body["id"], VALID_FLOW_ID);
         assert_eq!(body["revision"], 1);
+        let versioned_flow = registry.by_id(VALID_FLOW_ID).expect("expected a flow");
+        assert_eq!(versioned_flow.revision, 1);
 
         match scheduler_rx.try_recv().expect("expected a Reconcile command") {
             SchedulerCommand::Reconcile { flow_id, revision } => {
