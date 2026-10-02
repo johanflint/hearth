@@ -1,7 +1,7 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
-use crate::api::flows::commit::{parse_request, register_and_reconcile, reserve_scheduler_permit, run_to_completion, validate_flow_document};
-use crate::flow_store::UpdateError;
+use crate::api::flows::commit::{flow_factory_error_response, invalid_json, parse_request};
+use crate::flow_service::UpdateFlowError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -13,30 +13,33 @@ use tracing::{debug, error, info};
 pub(super) async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body: Bytes) -> Result<Response, Response> {
     debug!("Received request to update flow '{id}'...");
     let request: UpdateFlowRequest = parse_request(&body)?;
-    let flow = validate_flow_document(&request.flow)?;
+    let revision = state.flow_service.update_flow(&id, request.base_revision, request.flow).await.map_err(update_error_response)?;
+    info!("📥 Received request to update flow '{id}'... OK, revision {revision}");
 
-    if id != flow.id() {
-        let response = ErrorResponse::new("flowIdMismatch", format!("body id '{}' does not match path id '{}'", flow.id(), id));
-        return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(response)).into_response());
-    }
-
-    let permit = reserve_scheduler_permit(&state).await?;
-
-    run_to_completion(async move {
-        let updated_revision = state.flow_store.update(&id, request.base_revision, request.flow).await.map_err(update_error_response)?;
-        register_and_reconcile(&state, flow, updated_revision, permit);
-        info!("📥 Received request to update flow '{id}'... OK, revision {updated_revision}");
-        Ok((StatusCode::OK, Json(UpdateFlowResponse { id, revision: updated_revision })).into_response())
-    }).await
+    Ok((StatusCode::OK, Json(UpdateFlowResponse { id, revision })).into_response())
 }
 
-fn update_error_response(err: UpdateError) -> Response {
+fn update_error_response(err: UpdateFlowError) -> Response {
     match err {
-        UpdateError::NotFound => (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
-        UpdateError::RevisionConflict { .. } => (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
-        UpdateError::Store(err) => {
+        UpdateFlowError::InvalidDocument(err) => invalid_json(err),
+        UpdateFlowError::InvalidFlow(err) => flow_factory_error_response(err),
+        UpdateFlowError::IdMismatch { id, flow_id } => {
+            let response = ErrorResponse::new("flowIdMismatch", format!("body id '{flow_id}' does not match path id '{id}'"));
+            (StatusCode::UNPROCESSABLE_ENTITY, Json(response)).into_response()
+        }
+        UpdateFlowError::SchedulerUnavailable => {
+            error!("❌ Scheduler is unavailable");
+            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable"))).into_response()
+        }
+        UpdateFlowError::NotFound => (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
+        UpdateFlowError::RevisionConflict { .. } => (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
+        UpdateFlowError::Internal(err) => {
             error!("❌ Failed to persist flow to store: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
+        }
+        UpdateFlowError::CommitFailed(err) => {
+            error!("❌ Flow commit task failed: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("internalError"))).into_response()
         }
     }
 }

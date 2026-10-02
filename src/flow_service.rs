@@ -3,13 +3,13 @@ use crate::flow_engine::{SchedulerCommand, VersionedFlow};
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
 use crate::flow_registry::{FlowRegistry, RegisterResult};
-use crate::flow_store::{FlowStore, FlowStoreError, InsertError, StoredFlow};
+use crate::flow_store::{FlowStore, FlowStoreError, InsertError, StoredFlow, UpdateError};
 use serde::Deserialize;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::{OwnedPermit, Sender};
 use tokio::task::JoinError;
-use tracing::{debug, error};
+use tracing::debug;
 
 #[derive(Debug)]
 pub struct FlowService {
@@ -33,10 +33,7 @@ impl FlowService {
 
     pub async fn create_flow(&self, document: serde_json::Value) -> Result<CreatedFlow, CreateFlowError> {
         let flow = validate_flow_document::<CreateFlowError>(&document)?;
-
-        // Reserves capacity before mutatinganything, so an unavailable scheduler is rejected
-        // up front and the `Reconcile` send after the commit is infallible
-        let permit = self.scheduler_tx.clone().reserve_owned().await.map_err(|_| CreateFlowError::SchedulerUnavailable)?;
+        let permit = self.reserve_scheduler_permit().await.ok_or(CreateFlowError::SchedulerUnavailable)?;
 
         let flow_registry = Arc::clone(&self.flow_registry);
         let flow_store = Arc::clone(&self.flow_store);
@@ -46,6 +43,29 @@ impl FlowService {
             register_and_reconcile(&flow_registry, flow, revision, permit);
             Ok(CreatedFlow { id, revision })
         }).await
+    }
+
+    pub async fn update_flow(&self, id: &str, base_revision: u64, document: serde_json::Value) -> Result<u64, UpdateFlowError> {
+        let flow = validate_flow_document::<UpdateFlowError>(&document)?;
+        if id != flow.id() {
+            return Err(UpdateFlowError::IdMismatch { id: id.to_string(), flow_id: flow.id().to_string() });
+        }
+        let permit = self.reserve_scheduler_permit().await.ok_or(UpdateFlowError::SchedulerUnavailable)?;
+
+        let flow_registry = Arc::clone(&self.flow_registry);
+        let flow_store = Arc::clone(&self.flow_store);
+        let id = id.to_string();
+        run_to_completion(async move {
+            let revision = flow_store.update(&id, base_revision, document).await?;
+            register_and_reconcile(&flow_registry, flow, revision, permit);
+            Ok(revision)
+        }).await
+    }
+
+    /// Reserves capacity before mutating anything, so an unavailable scheduler is rejected
+    /// up front and the `Reconcile` send after the commit is infallible
+    async fn reserve_scheduler_permit(&self) -> Option<OwnedPermit<SchedulerCommand>> {
+        self.scheduler_tx.clone().reserve_owned().await.ok()
     }
 }
 
@@ -128,6 +148,36 @@ impl From<InsertError> for CreateFlowError {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum UpdateFlowError {
+    #[error("invalid flow document: {0}")]
+    InvalidDocument(#[from] serde_json::Error),
+    #[error(transparent)]
+    InvalidFlow(#[from] FlowFactoryError),
+    #[error("flow id '{flow_id}' does not match id '{id}'")]
+    IdMismatch { id: String, flow_id: String },
+    #[error("scheduler is unavailable")]
+    SchedulerUnavailable,
+    #[error("flow not found")]
+    NotFound,
+    #[error("revision conflict: update is based on revision {base_revision}, but the current revision is {current_revision}")]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error(transparent)]
+    Internal(FlowStoreError),
+    #[error("flow commit task failed: {0}")]
+    CommitFailed(#[from] JoinError),
+}
+
+impl From<UpdateError> for UpdateFlowError {
+    fn from(err: UpdateError) -> Self {
+        match err {
+            UpdateError::NotFound => UpdateFlowError::NotFound,
+            UpdateError::RevisionConflict { base_revision, current_revision } => UpdateFlowError::RevisionConflict { base_revision, current_revision },
+            UpdateError::Store(err) => UpdateFlowError::Internal(err),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +194,14 @@ mod tests {
 
     fn flow_document() -> serde_json::Value {
         json!({"id":"flow","name":"Test","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]})
+    }
+
+    /// Deserializes, but fails validation with a missing end node
+    fn invalid_flow_document() -> serde_json::Value {
+        json!({"id":"flow","name":"Test","nodes":[
+            {"id":"startNode","type":"startNode","outgoingNode":"logNode"},
+            {"id":"logNode","type":"actionNode","outgoingNode":"","action":{"type":"log","message":""}}
+        ]})
     }
 
     fn flow() -> Flow {
@@ -289,6 +347,103 @@ mod tests {
             assert_eq!(flow_registry.by_id("flow").expect("flow in registry").revision, 5, "registry must be unchanged");
             assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
             assert_eq!(service.scheduler_tx.capacity(), capacity, "permit must be released");
+        }
+    }
+
+    mod update_flow {
+        use super::*;
+
+        /// Seeds the store and registry with the flow at revision 0, like at boot
+        async fn create_seeded_service() -> Fixture {
+            let fixture = create_service(FlowRegistry::new(vec![VersionedFlow { flow: Arc::new(flow()), revision: 0 }]));
+            fixture.flow_store.insert("flow", flow_document()).await.expect("seed store");
+            fixture
+        }
+
+        async fn assert_unchanged(fixture: &mut Fixture, store_revision: u64) {
+            let stored_flow = fixture.flow_store.by_id("flow").await.expect("by_id succeeded").expect("flow stored");
+            assert_eq!(stored_flow.revision, store_revision, "store must be unchanged");
+            assert_eq!(fixture.flow_registry.by_id("flow").expect("flow in registry").revision, 0, "registry must be unchanged");
+            assert!(fixture.scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+        }
+
+        #[tokio::test]
+        async fn stores_registers_and_reconciles_the_flow() {
+            let Fixture { service, flow_store, flow_registry, mut scheduler_rx } = create_seeded_service().await;
+
+            let revision = service.update_flow("flow", 0, flow_document()).await.expect("update_flow succeeded");
+
+            assert_eq!(revision, 1);
+            let stored_flow = flow_store.by_id("flow").await.expect("by_id succeeded").expect("flow stored");
+            assert_eq!((stored_flow.revision, stored_flow.document), (1, flow_document()));
+            assert_eq!(flow_registry.by_id("flow").expect("flow in registry").revision, 1);
+            assert!(matches!(scheduler_rx.try_recv(), Ok(SchedulerCommand::Reconcile { flow_id, revision: 1 }) if flow_id == "flow"));
+        }
+
+        #[tokio::test]
+        async fn returns_invalid_document_for_a_document_that_is_not_a_flow() {
+            let mut fixture = create_seeded_service().await;
+
+            let result = fixture.service.update_flow("flow", 0, json!({"id": "flow"})).await;
+
+            assert!(matches!(result, Err(UpdateFlowError::InvalidDocument(_))), "got {result:?}");
+            assert_unchanged(&mut fixture, 0).await;
+        }
+
+        #[tokio::test]
+        async fn returns_invalid_flow_for_a_semantically_invalid_flow() {
+            let mut fixture = create_seeded_service().await;
+
+            let result = fixture.service.update_flow("flow", 0, invalid_flow_document()).await;
+
+            assert!(matches!(result, Err(UpdateFlowError::InvalidFlow(FlowFactoryError::MissingEndNode))), "got {result:?}");
+            assert_unchanged(&mut fixture, 0).await;
+        }
+
+        #[tokio::test]
+        async fn returns_id_mismatch_when_the_id_does_not_match_the_flow_id() {
+            let mut fixture = create_seeded_service().await;
+
+            let result = fixture.service.update_flow("other", 0, flow_document()).await;
+
+            assert!(matches!(&result, Err(UpdateFlowError::IdMismatch { id, flow_id }) if id == "other" && flow_id == "flow"), "got {result:?}");
+            assert_unchanged(&mut fixture, 0).await;
+        }
+
+        #[tokio::test]
+        async fn returns_scheduler_unavailable_when_the_scheduler_is_gone() {
+            let Fixture { service, flow_store, flow_registry, scheduler_rx } = create_seeded_service().await;
+            drop(scheduler_rx);
+
+            let result = service.update_flow("flow", 0, flow_document()).await;
+
+            assert!(matches!(result, Err(UpdateFlowError::SchedulerUnavailable)), "got {result:?}");
+            assert_eq!(flow_store.by_id("flow").await.unwrap().expect("flow stored").revision, 0, "store must be unchanged");
+            assert_eq!(flow_registry.by_id("flow").expect("flow in registry").revision, 0, "registry must be unchanged");
+        }
+
+        #[tokio::test]
+        async fn returns_not_found_for_an_unknown_flow() {
+            let Fixture { service, flow_store, flow_registry, mut scheduler_rx } = create_service(FlowRegistry::new(vec![]));
+
+            let result = service.update_flow("flow", 0, flow_document()).await;
+
+            assert!(matches!(result, Err(UpdateFlowError::NotFound)), "got {result:?}");
+            assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
+            assert!(flow_registry.by_id("flow").is_none(), "nothing must be registered");
+            assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+        }
+
+        #[tokio::test]
+        async fn returns_revision_conflict_for_a_stale_base_revision() {
+            let mut fixture = create_seeded_service().await;
+            // Someone else updated the flow first
+            fixture.flow_store.update("flow", 0, flow_document()).await.expect("concurrent update");
+
+            let result = fixture.service.update_flow("flow", 0, flow_document()).await;
+
+            assert!(matches!(result, Err(UpdateFlowError::RevisionConflict { base_revision: 0, current_revision: 1 })), "got {result:?}");
+            assert_unchanged(&mut fixture, 1).await;
         }
     }
 
