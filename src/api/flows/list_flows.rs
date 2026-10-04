@@ -1,5 +1,6 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
+use crate::flow_service::ListFlowsError;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -8,20 +9,23 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tracing::error;
 
-pub(super) async fn list_flows(State(state): State<ApiState>) -> Response {
-    let stored_flows = match state.flow_store.list().await {
-        Ok(stored_flows) => stored_flows,
-        Err(err) => {
-            error!("❌ Failed to list flows from store: {err}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
-        }
-    };
+pub(super) async fn list_flows(State(state): State<ApiState>) -> Result<Response, Response> {
+    let stored_flows = state.flow_service.list().await.map_err(list_error_response)?;
 
     let flows: Vec<FlowSummary> = stored_flows.into_iter()
         .map(|flow| FlowSummary { id: flow.id, revision: flow.revision, created_at: flow.created_at, updated_at: flow.updated_at })
         .collect();
 
-    (StatusCode::OK, Json(ListFlowsResponse { flows })).into_response()
+    Ok((StatusCode::OK, Json(ListFlowsResponse { flows })).into_response())
+}
+
+fn list_error_response(err: ListFlowsError) -> Response {
+    match err {
+        ListFlowsError::Internal(err) => {
+            error!("❌ Failed to list flows from store: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -42,7 +46,7 @@ struct FlowSummary {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{VALID_FLOW_ID, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{VALID_FLOW_ID, Fixture, body_json, create_state, valid_flow_document};
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
     use axum::http::Request;
@@ -62,7 +66,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_flows_returns_an_empty_list_for_an_empty_store() {
-        let (state, _scheduler_rx) = create_state(FlowRegistry::new(Vec::new()));
+        let Fixture { state, .. } = create_state(FlowRegistry::new(Vec::new()));
 
         let response = call_list_flows(state).await;
 
@@ -72,9 +76,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_flows_returns_the_stored_flows_with_camel_case_fields() {
-        let (state, _scheduler_rx) = create_state(FlowRegistry::new(vec![]));
-        state.flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
-        state.flow_store.update(VALID_FLOW_ID, 0, valid_flow_document()).await.expect("update store");
+        let Fixture { state, flow_store, .. } = create_state(FlowRegistry::new(vec![]));
+        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
+        flow_store.update(VALID_FLOW_ID, 0, valid_flow_document()).await.expect("update store");
 
         let response = call_list_flows(state).await;
 

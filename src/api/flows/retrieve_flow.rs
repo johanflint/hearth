@@ -1,5 +1,6 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
+use crate::flow_service::RetrieveFlowError;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -8,15 +9,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tracing::error;
 
-pub(super) async fn retrieve_flow(Path(id): Path<String>, State(state): State<ApiState>) -> Response {
-    let stored_flow = match state.flow_store.by_id(&id).await {
-        Ok(Some(stored_flow)) => stored_flow,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(err) => {
-            error!("❌ Failed to retrieve flow '{id}' from store: {err}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response();
-        }
-    };
+pub(super) async fn retrieve_flow(Path(id): Path<String>, State(state): State<ApiState>) -> Result<Response, Response> {
+    let stored_flow = state.flow_service.retrieve_flow(&id).await.map_err(|err| retrieve_error_response(&id, err))?;
 
     let response = RetrieveFlowResponse {
         id: stored_flow.id,
@@ -25,7 +19,7 @@ pub(super) async fn retrieve_flow(Path(id): Path<String>, State(state): State<Ap
         created_at: stored_flow.created_at,
         updated_at: stored_flow.updated_at,
     };
-    (StatusCode::OK, Json(response)).into_response()
+    Ok((StatusCode::OK, Json(response)).into_response())
 }
 
 #[derive(Debug, Serialize)]
@@ -38,11 +32,21 @@ struct RetrieveFlowResponse {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
+fn retrieve_error_response(id: &str, err: RetrieveFlowError) -> Response {
+    match err {
+        RetrieveFlowError::NotFound => StatusCode::NOT_FOUND.into_response(),
+        RetrieveFlowError::Internal(err) => {
+            error!("❌ Failed to retrieve flow '{id}' from store: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{VALID_FLOW_ID, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{VALID_FLOW_ID, Fixture, body_json, create_state, valid_flow_document};
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
     use axum::http::Request;
@@ -56,8 +60,8 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_flow_returns_the_stored_flow_as_a_json_object() {
-        let (state, _scheduler_rx) = create_state(FlowRegistry::new(vec![]));
-        state.flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
+        let Fixture { state, flow_store, .. } = create_state(FlowRegistry::new(vec![]));
+        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
 
         let response = call_retrieve_flow(state, VALID_FLOW_ID).await;
 
@@ -72,7 +76,7 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_flow_returns_404_not_found_without_a_body_for_an_unknown_flow() {
-        let (state, _scheduler_rx) = create_state(FlowRegistry::new(vec![]));
+        let Fixture { state, .. } = create_state(FlowRegistry::new(vec![]));
 
         let response = call_retrieve_flow(state, VALID_FLOW_ID).await;
 

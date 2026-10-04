@@ -4,6 +4,7 @@ use crate::domain::controller_registry;
 use crate::domain::events::Event;
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
+use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
 use crate::metrics_layer::MetricsLayer;
 use crate::store::Store;
@@ -38,6 +39,7 @@ mod server;
 mod test_support;
 mod metrics_layer;
 mod flow_store;
+mod flow_service;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -106,7 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store");
 
-    let api_state = ApiState::new(prometheus_handle, flow_registry, flow_store, scheduler_tx);
+    let flow_service = Arc::new(FlowService::new(flow_store, flow_registry, scheduler_tx));
+    let api_state = ApiState::new(prometheus_handle, flow_service);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 
