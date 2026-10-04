@@ -50,7 +50,7 @@ fn delete_error_response(err: DeleteFlowError) -> Response {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{VALID_FLOW_ID, VALID_FLOW_JSON, Fixture, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{Fixture, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document};
     use crate::flow_engine::{SchedulerCommand, VersionedFlow};
     use crate::flow_loader;
     use crate::flow_loader::SerializedFlow;
@@ -153,7 +153,9 @@ mod tests {
         let response = call_delete_flow(state, &delete_uri(VALID_FLOW_ID, 0)).await;
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
-        assert_eq!(body_json(response).await["code"], "revisionConflict");
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "revisionConflict");
+        assert_eq!(body["message"], "revision conflict: delete is based on revision 0, but the current revision is 1");
         assert!(flow_store.by_id(VALID_FLOW_ID).await.unwrap().is_some(), "flow must not be deleted from the store");
         assert!(flow_registry.by_id(VALID_FLOW_ID).is_some(), "flow must not be deleted from the registry");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");

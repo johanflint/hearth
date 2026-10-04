@@ -56,7 +56,7 @@ fn create_error_response(err: CreateFlowError) -> Response {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{INVALID_FLOW_JSON, VALID_FLOW_ID, VALID_FLOW_JSON, Fixture, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{Fixture, INVALID_FLOW_JSON, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document};
     use crate::flow_engine::SchedulerCommand;
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
@@ -105,6 +105,19 @@ mod tests {
         assert_eq!(body_json(response).await["code"], "flowAlreadyExists");
         assert!(flow_registry.by_id(VALID_FLOW_ID).is_none(), "registry must be unchanged");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+    }
+
+    #[tokio::test]
+    async fn create_flow_returns_503_service_unavailable_when_the_scheduler_is_gone() {
+        let Fixture { state, flow_store, flow_registry, scheduler_rx } = create_state(FlowRegistry::new(vec![]));
+        drop(scheduler_rx);
+
+        let response = call_create_flow(state, &create_request(VALID_FLOW_JSON)).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body_json(response).await["code"], "schedulerUnavailable");
+        assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(flow_registry.by_id(VALID_FLOW_ID).is_none(), "nothing must be registered");
     }
 
     #[tokio::test]
