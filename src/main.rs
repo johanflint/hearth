@@ -103,12 +103,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store listener");
 
+    let store_rx_clone = store.notifier();
     task::spawn(async move {
         store.listen().await;
     });
     info!("✅  Initialized store");
 
-    let flow_service = Arc::new(FlowService::new(flow_store, flow_registry, scheduler_tx));
+    let flow_service = Arc::new(FlowService::new(flow_store, flow_registry, scheduler_tx, store_rx_clone));
     let api_state = ApiState::new(prometheus_handle, flow_service);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
