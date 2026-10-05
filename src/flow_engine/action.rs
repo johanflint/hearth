@@ -1,6 +1,6 @@
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
-use crate::flow_engine::property_value::PropertyValue;
+use crate::flow_engine::property_value::PropertyCommand;
 use crate::flow_engine::scope::Scope;
 use action_macros::register_action;
 use async_trait::async_trait;
@@ -74,17 +74,17 @@ impl Action for LogAction {
 #[register_action]
 pub struct ControlDeviceAction {
     device_id: String,
-    property: HashMap<String, PropertyValue>,
+    property: HashMap<String, PropertyCommand>,
 }
 
 #[cfg(test)]
 impl ControlDeviceAction {
-    pub fn new(device_id: String, property: HashMap<String, PropertyValue>) -> ControlDeviceAction {
+    pub fn new(device_id: String, property: HashMap<String, PropertyCommand>) -> ControlDeviceAction {
         ControlDeviceAction { device_id, property }
     }
 }
 
-type CommandMap = HashMap<String, HashMap<String, PropertyValue>>;
+pub type CommandMap = HashMap<String, HashMap<String, PropertyCommand>>;
 
 #[async_trait]
 impl Action for ControlDeviceAction {
@@ -109,8 +109,8 @@ impl Action for ControlDeviceAction {
         };
 
         let device_command_map = command_map.entry(self.device_id.clone()).or_insert_with(HashMap::new);
-        for (property_id, property_value) in self.property.iter() {
-            let result = device_command_map.insert(property_id.clone(), property_value.clone());
+        for (property_id, property_command) in self.property.iter() {
+            let result = device_command_map.insert(property_id.clone(), property_command.clone());
             if let Some(previous_value) = result {
                 warn!(
                     device_id = self.device_id,
@@ -166,7 +166,7 @@ mod tests {
 
         let expected = ControlDeviceAction {
             device_id: "42".to_string(),
-            property: HashMap::from([("fan".to_string(), SetBooleanValue(true))]),
+            property: HashMap::from([("fan".to_string(), SetBooleanValue(true).into())]),
         };
 
         let action = node.as_any().downcast_ref::<ControlDeviceAction>().unwrap();

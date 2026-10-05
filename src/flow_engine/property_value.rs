@@ -1,5 +1,19 @@
 use crate::domain::Number;
 use crate::domain::color::Color;
+use std::time::Duration;
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct PropertyCommand {
+    pub value: PropertyValue,
+    pub transition: Option<Duration>,
+}
+
+#[cfg(test)]
+impl From<PropertyValue> for PropertyCommand {
+    fn from(value: PropertyValue) -> Self {
+        PropertyCommand { value, transition: None }
+    }
+}
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum PropertyValue {

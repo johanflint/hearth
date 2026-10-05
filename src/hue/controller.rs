@@ -6,7 +6,7 @@ use crate::domain::controller::Controller;
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
-use crate::flow_engine::property_value::PropertyValue;
+use crate::flow_engine::property_value::{PropertyCommand, PropertyValue};
 use crate::hue::clip_to_gamut::clip_to_gamut;
 use crate::hue::domain::{LightRequest, MotionRequest, On, SetSensitivity};
 use crate::metrics::Metric;
@@ -51,7 +51,7 @@ impl HueController {
         HueController { client, config }
     }
 
-    async fn control_device_light(&self, device: Arc<Device>, property: Arc<HashMap<String, PropertyValue>>) {
+    async fn control_device_light(&self, device: Arc<Device>, property: Arc<HashMap<String, PropertyCommand>>) {
         let Some(on_property) = device.get_property_of_type::<BooleanProperty>(PropertyType::On) else {
             warn!(device_id = device.id, "⚠️ Light has no on property");
             return;
@@ -62,8 +62,8 @@ impl HueController {
             return;
         };
 
-        let on = property.get(on_property.name()).and_then(|pv| match pv {
-            PropertyValue::SetBooleanValue(value) => Some(On { on: *value }),
+        let on = property.get(on_property.name()).and_then(|pc| match pc.value {
+            PropertyValue::SetBooleanValue(value) => Some(On { on: value }),
             PropertyValue::ToggleBooleanValue => Some(On { on: !on_property.value() }),
             _ => None,
         });
@@ -76,7 +76,7 @@ impl HueController {
         let brightness = device.get_property_of_type::<NumberProperty>(PropertyType::Brightness).and_then(|brightness_property| {
             property
                 .get(brightness_property.name())
-                .and_then(|pv| match pv {
+                .and_then(|pc| match pc.value {
                     PropertyValue::SetNumberValue(value) => value.as_f64(),
                     PropertyValue::IncrementNumberValue(value) => (brightness_property.value().unwrap_or(Number::PositiveInt(0)) + value.clone()).as_f64(),
                     PropertyValue::DecrementNumberValue(value) => (brightness_property.value().unwrap_or(Number::PositiveInt(0)) - value.clone()).as_f64(),
@@ -110,7 +110,7 @@ impl HueController {
             .and_then(|color_temperature_property| {
                 property
                     .get(color_temperature_property.name())
-                    .and_then(|pv| match pv {
+                    .and_then(|pc| match pc.value {
                         PropertyValue::SetNumberValue(value) => value.as_u64(),
                         _ => None,
                     })
@@ -139,7 +139,7 @@ impl HueController {
             });
 
         let color = device.get_property_of_type::<ColorProperty>(PropertyType::Color).and_then(|color_property| {
-            property.get(color_property.name()).and_then(|pv| match pv {
+            property.get(color_property.name()).and_then(|pc| match &pc.value {
                 PropertyValue::SetColor(color) => match color.clone().to_cie_xyY() {
                     Ok(Color::CIE_xyY { xy, brightness: _ }) => color_property.gamut().map(|gamut| clip_to_gamut(xy.clone(), gamut)).or(Some(xy)),
                     Err(error) => {
@@ -157,7 +157,7 @@ impl HueController {
         self.send_request(&request, &url, &device, "light").await;
     }
 
-    async fn control_device_motion_sensor(&self, device: Arc<Device>, property: Arc<HashMap<String, PropertyValue>>) {
+    async fn control_device_motion_sensor(&self, device: Arc<Device>, property: Arc<HashMap<String, PropertyCommand>>) {
         let Some(motion_property) = device.get_property_of_type::<BooleanProperty>(PropertyType::Motion) else {
             warn!(device_id = device.id, "⚠️ Motion sensor has no motion property");
             return;
@@ -170,8 +170,8 @@ impl HueController {
 
         let enabled_property = device.get_property_of_type::<BooleanProperty>(PropertyType::Enabled).and_then(|enabled_property| {
             property.get(enabled_property.name())
-                .and_then(|pv| match pv {
-                    PropertyValue::SetBooleanValue(value) => Some(*value),
+                .and_then(|pc| match pc.value {
+                    PropertyValue::SetBooleanValue(value) => Some(value),
                     PropertyValue::ToggleBooleanValue => Some(!enabled_property.value()),
                     _ => None,
                 })
@@ -180,7 +180,7 @@ impl HueController {
         let sensitivity = device.get_property_of_type::<NumberProperty>(PropertyType::MotionSensitivity).and_then(|sensitivity_property| {
             property
                 .get(sensitivity_property.name())
-                .and_then(|pv| match pv {
+                .and_then(|pc| match pc.value {
                     PropertyValue::SetNumberValue(value) => Some(value.clone()),
                     PropertyValue::IncrementNumberValue(value) => Some(sensitivity_property.value().unwrap_or(Number::PositiveInt(0)) + value.clone()),
                     PropertyValue::DecrementNumberValue(value) => Some(sensitivity_property.value().unwrap_or(Number::PositiveInt(0)) - value.clone()),
