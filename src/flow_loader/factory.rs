@@ -5,11 +5,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use thiserror::Error;
 
-pub fn from_json_string(json: &str) -> Result<Flow, FlowFactoryError> {
-    let flow = serde_json::from_str::<SerializedFlow>(json)?;
-    from_json(flow)
-}
-
 pub fn from_json_value(json: serde_json::Value) -> Result<Flow, FlowFactoryError> {
     let flow = serde_json::from_value(json)?;
     from_json(flow)
@@ -196,6 +191,11 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::time::Duration;
+
+    fn from_json_string(json: &str) -> Result<Flow, FlowFactoryError> {
+        let flow = serde_json::from_str::<SerializedFlow>(json)?;
+        from_json(flow)
+    }
 
     #[tokio::test]
     async fn from_json_value_parses_valid_json() {

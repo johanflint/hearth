@@ -169,6 +169,7 @@ impl MetricReason for FlowEngineError {
 #[derive(Debug)]
 pub struct FlowExecutionReport {
     scope: HashMap<String, Box<dyn Any + Send + Sync>>,
+    #[allow(dead_code)]
     duration: Duration,
 }
 
@@ -185,6 +186,7 @@ impl FlowExecutionReport {
         }
     }
 
+    #[allow(dead_code)]
     pub fn scope(&self) -> &HashMap<String, Box<dyn Any + Send + Sync>> {
         &self.scope
     }
@@ -193,6 +195,7 @@ impl FlowExecutionReport {
         self.scope.remove(k).and_then(|v| v.downcast::<T>().ok().map(|boxed| *boxed))
     }
 
+    #[allow(dead_code)]
     pub fn duration(&self) -> Duration {
         self.duration
     }

@@ -67,8 +67,6 @@ pub enum PropertyError {
     ValueTooSmall,
     #[error("value is larger than the maximum value")]
     ValueTooLarge,
-    #[error("missing property")]
-    MissingProperty,
     #[error("enum property must have at least oe allowed value")]
     EmptyAllowedValues,
     #[error("unknown value '{value}', allowed values: '{}'", allowed_values.join(", "))]

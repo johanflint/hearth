@@ -10,6 +10,7 @@ pub struct MotionGet {
     pub enabled: bool,
     pub motion: Motion,
     pub sensitivity: Sensitivity,
+    #[allow(dead_code)]
     pub r#type: MotionType,
 }
 
@@ -41,6 +42,7 @@ pub struct MotionReport {
 
 #[derive(Debug, Deserialize)]
 pub struct Sensitivity {
+    #[allow(dead_code)]
     pub status: SensitivityStatus,
     pub sensitivity: u64, // int 0 to sensitivity_max
     pub sensitivity_max: u64,
@@ -66,11 +68,13 @@ pub enum MotionType {
 
 #[derive(Debug, Deserialize)]
 pub struct MotionChanged {
+    #[allow(dead_code)]
     pub id: String,
     pub owner: Owner,
     pub enabled: Option<bool>,
     pub motion: Option<Motion>,
     pub sensitivity: Option<SensitivityChanged>,
+    #[allow(dead_code)]
     pub r#type: Option<MotionType>,
 }
 

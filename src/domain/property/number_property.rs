@@ -199,7 +199,6 @@ impl NumberPropertyBuilder {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Unit {
     Percentage,
-    #[allow(dead_code)]
     Lux,
     #[allow(dead_code)]
     DegreesCelsius,

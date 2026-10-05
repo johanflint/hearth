@@ -19,6 +19,7 @@ pub struct ButtonMetadata {
 #[derive(Debug, Deserialize)]
 pub struct Button {
     pub button_report: Option<ButtonReport>,
+    #[allow(dead_code)]
     pub repeat_interval: u64, // Duration between repeat events when holding the button in milliseconds
     pub event_values: Vec<String>, // All button events that this device supports
 }
