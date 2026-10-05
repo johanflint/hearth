@@ -1,10 +1,28 @@
 use crate::domain::Number;
 use crate::domain::color::Color;
-use crate::flow_engine::property_value::PropertyValue;
+use crate::flow_engine::property_value::{PropertyCommand, PropertyValue};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use serde_json::Number as JsonNumber;
 use std::ops::{Index, IndexMut};
+use std::time::Duration;
+
+impl<'de> Deserialize<'de> for PropertyCommand {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
+        let transition = value
+            .get("transition")
+            .map(humantime_serde::deserialize::<Duration, _>)
+            .transpose()
+            .map_err(|e| Error::custom(format!("invalid field 'transition': {}", e)))?;
+        let value = PropertyValue::deserialize(&value).map_err(Error::custom)?;
+
+        Ok(PropertyCommand { value, transition })
+    }
+}
 
 impl<'de> Deserialize<'de> for PropertyValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -85,6 +103,59 @@ where
 mod tests {
     use super::*;
     use rstest::rstest;
+
+    #[test]
+    fn deserialize_set_boolean_value_without_transition() {
+        let json = r#"
+          {
+            "type": "boolean",
+            "value": true
+          }
+        "#;
+
+        let response = serde_json::from_str::<PropertyCommand>(json);
+        assert_eq!(response.unwrap(), PropertyCommand { value: PropertyValue::SetBooleanValue(true), transition: None });
+    }
+
+    #[test]
+    fn deserialize_set_boolean_value_with_transition() {
+        let json = r#"
+          {
+            "type": "boolean",
+            "value": true,
+            "transition": "10m"
+          }
+        "#;
+
+        let response = serde_json::from_str::<PropertyCommand>(json);
+        assert_eq!(response.unwrap(), PropertyCommand { value: PropertyValue::SetBooleanValue(true), transition: Some(Duration::from_secs(600)) });
+    }
+
+    #[test]
+    fn deserialize_property_command_returns_error_for_an_invalid_transition() {
+        let json = r#"
+          {
+            "type": "boolean",
+            "value": true,
+            "transition": "soon"
+          }
+        "#;
+
+        let response = serde_json::from_str::<PropertyCommand>(json);
+        assert_eq!(response.unwrap_err().to_string(), "invalid field 'transition': invalid value: string \"soon\", expected a duration");
+    }
+
+    #[test]
+    fn deserialize_property_command_returns_error_for_an_invalid_value() {
+        let json = r#"
+          {
+            "transition": "10m"
+          }
+        "#;
+
+        let response = serde_json::from_str::<PropertyCommand>(json);
+        assert_eq!(response.unwrap_err().to_string(), "missing field 'type'");
+    }
 
     #[test]
     fn deserialize_set_boolean_value() {

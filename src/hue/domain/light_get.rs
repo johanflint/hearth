@@ -1,6 +1,7 @@
 use crate::domain::property::{CartesianCoordinate, Gamut};
 use crate::hue::domain::hue_response::Owner;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 // API: https://developers.meethue.com/develop/hue-api-v2/api-reference/#resource_light_get
 #[derive(Debug, Deserialize)]
@@ -23,15 +24,18 @@ pub struct LightRequest {
     pub color_temperature: Option<SetColorTemperature>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<SetColor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dynamics: Option<SetDynamics>,
 }
 
 impl LightRequest {
-    pub fn new(on: Option<On>, dimming: Option<f64>, color_temperature: Option<u64>, color: Option<CartesianCoordinate>) -> Self {
+    pub fn new(on: Option<On>, dimming: Option<f64>, color_temperature: Option<u64>, color: Option<CartesianCoordinate>, transition: Option<Duration>) -> Self {
         LightRequest {
             on,
             dimming: dimming.map(|brightness| SetDimming { brightness }),
             color_temperature: color_temperature.map(|c| SetColorTemperature { mirek: c }),
             color: color.map(|c| SetColor { xy: Xy { x: c.x(), y: c.y() } }),
+            dynamics: transition.map(|t| SetDynamics { duration: u64::try_from(t.as_millis()).unwrap_or(u64::MAX) }),
         }
     }
 }
@@ -60,6 +64,11 @@ pub struct SetColorTemperature {
 #[derive(Debug, Serialize)]
 pub struct SetColor {
     pub xy: Xy,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetDynamics {
+    pub duration: u64, // milliseconds
 }
 
 #[allow(dead_code)]
@@ -134,4 +143,25 @@ pub struct ChangedColorTemperature {
 pub struct ChangedColor {
     pub xy: Xy,
     pub gamut: Option<ColorGamut>,
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn light_request_serializes_the_transition_as_dynamics_duration_in_milliseconds() {
+        let request = LightRequest::new(Some(On { on: false }), None, None, None, Some(Duration::from_secs(600)));
+
+        assert_eq!(serde_json::to_value(request).unwrap(), json!({ "on": { "on": false }, "dynamics": { "duration": 600000 } }));
+    }
+
+    #[test]
+    fn light_request_omits_dynamics_without_a_transition() {
+        let request = LightRequest::new(Some(On { on: false }), None, None, None, None);
+
+        assert_eq!(serde_json::to_value(request).unwrap(), json!({ "on": { "on": false } }));
+    }
 }
