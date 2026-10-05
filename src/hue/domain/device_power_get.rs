@@ -13,11 +13,13 @@ pub struct DevicePowerGet {
 #[derive(Debug, Deserialize)]
 pub struct PowerState {
     pub battery_level: Option<u8>, // 0-100
+    #[allow(dead_code)]
     pub battery_state: Option<String>, // One of normal, low, critical
 }
 
 #[derive(Debug, Deserialize)]
 pub struct DevicePowerChanged {
+    #[allow(dead_code)]
     pub id: String,
     pub owner: Owner,
     pub power_state: Option<PowerState>,
