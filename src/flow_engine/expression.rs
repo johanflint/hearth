@@ -41,22 +41,33 @@ pub enum Expression {
 
 impl Expression {
     pub fn contains_property_changed(&self) -> bool {
+        self.walk().any(|expression| matches!(expression, Expression::PropertyChanged { .. }))
+    }
+
+    /// Visits this expression and all itssub-expressions depth-first, left before right
+    pub fn walk(&self) -> impl Iterator<Item=&Expression> + '_ {
         use Expression::*;
-        match self {
-            PropertyChanged { .. } => true,
-            GreaterThanOrEqualTo { lhs, rhs }
-            | GreaterThan { lhs, rhs }
-            | LessThan { lhs, rhs }
-            | LessThanOrEqualTo { lhs, rhs }
-            | EqualTo { lhs, rhs }
-            | NotEqualTo { lhs, rhs }
-            | And { lhs, rhs }
-            | Or { lhs, rhs } => {
-                lhs.contains_property_changed() || rhs.contains_property_changed()
+        let mut stack = vec![self];
+        std::iter::from_fn(move || {
+            let expression = stack.pop()?;
+            match expression {
+                GreaterThanOrEqualTo { lhs, rhs }
+                | GreaterThan { lhs, rhs }
+                | LessThan { lhs, rhs }
+                | LessThanOrEqualTo { lhs, rhs }
+                | EqualTo { lhs, rhs }
+                | NotEqualTo { lhs, rhs }
+                | And { lhs, rhs }
+                | Or { lhs, rhs } => {
+                    stack.push(rhs);
+                    stack.push(lhs);
+                }
+                Not { expression } => stack.push(expression),
+                Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => {}
             }
-            Not { expression } => expression.contains_property_changed(),
-            Literal { .. } | PropertyValue { .. } | Temporal { .. } => false,
-        }
+
+            Some(expression)
+        })
     }
 }
 
@@ -1301,5 +1312,28 @@ mod tests {
     #[case::literal_only(Literal{ value: Value::Boolean(true) }, false)]
     fn contains_property_changed_detects_it_anywhere_in_the_tree(#[case] expression: Expression, #[case] expected: bool) {
         assert_eq!(expression.contains_property_changed(), expected);
+    }
+
+    #[test]
+    fn walk_visits_all_expressions_depth_first_left_before_right() {
+        let a = Literal { value: Value::Number(Number::PositiveInt(1)) };
+        let b = PropertyValue { device_id: "d".to_string(), property_id: "p".to_string() };
+        let c = Literal { value: Value::Boolean(true) };
+        let expression = Or {
+            lhs: Box::new(GreaterThan { lhs: Box::new(a), rhs: Box::new(b) }),
+            rhs: Box::new(Not { expression: Box::new(c) }),
+        };
+
+        let visited: Vec<&str> = expression.walk().map(|e| match e {
+            Or { .. } => "or",
+            GreaterThan { .. } => "gt",
+            Literal { value: Value::Number(_) } => "number",
+            PropertyValue { .. } => "property",
+            Not { .. } => "not",
+            Literal { value: Value::Boolean(_) } => "boolean",
+            _ => "other",
+        }).collect();
+
+        assert_eq!(visited, vec!["or", "gt", "number", "property", "not", "boolean"]);
     }
 }
