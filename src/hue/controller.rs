@@ -11,11 +11,13 @@ use crate::hue::clip_to_gamut::clip_to_gamut;
 use crate::hue::domain::{LightRequest, MotionRequest, On, SetSensitivity};
 use crate::metrics::Metric;
 use async_trait::async_trait;
+use humantime_serde::re::humantime::format_duration;
 use metrics::counter;
 use reqwest::Client;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, instrument, warn};
 
 #[derive(Debug)]
@@ -25,6 +27,8 @@ pub struct HueController {
 }
 
 pub const CONTROLLER_ID: &str = "hue";
+
+const MAX_TRANSITION: Duration = Duration::from_secs(3600);
 
 #[async_trait]
 impl Controller for HueController {
@@ -62,6 +66,8 @@ impl HueController {
             return;
         };
 
+        let transition = property.values().filter_map(|pc| pc.transition).max().map(|transition| clamp_transition(&device.id, transition));
+
         let on = property.get(on_property.name()).and_then(|pc| match pc.value {
             PropertyValue::SetBooleanValue(value) => Some(On { on: value }),
             PropertyValue::ToggleBooleanValue => Some(On { on: !on_property.value() }),
@@ -70,7 +76,8 @@ impl HueController {
 
         if let Some(value) = &on {
             let on_text = if value.on { "on" } else { "off" };
-            info!(device_id = device.id, ?on_property, "🟢 Turn {} light '{}'", on_text, device.name);
+            let transition_text = transition.map_or("".to_string(), |t| format!(" over {}", format_duration(t)));
+            info!(device_id = device.id, ?on_property, "🟢 Turn {} light '{}'{}", on_text, device.name, transition_text);
         }
 
         let brightness = device.get_property_of_type::<NumberProperty>(PropertyType::Brightness).and_then(|brightness_property| {
@@ -152,7 +159,7 @@ impl HueController {
             })
         });
 
-        let request = LightRequest::new(on, brightness, color_temperature, color);
+        let request = LightRequest::new(on, brightness, color_temperature, color, transition);
         let url = format!("{}/clip/v2/resource/light/{}", self.config.hue().url(), light_id);
         self.send_request(&request, &url, &device, "light").await;
     }
@@ -242,5 +249,28 @@ impl HueController {
             }
             _ => {}
         }
+    }
+}
+
+fn clamp_transition(device_id: &str, transition: Duration) -> Duration {
+    if transition > MAX_TRANSITION {
+        warn!("⚠️ Transition of '{}' is too long for device '{}', clamped to the maximum value of '{}'", format_duration(transition), device_id, format_duration(MAX_TRANSITION));
+        return MAX_TRANSITION;
+    }
+
+    transition
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::shorter_than_the_maximum(Duration::from_secs(600), Duration::from_secs(600))]
+    #[case::equal_to_the_maximum(MAX_TRANSITION, MAX_TRANSITION)]
+    #[case::longer_than_the_maximum(Duration::from_secs(3 * 60 * 60), MAX_TRANSITION)]
+    fn clamp_transition_limits_the_transition_to_the_maximum(#[case] transition: Duration, #[case] expected: Duration) {
+        assert_eq!(clamp_transition("device", transition), expected);
     }
 }
