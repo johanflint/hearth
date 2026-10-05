@@ -7,7 +7,6 @@ use std::time::Duration;
 pub struct AppConfig {
     core: Core,
     db: Db,
-    flows: Flows,
     hue: Hue,
     location: GeoLocation,
 }
@@ -31,10 +30,6 @@ impl AppConfig {
     }
 
     pub fn db(&self) -> &Db { &self.db }
-
-    pub fn flows(&self) -> &Flows {
-        &self.flows
-    }
 
     pub fn hue(&self) -> &Hue {
         &self.hue
@@ -79,17 +74,6 @@ pub struct Db {
 impl Db {
     pub fn file_name(&self) -> &str {
         &self.file_name
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Flows {
-    directory: String,
-}
-
-impl Flows {
-    pub fn directory(&self) -> &str {
-        &self.directory
     }
 }
 
@@ -148,7 +132,6 @@ impl AppConfigBuilder {
                 db: Db {
                     file_name: "hearth.db".to_string(),
                 },
-                flows: Flows { directory: "flows".to_string() },
                 hue: Hue {
                     url: "https://hue.url/".to_string(),
                     retry_ms: 100,
