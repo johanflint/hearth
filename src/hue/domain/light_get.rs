@@ -125,6 +125,7 @@ pub enum GamutType {
 
 #[derive(Debug, Deserialize)]
 pub struct LightChanged {
+    #[allow(dead_code)]
     pub id: String,
     pub owner: Owner,
     pub on: Option<On>,

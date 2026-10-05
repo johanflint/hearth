@@ -4,6 +4,7 @@ use serde::Deserialize;
 // API: https://developers.meethue.com/develop/hue-api-v2/api-reference/#resource_device_power_get
 #[derive(Debug, Deserialize)]
 pub struct DevicePowerGet {
+    #[allow(dead_code)]
     pub id: String,
     pub owner: Owner,
     pub power_state: PowerState,

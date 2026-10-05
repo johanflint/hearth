@@ -5,8 +5,10 @@ use serde::Deserialize;
 // API: https://developers.meethue.com/develop/hue-api-v2/api-reference/#resource_light_level_get
 #[derive(Debug, Deserialize)]
 pub struct LightLevelGet {
+    #[allow(dead_code)]
     pub id: String,
     pub owner: Owner,
+    #[allow(dead_code)]
     pub enabled: bool,
     pub light: Light,
 }
