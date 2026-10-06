@@ -1,3 +1,4 @@
+use crate::domain::{FlowValidationError, validate};
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::{SchedulerCommand, VersionedFlow};
 use crate::flow_loader;
@@ -92,7 +93,14 @@ impl FlowService {
     }
 
     pub async fn validate(&self, document: serde_json::Value) -> Result<(), ValidateError> {
-        validate_flow_document::<ValidateError>(&document)?;
+        // Structural validation
+        let flow = validate_flow_document::<ValidateError>(&document)?;
+
+        let store_snapshot = self.snapshot_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
+
+        // Semantic validation
+        validate(flow, store_snapshot).map_err(ValidateError::ValidationFailed)?;
+        
         Ok(())
     }
 
@@ -242,6 +250,8 @@ pub enum ValidateError {
     InvalidDocument(#[from] serde_json::Error),
     #[error(transparent)]
     InvalidFlow(#[from] FlowFactoryError),
+    #[error(transparent)]
+    ValidationFailed(FlowValidationError)
 }
 
 #[cfg(test)]
