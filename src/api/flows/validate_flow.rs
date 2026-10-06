@@ -83,6 +83,7 @@ impl From<&Location> for LocationResponse {
 fn problem_code(problem: &Problem) -> &'static str {
     match problem {
         Problem::UnknownDevice { .. } => "unknownDevice",
+        Problem::UnknownProperty { .. } => "unknownProperty",
     }
 }
 

@@ -14,10 +14,15 @@ pub fn validate(flow: Flow, snapshot: StoreSnapshot) -> Result<(), FlowValidatio
 
     for expression in flow.trigger().walk() {
         match expression {
-            Expression::PropertyChanged { device_id, .. } |
-            Expression::PropertyValue { device_id, .. } => {
-                if !snapshot.devices.contains_key(device_id) {
+            Expression::PropertyChanged { device_id, property_id } |
+            Expression::PropertyValue { device_id, property_id } => {
+                let Some(device) = snapshot.devices.get(device_id) else {
                     issues.push(Problem::UnknownDevice { device_id: device_id.to_string() }.at(Location::Trigger));
+                    continue;
+                };
+
+                if !device.properties.contains_key(property_id) {
+                    issues.push(Problem::UnknownProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(Location::Trigger));
                 }
             }
             _ => {}
@@ -65,6 +70,8 @@ impl fmt::Display for Location {
 pub enum Problem {
     #[error("unknown device '{device_id}'")]
     UnknownDevice { device_id: String },
+    #[error("unknown property '{property_id}' for device '{device_id}'")]
+    UnknownProperty { device_id: String, property_id: String },
 }
 
 impl Problem {
@@ -86,6 +93,7 @@ mod tests {
     use std::sync::Arc;
 
     const KNOWN_DEVICE_ID: &str = "known";
+    const UNKNOWN_PROPERTY_ID: &str = "missing";
 
     fn flow_with_trigger(trigger: Expression) -> Flow {
         let end_node = FlowNode::new("end_node".to_string(), vec![], FlowNodeKind::End);
@@ -101,15 +109,27 @@ mod tests {
     }
 
     fn property_changed(device_id: &str) -> Expression {
-        PropertyChanged { device_id: device_id.to_string(), property_id: "on".to_string() }
+        property_changed_of(device_id, "on")
+    }
+
+    fn property_changed_of(device_id: &str, property_id: &str) -> Expression {
+        PropertyChanged { device_id: device_id.to_string(), property_id: property_id.to_string() }
     }
 
     fn property_value(device_id: &str) -> Expression {
-        PropertyValue { device_id: device_id.to_string(), property_id: "on".to_string() }
+        property_value_of(device_id, "on")
+    }
+
+    fn property_value_of(device_id: &str, property_id: &str) -> Expression {
+        PropertyValue { device_id: device_id.to_string(), property_id: property_id.to_string() }
     }
 
     fn unknown_device(device_id: &str) -> ValidationIssue {
         Problem::UnknownDevice { device_id: device_id.to_string() }.at(Location::Trigger)
+    }
+
+    fn unknown_property(device_id: &str, property_id: &str) -> ValidationIssue {
+        Problem::UnknownProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(Location::Trigger)
     }
 
     #[rstest]
@@ -117,7 +137,7 @@ mod tests {
     #[case::property_changed(property_changed(KNOWN_DEVICE_ID))]
     #[case::property_value(property_value(KNOWN_DEVICE_ID))]
     #[case::nested(And{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(Not { expression: Box::new(property_value(KNOWN_DEVICE_ID)) }) })]
-    fn validate_accepts_a_trigger_that_only_references_known_devices(#[case] trigger: Expression) {
+    fn validate_accepts_a_trigger_that_only_references_known_devices_and_properties(#[case] trigger: Expression) {
         assert_eq!(validate(flow_with_trigger(trigger), snapshot()), Ok(()));
     }
 
@@ -132,6 +152,33 @@ mod tests {
         assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown")]);
     }
 
+    #[rstest]
+    #[case::property_changed(property_changed_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID))]
+    #[case::property_value(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID))]
+    #[case::nested_in_not(Not{ expression: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)) })]
+    #[case::next_to_a_known_property(And{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)) })]
+    fn validate_reports_an_unknown_property_in_the_trigger(#[case] trigger: Expression) {
+        let result = validate(flow_with_trigger(trigger), snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [unknown_property(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)]);
+    }
+
+    #[test]
+    fn validate_only_reports_the_unknown_device_when_its_property_is_unknown_too() {
+        let result = validate(flow_with_trigger(property_changed_of("unknown", UNKNOWN_PROPERTY_ID)), snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown")]);
+    }
+
+    #[test]
+    fn validate_reports_unknown_devices_and_properties_in_the_trigger_in_order() {
+        let trigger = Or { lhs: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)), rhs: Box::new(property_changed("unknown")) };
+
+        let result = validate(flow_with_trigger(trigger), snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [unknown_property(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID), unknown_device("unknown")]);
+    }
+    
     #[test]
     fn validate_reports_all_unknown_devices_in_the_trigger_in_order() {
         let trigger = And { lhs: Box::new(property_changed("first")), rhs: Box::new(property_value("second")) };
@@ -161,14 +208,23 @@ mod tests {
     }
 
     #[test]
+    fn flow_validation_error_displays_a_single_issue() {
+        let error = FlowValidationError::from_issues(vec![unknown_device("first")]).unwrap_err();
+
+        assert_eq!(error.to_string(), "flow has 1 validation issue");
+    }
+
+    #[test]
     fn flow_validation_error_displays_the_number_of_issues() {
         let error = FlowValidationError::from_issues(vec![unknown_device("first"), unknown_device("second")]).unwrap_err();
 
         assert_eq!(error.to_string(), "flow has 2 validation issues");
     }
 
-    #[test]
-    fn validation_issue_displays_the_location_and_the_problem() {
-        assert_eq!(unknown_device("lamp").to_string(), "trigger: unknown device 'lamp'");
+    #[rstest]
+    #[case::unknown_device(unknown_device("lamp"), "trigger: unknown device 'lamp'")]
+    #[case::unknown_property(unknown_property("lamp", "on"), "trigger: unknown property 'on' for device 'lamp'")]
+    fn validation_issue_displays_the_location_and_the_problem(#[case] issue: ValidationIssue, #[case] expected: &str) {
+        assert_eq!(issue.to_string(), expected);
     }
 }
