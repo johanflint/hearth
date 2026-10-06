@@ -9,7 +9,7 @@ use thiserror::Error;
 ///
 /// Performs semantic validation, it assumes the structural validation by the
 /// `flow_loader::from_json` is already done.
-pub fn validate(flow: Flow, snapshot: StoreSnapshot) -> Result<(), FlowValidationError> {
+pub fn validate(flow: &Flow, snapshot: &StoreSnapshot) -> Result<(), FlowValidationError> {
     let mut issues = vec![];
 
     for expression in flow.trigger().walk() {
@@ -138,7 +138,7 @@ mod tests {
     #[case::property_value(property_value(KNOWN_DEVICE_ID))]
     #[case::nested(And{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(Not { expression: Box::new(property_value(KNOWN_DEVICE_ID)) }) })]
     fn validate_accepts_a_trigger_that_only_references_known_devices_and_properties(#[case] trigger: Expression) {
-        assert_eq!(validate(flow_with_trigger(trigger), snapshot()), Ok(()));
+        assert_eq!(validate(&flow_with_trigger(trigger), &snapshot()), Ok(()));
     }
 
     #[rstest]
@@ -147,7 +147,7 @@ mod tests {
     #[case::nested_in_not(Not{ expression: Box::new(property_value("unknown")) })]
     #[case::next_to_a_known_device(Or{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(property_value("unknown")) })]
     fn validate_reports_an_unknown_device_in_the_trigger(#[case] trigger: Expression) {
-        let result = validate(flow_with_trigger(trigger), snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown")]);
     }
@@ -158,14 +158,14 @@ mod tests {
     #[case::nested_in_not(Not{ expression: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)) })]
     #[case::next_to_a_known_property(And{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)) })]
     fn validate_reports_an_unknown_property_in_the_trigger(#[case] trigger: Expression) {
-        let result = validate(flow_with_trigger(trigger), snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_property(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)]);
     }
 
     #[test]
     fn validate_only_reports_the_unknown_device_when_its_property_is_unknown_too() {
-        let result = validate(flow_with_trigger(property_changed_of("unknown", UNKNOWN_PROPERTY_ID)), snapshot());
+        let result = validate(&flow_with_trigger(property_changed_of("unknown", UNKNOWN_PROPERTY_ID)), &snapshot());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown")]);
     }
@@ -174,7 +174,7 @@ mod tests {
     fn validate_reports_unknown_devices_and_properties_in_the_trigger_in_order() {
         let trigger = Or { lhs: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)), rhs: Box::new(property_changed("unknown")) };
 
-        let result = validate(flow_with_trigger(trigger), snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_property(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID), unknown_device("unknown")]);
     }
@@ -183,14 +183,14 @@ mod tests {
     fn validate_reports_all_unknown_devices_in_the_trigger_in_order() {
         let trigger = And { lhs: Box::new(property_changed("first")), rhs: Box::new(property_value("second")) };
 
-        let result = validate(flow_with_trigger(trigger), snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device("first"), unknown_device("second")]);
     }
 
     #[test]
     fn validate_reports_every_device_as_unknown_for_an_empty_snapshot() {
-        let result = validate(flow_with_trigger(property_changed(KNOWN_DEVICE_ID)), StoreSnapshot::default());
+        let result = validate(&flow_with_trigger(property_changed(KNOWN_DEVICE_ID)), &StoreSnapshot::default());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device(KNOWN_DEVICE_ID)]);
     }

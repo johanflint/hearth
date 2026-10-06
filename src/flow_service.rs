@@ -99,7 +99,7 @@ impl FlowService {
         let store_snapshot = self.snapshot_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
 
         // Semantic validation
-        validate(flow, store_snapshot).map_err(ValidateError::ValidationFailed)?;
+        validate(&flow, &store_snapshot).map_err(ValidateError::ValidationFailed)?;
         
         Ok(())
     }
