@@ -1,7 +1,9 @@
+use crate::domain::{Problem, find_device, find_property};
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::property_value::PropertyCommand;
 use crate::flow_engine::scope::Scope;
+use crate::store::StoreSnapshot;
 use action_macros::register_action;
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer};
@@ -15,6 +17,10 @@ pub trait Action: Debug + Send + Sync {
     fn kind(&self) -> &'static str;
 
     async fn execute(&self, context: &Context, scope: &mut Scope);
+
+    fn validate(&self, _snapshot: &StoreSnapshot) -> Vec<Problem> {
+        vec![]
+    }
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -120,6 +126,21 @@ impl Action for ControlDeviceAction {
         }
     }
 
+    fn validate(&self, snapshot: &StoreSnapshot) -> Vec<Problem> {
+        let device = match find_device(&self.device_id, snapshot) {
+            Ok(device) => device,
+            Err(problem) => return vec![problem],
+        };
+
+        self.property
+            .keys()
+            .filter_map(|property_id| match find_property(device, property_id) {
+                Ok(_) => None,
+                Err(problem) => Some(problem),
+            })
+            .collect()
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -129,8 +150,22 @@ impl Action for ControlDeviceAction {
 mod tests {
     use super::*;
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
+    use crate::store::DeviceMap;
+    use crate::test_support::DeviceBuilder;
     use pretty_assertions::assert_eq;
     use std::io;
+    use std::sync::Arc;
+
+    fn snapshot() -> StoreSnapshot {
+        let device = DeviceBuilder::new("lamp").with_boolean_property("on", true).build();
+        let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
+        StoreSnapshot { devices: Arc::new(devices) }
+    }
+
+    fn control_device(device_id: &str, property_ids: &[&str]) -> ControlDeviceAction {
+        let property = property_ids.iter().map(|id| (id.to_string(), SetBooleanValue(true).into())).collect();
+        ControlDeviceAction::new(device_id.to_string(), property)
+    }
 
     #[test]
     fn deserialize_log_action() -> io::Result<()> {
@@ -194,4 +229,29 @@ mod tests {
         assert!(node.is_err());
         assert!(node.unwrap_err().to_string().starts_with("unknown action type 'UnknownAction', known types:"));
     }
+
+    #[test]
+    fn log_action_has_nothing_to_validate() {
+        assert_eq!(LogAction::new("message".to_string()).validate(&StoreSnapshot::default()), []);
+    }
+
+    #[test]
+    fn control_device_validate_accepts_a_known_device_and_property() {
+        assert_eq!(control_device("lamp", &["on"]).validate(&snapshot()), []);
+    }
+
+    #[test]
+    fn control_device_validate_reports_an_unknown_device_once_for_all_properties() {
+        let problems = control_device("unknown", &["on", "brightness"]).validate(&snapshot());
+
+        assert_eq!(problems, [Problem::UnknownDevice { device_id: "unknown".to_string() }]);
+    }
+
+    #[test]
+    fn control_device_validate_reports_only_the_unknown_property() {
+        let problems = control_device("lamp", &["on", "missing"]).validate(&snapshot());
+
+        assert_eq!(problems, [Problem::UnknownProperty { device_id: "lamp".to_string(), property_id: "missing".to_string() }]);
+    }
+
 }

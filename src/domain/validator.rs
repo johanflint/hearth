@@ -1,5 +1,7 @@
+use crate::domain::device::Device;
+use crate::domain::property::Property;
 use crate::flow_engine::Expression;
-use crate::flow_engine::flow::Flow;
+use crate::flow_engine::flow::{Flow, FlowNodeKind};
 use crate::store::StoreSnapshot;
 use std::fmt;
 use std::fmt::Formatter;
@@ -12,24 +14,47 @@ use thiserror::Error;
 pub fn validate(flow: &Flow, snapshot: &StoreSnapshot) -> Result<(), FlowValidationError> {
     let mut issues = vec![];
 
-    for expression in flow.trigger().walk() {
-        match expression {
-            Expression::PropertyChanged { device_id, property_id } |
-            Expression::PropertyValue { device_id, property_id } => {
-                let Some(device) = snapshot.devices.get(device_id) else {
-                    issues.push(Problem::UnknownDevice { device_id: device_id.to_string() }.at(Location::Trigger));
-                    continue;
-                };
+    issues.extend(expression_problems(snapshot, flow.trigger()).into_iter().map(|p| p.at(Location::Trigger)));
 
-                if !device.properties.contains_key(property_id) {
-                    issues.push(Problem::UnknownProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(Location::Trigger));
-                }
+    for node in flow.walk() {
+        let location = || Location::Node { node_id: node.id().to_string() };
+        match node.kind() {
+            FlowNodeKind::Start | FlowNodeKind::End | FlowNodeKind::Sleep(_) => {}
+            FlowNodeKind::Conditional(expression) => {
+                issues.extend(expression_problems(snapshot, expression).into_iter().map(|p| p.at(location())));
             }
-            _ => {}
+            FlowNodeKind::Action(action_node) => {
+                issues.extend(action_node.action().validate(snapshot).into_iter().map(|p| p.at(location())));
+            }
         }
     }
 
     FlowValidationError::from_issues(issues)
+}
+
+pub fn find_device<'a>(device_id: &str, snapshot: &'a StoreSnapshot) -> Result<&'a Device, Problem> {
+    snapshot.devices.get(device_id)
+        .map(|device| device.as_ref())
+        .ok_or_else(|| Problem::UnknownDevice { device_id: device_id.to_string() })
+}
+
+pub fn find_property<'a>(device: &'a Device, property_id: &str) -> Result<&'a dyn Property, Problem> {
+    device.properties.get(property_id).map(|property| property.as_ref()).ok_or_else(|| Problem::UnknownProperty {
+        device_id: device.id.clone(),
+        property_id: property_id.to_string(),
+    })
+}
+
+fn expression_problems(snapshot: &StoreSnapshot, expression: &Expression) -> Vec<Problem> {
+    expression.walk()
+        .filter_map(|expression| match expression {
+            Expression::PropertyChanged { device_id, property_id } |
+            Expression::PropertyValue { device_id, property_id } => {
+                find_device(device_id, snapshot).and_then(|device| find_property(device, property_id)).err()
+            }
+            _ => None
+        })
+        .collect()
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -56,12 +81,14 @@ pub struct ValidationIssue {
 #[derive(Debug, PartialEq, Eq,PartialOrd, Ord)]
 pub enum Location {
     Trigger,
+    Node { node_id: String },
 }
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Location::Trigger => write!(f, "trigger"),
+            Location::Node { node_id } => write!(f, "node '{}'", node_id),
         }
     }
 }
@@ -85,21 +112,53 @@ mod tests {
     use super::*;
     use crate::flow_engine::Expression::*;
     use crate::flow_engine::Value;
-    use crate::flow_engine::flow::{FlowLink, FlowNode, FlowNodeKind};
+    use crate::flow_engine::action::{ControlDeviceAction, LogAction};
+    use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
+    use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
     use crate::store::DeviceMap;
     use crate::test_support::DeviceBuilder;
     use rstest::rstest;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::time::Duration;
 
     const KNOWN_DEVICE_ID: &str = "known";
     const UNKNOWN_PROPERTY_ID: &str = "missing";
+    const NODE_ID: &str = "node";
 
     fn flow_with_trigger(trigger: Expression) -> Flow {
         let end_node = FlowNode::new("end_node".to_string(), vec![], FlowNodeKind::End);
         let start_node = FlowNode::new("start_node".to_string(), vec![FlowLink::new(Arc::new(end_node), Value::None)], FlowNodeKind::Start);
 
         Flow::new("flow".to_string(), "flow".to_string(), None, Some(trigger), Arc::new(start_node), HashMap::new()).unwrap()
+    }
+
+    /// Builds `start -> nodes[0] -> nodes[1] -> ... -> end`, the nodes are given as `(id, kind)`.
+    fn flow_with_nodes(trigger: Expression, nodes: Vec<(&str, FlowNodeKind)>) -> Flow {
+        let end_node = FlowNode::new("end_node".to_string(), vec![], FlowNodeKind::End);
+        let first_node = nodes.into_iter().rev().fold(end_node, |next, (id, kind)| {
+            FlowNode::new(id.to_string(), vec![FlowLink::new(Arc::new(next), Value::None)], kind)
+        });
+        let start_node = FlowNode::new("start_node".to_string(), vec![FlowLink::new(Arc::new(first_node), Value::None)], FlowNodeKind::Start);
+
+        Flow::new("flow".to_string(), "flow".to_string(), None, Some(trigger), Arc::new(start_node), HashMap::new()).unwrap()
+    }
+
+    fn flow_with_node(kind: FlowNodeKind) -> Flow {
+        flow_with_nodes(Literal { value: Value::Boolean(true) }, vec![(NODE_ID, kind)])
+    }
+
+    fn control_device(device_id: &str, property_id: &str) -> FlowNodeKind {
+        let property = HashMap::from([(property_id.to_string(), SetBooleanValue(true).into())]);
+        FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(device_id.to_string(), property))))
+    }
+
+    fn log() -> FlowNodeKind {
+        FlowNodeKind::Action(ActionFlowNode::new(Box::new(LogAction::new("message".to_string()))))
+    }
+
+    fn node(node_id: &str) -> Location {
+        Location::Node { node_id: node_id.to_string() }
     }
 
     fn snapshot() -> StoreSnapshot {
@@ -125,11 +184,19 @@ mod tests {
     }
 
     fn unknown_device(device_id: &str) -> ValidationIssue {
-        Problem::UnknownDevice { device_id: device_id.to_string() }.at(Location::Trigger)
+        unknown_device_at(device_id, Location::Trigger)
+    }
+
+    fn unknown_device_at(device_id: &str, location: Location) -> ValidationIssue {
+        Problem::UnknownDevice { device_id: device_id.to_string() }.at(location)
     }
 
     fn unknown_property(device_id: &str, property_id: &str) -> ValidationIssue {
-        Problem::UnknownProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(Location::Trigger)
+        unknown_property_at(device_id, property_id, Location::Trigger)
+    }
+
+    fn unknown_property_at(device_id: &str, property_id: &str, location: Location) -> ValidationIssue {
+        Problem::UnknownProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(location)
     }
 
     #[rstest]
@@ -195,6 +262,58 @@ mod tests {
         assert_eq!(result.unwrap_err().issues(), [unknown_device(KNOWN_DEVICE_ID)]);
     }
 
+    #[rstest]
+    #[case::conditional(FlowNodeKind::Conditional(property_value(KNOWN_DEVICE_ID)))]
+    #[case::control_device(control_device(KNOWN_DEVICE_ID, "on"))]
+    #[case::action_without_validation(log())]
+    #[case::sleep(FlowNodeKind::Sleep(Duration::from_secs(1)))]
+    fn validate_accepts_a_node_that_only_references_known_devices_and_properties(#[case] kind: FlowNodeKind) {
+        assert_eq!(validate(&flow_with_node(kind), &snapshot()), Ok(()));
+    }
+
+    #[rstest]
+    #[case::conditional(FlowNodeKind::Conditional(property_value("unknown")))]
+    #[case::conditional_nested(FlowNodeKind::Conditional(Not{ expression: Box::new(property_changed("unknown")) }))]
+    #[case::control_device(control_device("unknown", "on"))]
+    fn validate_reports_an_unknown_device_in_a_node(#[case] kind: FlowNodeKind) {
+        let result = validate(&flow_with_node(kind), &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [unknown_device_at("unknown", node(NODE_ID))]);
+    }
+
+    #[rstest]
+    #[case::conditional(FlowNodeKind::Conditional(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)))]
+    #[case::control_device(control_device(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID))]
+    fn validate_reports_an_unknown_property_in_a_node(#[case] kind: FlowNodeKind) {
+        let result = validate(&flow_with_node(kind), &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [unknown_property_at(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID, node(NODE_ID))]);
+    }
+
+    #[test]
+    fn validate_reports_issues_in_the_trigger_first_then_in_the_nodes_in_order() {
+        let nodes = vec![
+            ("first", FlowNodeKind::Conditional(property_value("conditional_device"))),
+            ("second", control_device("action_device", "on")),
+        ];
+        let flow = flow_with_nodes(property_changed("trigger_device"), nodes);
+
+        let result = validate(&flow, &snapshot());
+
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [unknown_device("trigger_device"), unknown_device_at("conditional_device", node("first")), unknown_device_at("action_device", node("second"))]
+        );
+    }
+
+    #[test]
+    fn validate_reports_the_same_unknown_device_once_per_reference() {
+        let flow = flow_with_nodes(property_changed("unknown"), vec![(NODE_ID, control_device("unknown", "on"))]);
+
+        let result = validate(&flow, &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown"), unknown_device_at("unknown", node(NODE_ID))]);
+    }
     #[test]
     fn from_issues_returns_ok_without_issues() {
         assert_eq!(FlowValidationError::from_issues(vec![]), Ok(()));
@@ -224,6 +343,7 @@ mod tests {
     #[rstest]
     #[case::unknown_device(unknown_device("lamp"), "trigger: unknown device 'lamp'")]
     #[case::unknown_property(unknown_property("lamp", "on"), "trigger: unknown property 'on' for device 'lamp'")]
+    #[case::node(unknown_device_at("lamp", node("turn_on")), "node 'turn_on': unknown device 'lamp'")]
     fn validation_issue_displays_the_location_and_the_problem(#[case] issue: ValidationIssue, #[case] expected: &str) {
         assert_eq!(issue.to_string(), expected);
     }

@@ -67,15 +67,17 @@ impl From<&ValidationIssue> for IssueResponse {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 enum LocationResponse {
     Trigger,
+    Node { node_id: String },
 }
 
 impl From<&Location> for LocationResponse {
     fn from(location: &Location) -> Self {
         match location {
             Location::Trigger => LocationResponse::Trigger,
+            Location::Node { node_id } => LocationResponse::Node { node_id: node_id.to_string() },
         }
     }
 }
@@ -97,7 +99,7 @@ mod tests {
     async fn validation_error_response_lists_all_issues() {
         let issues = vec![
             Problem::UnknownDevice { device_id: "lamp".to_string() }.at(Location::Trigger),
-            Problem::UnknownDevice { device_id: "sensor".to_string() }.at(Location::Trigger),
+            Problem::UnknownProperty { device_id: "sensor".to_string(), property_id: "on".to_string() }.at(Location::Node { node_id: "turn_on".to_string() }),
         ];
         let err = FlowValidationError::from_issues(issues).unwrap_err();
 
@@ -111,7 +113,7 @@ mod tests {
                 "message": "flow has 2 validation issues",
                 "issues": [
                     { "location": { "type": "trigger" }, "code": "unknownDevice", "message": "unknown device 'lamp'" },
-                    { "location": { "type": "trigger" }, "code": "unknownDevice", "message": "unknown device 'sensor'" }
+                    { "location": { "type": "node", "nodeId": "turn_on" }, "code": "unknownProperty", "message": "unknown property 'on' for device 'sensor'" }
                 ]
             })
         );
