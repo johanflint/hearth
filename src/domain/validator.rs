@@ -28,7 +28,7 @@ pub fn validate(flow: Flow, snapshot: StoreSnapshot) -> Result<(), FlowValidatio
 }
 
 #[derive(Debug, Error, PartialEq)]
-#[error("flow has {} validation issue(s)", .0.len())]
+#[error("flow has {} validation {}", .0.len(), if .0.len() == 1 { "issue" } else { "issues" })]
 pub struct FlowValidationError(Vec<ValidationIssue>);
 
 impl FlowValidationError {
@@ -164,7 +164,7 @@ mod tests {
     fn flow_validation_error_displays_the_number_of_issues() {
         let error = FlowValidationError::from_issues(vec![unknown_device("first"), unknown_device("second")]).unwrap_err();
 
-        assert_eq!(error.to_string(), "flow has 2 validation issue(s)");
+        assert_eq!(error.to_string(), "flow has 2 validation issues");
     }
 
     #[test]

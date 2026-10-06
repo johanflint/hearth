@@ -107,7 +107,7 @@ mod tests {
             body_json(response).await,
             json!({
                 "code": "validationFailed",
-                "message": "flow has 2 validation issue(s)",
+                "message": "flow has 2 validation issues",
                 "issues": [
                     { "location": { "type": "trigger" }, "code": "unknownDevice", "message": "unknown device 'lamp'" },
                     { "location": { "type": "trigger" }, "code": "unknownDevice", "message": "unknown device 'sensor'" }
