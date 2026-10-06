@@ -135,6 +135,7 @@ impl Action for ControlDeviceAction {
         self.property
             .keys()
             .filter_map(|property_id| match find_property(device, property_id) {
+                Ok(property) if property.readonly() => Some(Problem::ReadOnlyProperty { device_id: self.device_id.to_string(), property_id: property_id.to_string() }),
                 Ok(_) => None,
                 Err(problem) => Some(problem),
             })
@@ -149,6 +150,7 @@ impl Action for ControlDeviceAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::property::{BooleanProperty, PropertyType};
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
     use crate::store::DeviceMap;
     use crate::test_support::DeviceBuilder;
@@ -157,7 +159,10 @@ mod tests {
     use std::sync::Arc;
 
     fn snapshot() -> StoreSnapshot {
-        let device = DeviceBuilder::new("lamp").with_boolean_property("on", true).build();
+        let device = DeviceBuilder::new("lamp")
+            .with_boolean_property("on", true)
+            .with_properties(vec![Box::new(BooleanProperty::new("motion".to_string(), PropertyType::Motion, true, None, false))])
+            .build();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
         StoreSnapshot { devices: Arc::new(devices) }
     }
@@ -254,4 +259,10 @@ mod tests {
         assert_eq!(problems, [Problem::UnknownProperty { device_id: "lamp".to_string(), property_id: "missing".to_string() }]);
     }
 
+    #[test]
+    fn control_device_validate_reports_only_the_readonly_property() {
+        let problems = control_device("lamp", &["on", "motion"]).validate(&snapshot());
+
+        assert_eq!(problems, [Problem::ReadOnlyProperty { device_id: "lamp".to_string(), property_id: "motion".to_string() }]);
+    }
 }

@@ -99,6 +99,8 @@ pub enum Problem {
     UnknownDevice { device_id: String },
     #[error("unknown property '{property_id}' for device '{device_id}'")]
     UnknownProperty { device_id: String, property_id: String },
+    #[error("readonly property '{property_id}' for device '{device_id}'")]
+    ReadOnlyProperty { device_id: String, property_id: String },
 }
 
 impl Problem {
@@ -110,6 +112,7 @@ impl Problem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::property::{BooleanProperty, PropertyType};
     use crate::flow_engine::Expression::*;
     use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
@@ -125,6 +128,7 @@ mod tests {
     const KNOWN_DEVICE_ID: &str = "known";
     const UNKNOWN_PROPERTY_ID: &str = "missing";
     const NODE_ID: &str = "node";
+    const READONLY_PROPERTY_ID: &str = "motion";
 
     fn flow_with_trigger(trigger: Expression) -> Flow {
         let end_node = FlowNode::new("end_node".to_string(), vec![], FlowNodeKind::End);
@@ -162,7 +166,11 @@ mod tests {
     }
 
     fn snapshot() -> StoreSnapshot {
-        let device = DeviceBuilder::new(KNOWN_DEVICE_ID).with_boolean_property("on", true).build();
+        let device = DeviceBuilder::new(KNOWN_DEVICE_ID)
+            .with_boolean_property("on", true)
+            .with_properties(vec![Box::new(BooleanProperty::new(READONLY_PROPERTY_ID.to_string(), PropertyType::Motion, true, None, false))])
+            .build();
+
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
         StoreSnapshot { devices: Arc::new(devices) }
     }
@@ -197,6 +205,10 @@ mod tests {
 
     fn unknown_property_at(device_id: &str, property_id: &str, location: Location) -> ValidationIssue {
         Problem::UnknownProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(location)
+    }
+
+    fn readonly_property_at(device_id: &str, property_id: &str, location: Location) -> ValidationIssue {
+        Problem::ReadOnlyProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(location)
     }
 
     #[rstest]
@@ -290,6 +302,20 @@ mod tests {
         assert_eq!(result.unwrap_err().issues(), [unknown_property_at(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID, node(NODE_ID))]);
     }
 
+    #[rstest]
+    #[case::trigger(flow_with_trigger(property_changed_of(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID)))]
+    #[case::conditional(flow_with_node(FlowNodeKind::Conditional(property_value_of(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID))))]
+    fn validate_accepts_reading_a_readonly_property(#[case] flow: Flow) {
+        assert_eq!(validate(&flow, &snapshot()), Ok(()));
+    }
+
+    #[test]
+    fn validate_reports_a_control_device_action_that_sets_a_readonly_property() {
+        let result = validate(&flow_with_node(control_device(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID)), &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [readonly_property_at(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID, node(NODE_ID))]);
+    }
+    
     #[test]
     fn validate_reports_issues_in_the_trigger_first_then_in_the_nodes_in_order() {
         let nodes = vec![
@@ -344,6 +370,7 @@ mod tests {
     #[case::unknown_device(unknown_device("lamp"), "trigger: unknown device 'lamp'")]
     #[case::unknown_property(unknown_property("lamp", "on"), "trigger: unknown property 'on' for device 'lamp'")]
     #[case::node(unknown_device_at("lamp", node("turn_on")), "node 'turn_on': unknown device 'lamp'")]
+    #[case::readonly_property(readonly_property_at("sensor", "motion", node("turn_on")), "node 'turn_on': readonly property 'motion' for device 'sensor'")]
     fn validation_issue_displays_the_location_and_the_problem(#[case] issue: ValidationIssue, #[case] expected: &str) {
         assert_eq!(issue.to_string(), expected);
     }
