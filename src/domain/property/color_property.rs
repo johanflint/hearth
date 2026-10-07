@@ -1,6 +1,8 @@
 use crate::domain::property::property::ValueKind;
 use crate::domain::property::{Property, PropertyError, PropertyType};
+use ordered_float::OrderedFloat;
 use std::any::Any;
+use std::hash::{Hash, Hasher};
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct ColorProperty {
@@ -82,7 +84,7 @@ impl Property for ColorProperty {
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub struct CartesianCoordinate {
     x: f64,
     y: f64,
@@ -99,6 +101,21 @@ impl CartesianCoordinate {
 
     pub fn y(&self) -> f64 {
         self.y
+    }
+}
+
+impl PartialEq for CartesianCoordinate {
+    fn eq(&self, other: &Self) -> bool {
+        OrderedFloat(self.x) == OrderedFloat(other.x) && OrderedFloat(self.y) == OrderedFloat(other.y)
+    }
+}
+
+impl Eq for CartesianCoordinate {}
+
+impl Hash for CartesianCoordinate {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        OrderedFloat(self.x).hash(state);
+        OrderedFloat(self.y).hash(state);
     }
 }
 
@@ -124,5 +141,48 @@ impl Gamut {
 
     pub fn blue(&self) -> &CartesianCoordinate {
         &self.blue
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::hash::DefaultHasher;
+
+    fn hash_of<T: Hash>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn cartesian_coordinate_equal_values_are_equal_and_hash_equal() {
+        let a = CartesianCoordinate::new(0.3, 0.4);
+        let b = CartesianCoordinate::new(0.3, 0.4);
+
+        assert_eq!(a, b);
+        assert_eq!(hash_of(&a), hash_of(&b));
+    }
+
+    #[test]
+    fn cartesian_coordinate_different_y_is_not_equal() {
+        assert_ne!(CartesianCoordinate::new(0.3, 0.4), CartesianCoordinate::new(0.3, 0.5));
+    }
+
+    #[test]
+    fn cartesian_coordinate_nan_is_equal_to_itself() {
+        let a = CartesianCoordinate::new(f64::NAN, 0.4);
+
+        assert_eq!(a, a.clone());
+        assert_eq!(hash_of(&a), hash_of(&a.clone()));
+    }
+
+    #[test]
+    fn cartesian_coordinate_signed_zeros_are_equal_and_hash_equal() {
+        let a = CartesianCoordinate::new(0.0, 0.4);
+        let b = CartesianCoordinate::new(-0.0, 0.4);
+
+        assert_eq!(a, b);
+        assert_eq!(hash_of(&a), hash_of(&b));
     }
 }

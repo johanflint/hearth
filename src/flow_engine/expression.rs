@@ -1,3 +1,4 @@
+use crate::domain::color::Color;
 use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, PropertyType};
 use crate::domain::{Number, Time, WeekdayCondition};
 use crate::extensions::date_time_ext::ToWeekday;
@@ -74,6 +75,7 @@ impl Expression {
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub enum Value {
     Boolean(bool),
+    Color(Color),
     DateTime(DateTime<Utc>),
     Number(Number),
     String(String),
@@ -106,12 +108,13 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         EqualTo { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
+            (Value::Color(a), Value::Color(b)) => Ok(Value::Boolean(a == b)),
             (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a == b)),
             (Value::String(a), Value::String(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::None, Value::None) => Ok(Value::Boolean(true)),
             _ => Err(ExpressionError::OperandTypeMismatch {
                 operand: "EqualTo",
-                expected: "Boolean|DateTime|Number|String",
+                expected: "Boolean|Color|DateTime|Number|String",
                 actual_lhs: format!("{:?}", lhs),
                 actual_rhs: format!("{:?}", rhs),
             }),
@@ -119,12 +122,13 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         NotEqualTo { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(!a.eq(&b))),
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a != b)),
+            (Value::Color(a), Value::Color(b)) => Ok(Value::Boolean(a != b)),
             (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a != b)),
             (Value::String(a), Value::String(b)) => Ok(Value::Boolean(!a.eq(&b))),
             (Value::None, Value::None) => Ok(Value::Boolean(false)),
             _ => Err(ExpressionError::OperandTypeMismatch {
                 operand: "NotEqualTo",
-                expected: "Boolean|DateTime|Number|String",
+                expected: "Boolean|Color|DateTime|Number|String",
                 actual_lhs: format!("{:?}", lhs),
                 actual_rhs: format!("{:?}", rhs),
             }),
@@ -444,6 +448,13 @@ mod tests {
         Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).unwrap()
     }
 
+    fn cie_xyy(x: f64, y: f64, brightness: f64) -> Color {
+        Color::CIE_xyY {
+            xy: CartesianCoordinate::new(x, y),
+            brightness,
+        }
+    }
+
     mod greater_than_or_equal_to {
         use super::*;
 
@@ -500,6 +511,31 @@ mod tests {
                 &Context::default(),
             ).unwrap();
             assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[test]
+        fn color() {
+            let result = evaluate(
+                &GreaterThanOrEqualTo {
+                    lhs: Box::new(Literal {
+                        value: Value::Color(Color::RGB(255, 0, 0)),
+                    }),
+                    rhs: Box::new(Literal {
+                        value: Value::Color(Color::RGB(0, 0, 255)),
+                    }),
+                },
+                &Context::default(),
+            )
+                .unwrap_err();
+            assert_eq!(
+                result,
+                OperandTypeMismatch {
+                    operand: "Compare",
+                    expected: "Number|DateTime",
+                    actual_lhs: "Literal { value: Color(RGB(255, 0, 0)) }".to_string(),
+                    actual_rhs: "Literal { value: Color(RGB(0, 0, 255)) }".to_string(),
+                }
+            );
         }
     }
 
@@ -559,6 +595,31 @@ mod tests {
                 &Context::default(),
             ).unwrap();
             assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[test]
+        fn color() {
+            let result = evaluate(
+                &GreaterThan {
+                    lhs: Box::new(Literal {
+                        value: Value::Color(Color::RGB(255, 0, 0)),
+                    }),
+                    rhs: Box::new(Literal {
+                        value: Value::Color(Color::RGB(0, 0, 255)),
+                    }),
+                },
+                &Context::default(),
+            )
+                .unwrap_err();
+            assert_eq!(
+                result,
+                OperandTypeMismatch {
+                    operand: "Compare",
+                    expected: "Number|DateTime",
+                    actual_lhs: "Literal { value: Color(RGB(255, 0, 0)) }".to_string(),
+                    actual_rhs: "Literal { value: Color(RGB(0, 0, 255)) }".to_string(),
+                }
+            );
         }
     }
 
@@ -679,6 +740,31 @@ mod tests {
                 .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
+
+        #[test]
+        fn color() {
+            let result = evaluate(
+                &LessThan {
+                    lhs: Box::new(Literal {
+                        value: Value::Color(Color::RGB(255, 0, 0)),
+                    }),
+                    rhs: Box::new(Literal {
+                        value: Value::Color(Color::RGB(0, 0, 255)),
+                    }),
+                },
+                &Context::default(),
+            )
+                .unwrap_err();
+            assert_eq!(
+                result,
+                OperandTypeMismatch {
+                    operand: "Compare",
+                    expected: "Number|DateTime",
+                    actual_lhs: "Literal { value: Color(RGB(255, 0, 0)) }".to_string(),
+                    actual_rhs: "Literal { value: Color(RGB(0, 0, 255)) }".to_string(),
+                }
+            );
+        }
     }
 
     mod equal_to {
@@ -719,6 +805,27 @@ mod tests {
                 },
                 &Context::default(),
             ).unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
+        #[case::same_rgb(Color::RGB(255, 0, 0), Color::RGB(255, 0, 0), true)]
+        #[case::different_rgb(Color::RGB(255, 0, 0), Color::RGB(0, 0, 255), false)]
+        #[case::same_hex(Color::Hex("#ff0000".to_string()), Color::Hex("#ff0000".to_string()), true)]
+        #[case::different_hex(Color::Hex("#ff0000".to_string()), Color::Hex("#0000ff".to_string()), false)]
+        #[case::same_cie_xyy(cie_xyy(0.675, 0.322, 0.2126), cie_xyy(0.675, 0.322, 0.2126), true)]
+        #[case::different_cie_xyy_coordinate(cie_xyy(0.675, 0.322, 0.2126), cie_xyy(0.167, 0.04, 0.2126), false)]
+        #[case::different_cie_xyy_brightness(cie_xyy(0.675, 0.322, 0.2126), cie_xyy(0.675, 0.322, 0.5), false)]
+        #[case::different_representations(Color::RGB(255, 0, 0), Color::Hex("#ff0000".to_string()), false)]
+        fn color(#[case] lhs: Color, #[case] rhs: Color, #[case] expected: bool) {
+            let result = evaluate(
+                &EqualTo {
+                    lhs: Box::new(Literal { value: Value::Color(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Color(rhs) }),
+                },
+                &Context::default(),
+            )
+                .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -769,15 +876,21 @@ mod tests {
         #[rstest]
         #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "EqualTo",
-                expected: "Boolean|DateTime|Number|String",
+                expected: "Boolean|Color|DateTime|Number|String",
                 actual_lhs: "Literal { value: Boolean(true) }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
             })]
         #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "EqualTo",
-                expected: "Boolean|DateTime|Number|String",
+                expected: "Boolean|Color|DateTime|Number|String",
                 actual_lhs: "Literal { value: None }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+            })]
+        #[case(Value::Color(Color::Hex("#ff0000".to_string())), Value::String("#ff0000".to_string()), OperandTypeMismatch{
+                operand: "EqualTo",
+                expected: "Boolean|Color|DateTime|Number|String",
+                actual_lhs: "Literal { value: Color(Hex(\"#ff0000\")) }".to_string(),
+                actual_rhs: "Literal { value: String(\"#ff0000\") }".to_string(),
             })]
         fn mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
             let result = evaluate(
@@ -836,6 +949,27 @@ mod tests {
         }
 
         #[rstest]
+        #[case::same_rgb(Color::RGB(255, 0, 0), Color::RGB(255, 0, 0), false)]
+        #[case::different_rgb(Color::RGB(255, 0, 0), Color::RGB(0, 0, 255), true)]
+        #[case::same_hex(Color::Hex("#ff0000".to_string()), Color::Hex("#ff0000".to_string()), false)]
+        #[case::different_hex(Color::Hex("#ff0000".to_string()), Color::Hex("#0000ff".to_string()), true)]
+        #[case::same_cie_xyy(cie_xyy(0.675, 0.322, 0.2126), cie_xyy(0.675, 0.322, 0.2126), false)]
+        #[case::different_cie_xyy_coordinate(cie_xyy(0.675, 0.322, 0.2126), cie_xyy(0.167, 0.04, 0.2126), true)]
+        #[case::different_cie_xyy_brightness(cie_xyy(0.675, 0.322, 0.2126), cie_xyy(0.675, 0.322, 0.5), true)]
+        #[case::different_representations(Color::RGB(255, 0, 0), Color::Hex("#ff0000".to_string()), true)]
+        fn color(#[case] lhs: Color, #[case] rhs: Color, #[case] expected: bool) {
+            let result = evaluate(
+                &NotEqualTo {
+                    lhs: Box::new(Literal { value: Value::Color(lhs) }),
+                    rhs: Box::new(Literal { value: Value::Color(rhs) }),
+                },
+                &Context::default(),
+            )
+                .unwrap();
+            assert_eq!(result, Value::Boolean(expected));
+        }
+
+        #[rstest]
         #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 3), true)]
         #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 4), false)]
         #[case(utc_with_ymd(2000, 8, 4), utc_with_ymd(2000, 8, 5), true)]
@@ -882,15 +1016,21 @@ mod tests {
         #[rstest]
         #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "NotEqualTo",
-                expected: "Boolean|DateTime|Number|String",
+                expected: "Boolean|Color|DateTime|Number|String",
                 actual_lhs: "Literal { value: Boolean(true) }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
             })]
         #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "NotEqualTo",
-                expected: "Boolean|DateTime|Number|String",
+                expected: "Boolean|Color|DateTime|Number|String",
                 actual_lhs: "Literal { value: None }".to_string(),
                 actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+            })]
+        #[case(Value::Color(Color::Hex("#ff0000".to_string())), Value::String("#ff0000".to_string()), OperandTypeMismatch{
+                operand: "NotEqualTo",
+                expected: "Boolean|Color|DateTime|Number|String",
+                actual_lhs: "Literal { value: Color(Hex(\"#ff0000\")) }".to_string(),
+                actual_rhs: "Literal { value: String(\"#ff0000\") }".to_string(),
             })]
         fn mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
             let result = evaluate(
@@ -1037,6 +1177,15 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    #[rstest]
+    #[case::rgb(Color::RGB(255, 0, 0))]
+    #[case::hex(Color::Hex("#ff0000".to_string()))]
+    #[case::cie_xyy(cie_xyy(0.675, 0.322, 0.2126))]
+    fn color_literal_evaluates_to_its_value(#[case] color: Color) {
+        let result = evaluate(&Literal { value: Value::Color(color.clone()) }, &Context::default());
+
+        assert_eq!(result, Ok(Value::Color(color)));
+    }
 
     #[test]
     fn property_changed_evaluates_to_true_when_it_matches_the_context() {
