@@ -1,4 +1,5 @@
 use crate::domain::Number;
+use crate::domain::property::property::ValueKind;
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 use std::fmt::Debug;
@@ -95,6 +96,10 @@ impl Property for NumberProperty {
 
     fn property_type(&self) -> PropertyType {
         self.property_type
+    }
+
+    fn value_kind(&self) -> ValueKind {
+        ValueKind::Number
     }
 
     fn readonly(&self) -> bool {

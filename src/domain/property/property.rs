@@ -1,11 +1,13 @@
 use std::any::Any;
-use std::fmt::Debug;
+use std::fmt;
+use std::fmt::{Debug, Formatter};
 use thiserror::Error;
 
 #[allow(dead_code)]
 pub trait Property: Debug + Send + Sync {
     fn name(&self) -> &str;
     fn property_type(&self) -> PropertyType;
+    fn value_kind(&self) -> ValueKind;
     /// Determines if the property may be set from a flow
     fn readonly(&self) -> bool;
     fn external_id(&self) -> Option<&str>;
@@ -28,6 +30,28 @@ impl Clone for Box<dyn Property> {
 impl PartialEq for dyn Property {
     fn eq(&self, other: &Self) -> bool {
         self.eq_dyn(other)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ValueKind {
+    Boolean,
+    Color,
+    DateTime,
+    Enum,
+    Number,
+}
+
+impl fmt::Display for ValueKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            ValueKind::Boolean => "boolean",
+            ValueKind::Color => "color",
+            ValueKind::DateTime => "datetime",
+            ValueKind::Enum => "enum",
+            ValueKind::Number => "number",
+        };
+        f.write_str(kind)
     }
 }
 
@@ -71,4 +95,31 @@ pub enum PropertyError {
     EmptyAllowedValues,
     #[error("unknown value '{value}', allowed values: '{}'", allowed_values.join(", "))]
     UnknownValue { value: String, allowed_values: Vec<String> },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty};
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::boolean(ValueKind::Boolean, "boolean")]
+    #[case::color(ValueKind::Color, "color")]
+    #[case::datetime(ValueKind::DateTime, "datetime")]
+    #[case::enumeration(ValueKind::Enum, "enum")]
+    #[case::number(ValueKind::Number, "number")]
+    fn value_kind_displays_in_lowercase(#[case] kind: ValueKind, #[case] expected: &str) {
+        assert_eq!(kind.to_string(), expected);
+    }
+
+    #[rstest]
+    #[case::boolean(Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, false, None, true)), ValueKind::Boolean)]
+    #[case::color(Box::new(ColorProperty::new("color".to_string(), PropertyType::Color, false, None, CartesianCoordinate::new(0.3, 0.3), None)), ValueKind::Color)]
+    #[case::datetime(Box::new(DateTimeProperty::new("motion_last_changed".to_string(), PropertyType::MotionLastChanged, true, None, None)), ValueKind::DateTime)]
+    #[case::enumeration(Box::new(EnumProperty::new("button".to_string(), PropertyType::Button, true, None, None, vec!["pressed".to_string()]).unwrap()), ValueKind::Enum)]
+    #[case::number(Box::new(NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false).build()), ValueKind::Number)]
+    fn property_value_kind_matches_its_value(#[case] property: Box<dyn Property>, #[case] expected: ValueKind) {
+        assert_eq!(property.value_kind(), expected);
+    }
 }

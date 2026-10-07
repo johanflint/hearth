@@ -87,6 +87,7 @@ fn problem_code(problem: &Problem) -> &'static str {
         Problem::UnknownDevice { .. } => "unknownDevice",
         Problem::UnknownProperty { .. } => "unknownProperty",
         Problem::ReadOnlyProperty { .. } => "readonlyProperty",
+        Problem::IncompatibleValue { .. } => "incompatibleValue",
     }
 }
 
@@ -94,13 +95,19 @@ fn problem_code(problem: &Problem) -> &'static str {
 mod tests {
     use super::*;
     use crate::api::flows::test_support::body_json;
+    use crate::domain::property::ValueKind;
     use rstest::rstest;
     use serde_json::json;
+
 
     #[rstest]
     #[case::unknown_device(Problem::UnknownDevice{ device_id: "lamp".to_string() }, "unknownDevice")]
     #[case::unknown_property(Problem::UnknownProperty{ device_id: "lamp".to_string(), property_id: "on".to_string() }, "unknownProperty")]
     #[case::readonly_property(Problem::ReadOnlyProperty{ device_id: "lamp".to_string(), property_id: "on".to_string() }, "readonlyProperty")]
+    #[case::incompatible_value(
+        Problem::IncompatibleValue{ device_id: "lamp".to_string(), property_id: "on".to_string(), expected: ValueKind::Boolean, actual: ValueKind::Number },
+        "incompatibleValue"
+    )]
     fn problem_code_maps_each_problem(#[case] problem: Problem, #[case] expected: &str) {
         assert_eq!(problem_code(&problem), expected);
     }

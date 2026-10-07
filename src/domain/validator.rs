@@ -1,5 +1,5 @@
 use crate::domain::device::Device;
-use crate::domain::property::Property;
+use crate::domain::property::{Property, ValueKind};
 use crate::flow_engine::Expression;
 use crate::flow_engine::flow::{Flow, FlowNodeKind};
 use crate::store::StoreSnapshot;
@@ -101,6 +101,8 @@ pub enum Problem {
     UnknownProperty { device_id: String, property_id: String },
     #[error("readonly property '{property_id}' for device '{device_id}'")]
     ReadOnlyProperty { device_id: String, property_id: String },
+    #[error("incompatible value for property '{property_id}' for device '{device_id}': expected {expected}, got {actual}")]
+    IncompatibleValue { device_id: String, property_id: String, expected: ValueKind, actual: ValueKind },
 }
 
 impl Problem {
@@ -112,12 +114,13 @@ impl Problem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Number;
     use crate::domain::property::{BooleanProperty, PropertyType};
     use crate::flow_engine::Expression::*;
-    use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
-    use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
+    use crate::flow_engine::property_value::PropertyValue::{SetBooleanValue, SetNumberValue};
+    use crate::flow_engine::{Value, property_value};
     use crate::store::DeviceMap;
     use crate::test_support::DeviceBuilder;
     use rstest::rstest;
@@ -153,7 +156,11 @@ mod tests {
     }
 
     fn control_device(device_id: &str, property_id: &str) -> FlowNodeKind {
-        let property = HashMap::from([(property_id.to_string(), SetBooleanValue(true).into())]);
+        control_device_with(device_id, property_id, SetBooleanValue(true))
+    }
+
+    fn control_device_with(device_id: &str, property_id: &str, value: property_value::PropertyValue) -> FlowNodeKind {
+        let property = HashMap::from([(property_id.to_string(), value.into())]);
         FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(device_id.to_string(), property))))
     }
 
@@ -209,6 +216,10 @@ mod tests {
 
     fn readonly_property_at(device_id: &str, property_id: &str, location: Location) -> ValidationIssue {
         Problem::ReadOnlyProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(location)
+    }
+
+    fn incompatible_value_at(device_id: &str, property_id: &str, expected: ValueKind, actual: ValueKind, location: Location) -> ValidationIssue {
+        Problem::IncompatibleValue { device_id: device_id.to_string(), property_id: property_id.to_string(), expected, actual }.at(location)
     }
 
     #[rstest]
@@ -315,6 +326,13 @@ mod tests {
 
         assert_eq!(result.unwrap_err().issues(), [readonly_property_at(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID, node(NODE_ID))]);
     }
+
+    #[test]
+    fn validate_reports_a_control_device_action_that_sets_an_incompatible_value() {
+        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "on", SetNumberValue(Number::PositiveInt(50)))), &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [incompatible_value_at(KNOWN_DEVICE_ID, "on", ValueKind::Boolean, ValueKind::Number, node(NODE_ID))]);
+    }
     
     #[test]
     fn validate_reports_issues_in_the_trigger_first_then_in_the_nodes_in_order() {
@@ -371,6 +389,10 @@ mod tests {
     #[case::unknown_property(unknown_property("lamp", "on"), "trigger: unknown property 'on' for device 'lamp'")]
     #[case::node(unknown_device_at("lamp", node("turn_on")), "node 'turn_on': unknown device 'lamp'")]
     #[case::readonly_property(readonly_property_at("sensor", "motion", node("turn_on")), "node 'turn_on': readonly property 'motion' for device 'sensor'")]
+    #[case::incompatible_value(
+        incompatible_value_at("lamp", "on", ValueKind::Boolean, ValueKind::Number, node("turn_on")),
+        "node 'turn_on': incompatible value for property 'on' for device 'lamp': expected boolean, got number"
+    )]
     fn validation_issue_displays_the_location_and_the_problem(#[case] issue: ValidationIssue, #[case] expected: &str) {
         assert_eq!(issue.to_string(), expected);
     }

@@ -133,9 +133,15 @@ impl Action for ControlDeviceAction {
         };
 
         self.property
-            .keys()
-            .filter_map(|property_id| match find_property(device, property_id) {
+            .iter()
+            .filter_map(|(property_id, command)| match find_property(device, property_id) {
                 Ok(property) if property.readonly() => Some(Problem::ReadOnlyProperty { device_id: self.device_id.to_string(), property_id: property_id.to_string() }),
+                Ok(property) if command.value.value_kind() != property.value_kind() => Some(Problem::IncompatibleValue {
+                    device_id: self.device_id.to_string(),
+                    property_id: property_id.to_string(),
+                    expected: property.value_kind(),
+                    actual: command.value.value_kind(),
+                }),
                 Ok(_) => None,
                 Err(problem) => Some(problem),
             })
@@ -150,18 +156,26 @@ impl Action for ControlDeviceAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::property::{BooleanProperty, PropertyType};
+    use crate::domain::Number;
+    use crate::domain::color::Color;
+    use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind};
+    use crate::flow_engine::property_value::PropertyValue;
     use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
     use crate::store::DeviceMap;
     use crate::test_support::DeviceBuilder;
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
     use std::io;
     use std::sync::Arc;
 
     fn snapshot() -> StoreSnapshot {
         let device = DeviceBuilder::new("lamp")
             .with_boolean_property("on", true)
-            .with_properties(vec![Box::new(BooleanProperty::new("motion".to_string(), PropertyType::Motion, true, None, false))])
+            .with_properties(vec![
+                Box::new(BooleanProperty::new("motion".to_string(), PropertyType::Motion, true, None, false)),
+                Box::new(NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false).build()),
+                Box::new(ColorProperty::new("color".to_string(), PropertyType::Color, false, None, CartesianCoordinate::new(0.3, 0.3), None)),
+            ])
             .build();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
         StoreSnapshot { devices: Arc::new(devices) }
@@ -170,6 +184,18 @@ mod tests {
     fn control_device(device_id: &str, property_ids: &[&str]) -> ControlDeviceAction {
         let property = property_ids.iter().map(|id| (id.to_string(), SetBooleanValue(true).into())).collect();
         ControlDeviceAction::new(device_id.to_string(), property)
+    }
+
+    fn control_device_with(device_id: &str, property_id: &str, value: PropertyValue) -> ControlDeviceAction {
+        ControlDeviceAction::new(device_id.to_string(), HashMap::from([(property_id.to_string(), value.into())]))
+    }
+
+    fn number(value: u64) -> Number {
+        Number::PositiveInt(value)
+    }
+
+    fn red() -> Color {
+        Color::Hex("#ff0000".to_string())
     }
 
     #[test]
@@ -262,6 +288,41 @@ mod tests {
     #[test]
     fn control_device_validate_reports_only_the_readonly_property() {
         let problems = control_device("lamp", &["on", "motion"]).validate(&snapshot());
+
+        assert_eq!(problems, [Problem::ReadOnlyProperty { device_id: "lamp".to_string(), property_id: "motion".to_string() }]);
+    }
+
+    #[rstest]
+    #[case::set_boolean("on", SetBooleanValue(true))]
+    #[case::toggle_boolean("on", PropertyValue::ToggleBooleanValue)]
+    #[case::set_number("brightness", PropertyValue::SetNumberValue(number(50)))]
+    #[case::increment_number("brightness", PropertyValue::IncrementNumberValue(number(10)))]
+    #[case::decrement_number("brightness", PropertyValue::DecrementNumberValue(number(10)))]
+    #[case::set_color("color", PropertyValue::SetColor(red()))]
+    fn control_device_validate_accepts_a_value_that_matches_the_property(#[case] property_id: &str, #[case] value: PropertyValue) {
+        assert_eq!(control_device_with("lamp", property_id, value).validate(&snapshot()), []);
+    }
+
+    #[rstest]
+    #[case::number_for_boolean("on", PropertyValue::SetNumberValue(number(50)), ValueKind::Boolean, ValueKind::Number)]
+    #[case::color_for_boolean("on", PropertyValue::SetColor(red()), ValueKind::Boolean, ValueKind::Color)]
+    #[case::boolean_for_number("brightness", SetBooleanValue(true), ValueKind::Number, ValueKind::Boolean)]
+    #[case::toggle_for_number("brightness", PropertyValue::ToggleBooleanValue, ValueKind::Number, ValueKind::Boolean)]
+    #[case::increment_for_color("color", PropertyValue::IncrementNumberValue(number(10)), ValueKind::Color, ValueKind::Number)]
+    fn control_device_validate_reports_an_incompatible_value(
+        #[case] property_id: &str,
+        #[case] value: PropertyValue,
+        #[case] expected: ValueKind,
+        #[case] actual: ValueKind,
+    ) {
+        let problems = control_device_with("lamp", property_id, value).validate(&snapshot());
+
+        assert_eq!(problems, [Problem::IncompatibleValue { device_id: "lamp".to_string(), property_id: property_id.to_string(), expected, actual }]);
+    }
+
+    #[test]
+    fn control_device_validate_reports_a_readonly_property_instead_of_an_incompatible_value() {
+        let problems = control_device_with("lamp", "motion", PropertyValue::SetNumberValue(number(50))).validate(&snapshot());
 
         assert_eq!(problems, [Problem::ReadOnlyProperty { device_id: "lamp".to_string(), property_id: "motion".to_string() }]);
     }
