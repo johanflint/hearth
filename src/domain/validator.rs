@@ -1,3 +1,4 @@
+use crate::domain::Number;
 use crate::domain::device::Device;
 use crate::domain::property::{Property, ValueKind};
 use crate::flow_engine::Expression;
@@ -14,14 +15,14 @@ use thiserror::Error;
 pub fn validate(flow: &Flow, snapshot: &StoreSnapshot) -> Result<(), FlowValidationError> {
     let mut issues = vec![];
 
-    issues.extend(expression_problems(snapshot, flow.trigger()).into_iter().map(|p| p.at(Location::Trigger)));
+    issues.extend(validate_expression(snapshot, flow.trigger()).into_iter().map(|p| p.at(Location::Trigger)));
 
     for node in flow.walk() {
         let location = || Location::Node { node_id: node.id().to_string() };
         match node.kind() {
             FlowNodeKind::Start | FlowNodeKind::End | FlowNodeKind::Sleep(_) => {}
             FlowNodeKind::Conditional(expression) => {
-                issues.extend(expression_problems(snapshot, expression).into_iter().map(|p| p.at(location())));
+                issues.extend(validate_expression(snapshot, expression).into_iter().map(|p| p.at(location())));
             }
             FlowNodeKind::Action(action_node) => {
                 issues.extend(action_node.action().validate(snapshot).into_iter().map(|p| p.at(location())));
@@ -45,7 +46,7 @@ pub fn find_property<'a>(device: &'a Device, property_id: &str) -> Result<&'a dy
     })
 }
 
-fn expression_problems(snapshot: &StoreSnapshot, expression: &Expression) -> Vec<Problem> {
+fn validate_expression(snapshot: &StoreSnapshot, expression: &Expression) -> Vec<Problem> {
     expression.walk()
         .filter_map(|expression| match expression {
             Expression::PropertyChanged { device_id, property_id } |
@@ -103,6 +104,10 @@ pub enum Problem {
     ReadOnlyProperty { device_id: String, property_id: String },
     #[error("incompatible value for property '{property_id}' for device '{device_id}': expected {expected}, got {actual}")]
     IncompatibleValue { device_id: String, property_id: String, expected: ValueKind, actual: ValueKind },
+    #[error("value too small for property '{property_id}' for device '{device_id}': minimum {minimum}, got {value}")]
+    ValueTooSmall { device_id: String, property_id: String, value: Number, minimum: Number },
+    #[error("value too large for property '{property_id}' for device '{device_id}': maximum {maximum}, got {value}")]
+    ValueTooLarge { device_id: String, property_id: String, value: Number, maximum: Number },
 }
 
 impl Problem {
@@ -115,7 +120,7 @@ impl Problem {
 mod tests {
     use super::*;
     use crate::domain::Number;
-    use crate::domain::property::{BooleanProperty, PropertyType};
+    use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
     use crate::flow_engine::Expression::*;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
@@ -175,7 +180,10 @@ mod tests {
     fn snapshot() -> StoreSnapshot {
         let device = DeviceBuilder::new(KNOWN_DEVICE_ID)
             .with_boolean_property("on", true)
-            .with_properties(vec![Box::new(BooleanProperty::new(READONLY_PROPERTY_ID.to_string(), PropertyType::Motion, true, None, false))])
+            .with_properties(vec![
+                Box::new(BooleanProperty::new(READONLY_PROPERTY_ID.to_string(), PropertyType::Motion, true, None, false)),
+                Box::new(NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false).positive_int(Some(50), Some(1), Some(100)).build()),
+            ])
             .build();
 
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
@@ -216,6 +224,14 @@ mod tests {
 
     fn readonly_property_at(device_id: &str, property_id: &str, location: Location) -> ValidationIssue {
         Problem::ReadOnlyProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(location)
+    }
+
+    fn value_too_small_at(device_id: &str, property_id: &str, value: Number, minimum: Number, location: Location) -> ValidationIssue {
+        Problem::ValueTooSmall { device_id: device_id.to_string(), property_id: property_id.to_string(), value, minimum }.at(location)
+    }
+
+    fn value_too_large_at(device_id: &str, property_id: &str, value: Number, maximum: Number, location: Location) -> ValidationIssue {
+        Problem::ValueTooLarge { device_id: device_id.to_string(), property_id: property_id.to_string(), value, maximum }.at(location)
     }
 
     fn incompatible_value_at(device_id: &str, property_id: &str, expected: ValueKind, actual: ValueKind, location: Location) -> ValidationIssue {
@@ -333,6 +349,15 @@ mod tests {
 
         assert_eq!(result.unwrap_err().issues(), [incompatible_value_at(KNOWN_DEVICE_ID, "on", ValueKind::Boolean, ValueKind::Number, node(NODE_ID))]);
     }
+
+    #[rstest]
+    #[case::too_small(Number::PositiveInt(0), value_too_small_at(KNOWN_DEVICE_ID, "brightness", Number::PositiveInt(0), Number::PositiveInt(1), node(NODE_ID)))]
+    #[case::too_large(Number::PositiveInt(101), value_too_large_at(KNOWN_DEVICE_ID, "brightness", Number::PositiveInt(101), Number::PositiveInt(100), node(NODE_ID)))]
+    fn validate_reports_a_control_device_action_that_sets_a_value_out_of_range(#[case] value: Number, #[case] expected: ValidationIssue) {
+        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", SetNumberValue(value))), &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [expected]);
+    }
     
     #[test]
     fn validate_reports_issues_in_the_trigger_first_then_in_the_nodes_in_order() {
@@ -392,6 +417,14 @@ mod tests {
     #[case::incompatible_value(
         incompatible_value_at("lamp", "on", ValueKind::Boolean, ValueKind::Number, node("turn_on")),
         "node 'turn_on': incompatible value for property 'on' for device 'lamp': expected boolean, got number"
+    )]
+    #[case::value_too_small(
+        value_too_small_at("lamp", "brightness", Number::PositiveInt(0), Number::PositiveInt(1), node("dim")),
+        "node 'dim': value too small for property 'brightness' for device 'lamp': minimum 1, got 0"
+    )]
+    #[case::value_too_large(
+        value_too_large_at("lamp", "brightness", Number::Float(100.5), Number::PositiveInt(100), node("dim")),
+        "node 'dim': value too large for property 'brightness' for device 'lamp': maximum 100, got 100.5"
     )]
     fn validation_issue_displays_the_location_and_the_problem(#[case] issue: ValidationIssue, #[case] expected: &str) {
         assert_eq!(issue.to_string(), expected);

@@ -88,6 +88,8 @@ fn problem_code(problem: &Problem) -> &'static str {
         Problem::UnknownProperty { .. } => "unknownProperty",
         Problem::ReadOnlyProperty { .. } => "readonlyProperty",
         Problem::IncompatibleValue { .. } => "incompatibleValue",
+        Problem::ValueTooSmall { .. } => "valueTooSmall",
+        Problem::ValueTooLarge { .. } => "valueTooLarge",
     }
 }
 
@@ -95,6 +97,7 @@ fn problem_code(problem: &Problem) -> &'static str {
 mod tests {
     use super::*;
     use crate::api::flows::test_support::body_json;
+    use crate::domain::Number;
     use crate::domain::property::ValueKind;
     use rstest::rstest;
     use serde_json::json;
@@ -107,6 +110,14 @@ mod tests {
     #[case::incompatible_value(
         Problem::IncompatibleValue{ device_id: "lamp".to_string(), property_id: "on".to_string(), expected: ValueKind::Boolean, actual: ValueKind::Number },
         "incompatibleValue"
+    )]
+    #[case::value_too_small(
+        Problem::ValueTooSmall{ device_id: "lamp".to_string(), property_id: "brightness".to_string(), value: Number::PositiveInt(0), minimum: Number::PositiveInt(1) },
+        "valueTooSmall"
+    )]
+    #[case::value_too_large(
+        Problem::ValueTooLarge{ device_id: "lamp".to_string(), property_id: "brightness".to_string(), value: Number::PositiveInt(101), maximum: Number::PositiveInt(100) },
+        "valueTooLarge"
     )]
     fn problem_code_maps_each_problem(#[case] problem: Problem, #[case] expected: &str) {
         assert_eq!(problem_code(&problem), expected);
