@@ -12,11 +12,13 @@ mod weekday;
 mod weekday_condition;
 mod connectivity;
 mod battery_state;
+mod validator;
 
 pub use battery_state::BatteryState;
 pub use connectivity::Connectivity;
 pub use geo_location::GeoLocation;
 pub use number::Number;
 pub use time::Time;
+pub use validator::{FlowValidationError, Location, Problem, ValidationIssue, find_device, find_property, validate};
 pub use weekday::Weekday;
 pub use weekday_condition::WeekdayCondition;

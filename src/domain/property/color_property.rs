@@ -1,3 +1,4 @@
+use crate::domain::property::property::ValueKind;
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 
@@ -46,6 +47,10 @@ impl Property for ColorProperty {
 
     fn property_type(&self) -> PropertyType {
         self.property_type
+    }
+
+    fn value_kind(&self) -> ValueKind {
+        ValueKind::Color
     }
 
     fn readonly(&self) -> bool {

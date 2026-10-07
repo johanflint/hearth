@@ -61,6 +61,11 @@ impl Flow {
     pub fn node_by_id(&self, id: &str) -> Option<&FlowNode> {
         self.nodes_by_id.get(id).map(|node| node.as_ref())
     }
+
+    /// Iterates over all nodes depth-first, starting at the start node.
+    pub fn walk(&self) -> impl Iterator<Item=&FlowNode> + '_ {
+        self.start_node.walk()
+    }
 }
 
 #[derive(Debug)]
@@ -85,6 +90,16 @@ impl FlowNode {
 
     pub fn kind(&self) -> &FlowNodeKind {
         &self.kind
+    }
+
+    /// Iterates over this node and its descendants depth-first, following outgoing links in order.
+    pub fn walk(&self) -> impl Iterator<Item=&FlowNode> + '_ {
+        let mut stack = vec![self];
+        std::iter::from_fn(move || {
+            let node = stack.pop()?;
+            stack.extend(node.outgoing_nodes.iter().rev().map(FlowLink::node));
+            Some(node)
+        })
     }
 }
 
@@ -129,5 +144,24 @@ impl ActionFlowNode {
 
     pub fn action(&self) -> &dyn Action {
         self.action.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(id: &str, children: Vec<FlowNode>) -> FlowNode {
+        let links = children.into_iter().map(|child| FlowLink::new(Arc::new(child), Value::None)).collect();
+        FlowNode::new(id.to_string(), links, FlowNodeKind::End)
+    }
+
+    #[test]
+    fn walk_visits_all_nodes_depth_first_in_link_order() {
+        let tree = node("start", vec![node("a", vec![node("c", vec![])]), node("b", vec![])]);
+
+        let ids: Vec<&str> = tree.walk().map(FlowNode::id).collect();
+
+        assert_eq!(ids, ["start", "a", "c", "b"]);
     }
 }

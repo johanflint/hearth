@@ -1,13 +1,16 @@
+use crate::domain::{FlowValidationError, validate};
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::{SchedulerCommand, VersionedFlow};
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
 use crate::flow_registry::{FlowRegistry, RegisterResult, UnregisterResult};
 use crate::flow_store::{DeleteError, FlowStore, FlowStoreError, InsertError, StoredFlow, UpdateError};
+use crate::store::StoreSnapshot;
 use serde::Deserialize;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::{OwnedPermit, Sender};
+use tokio::sync::watch::Receiver;
 use tokio::task::JoinError;
 use tracing::debug;
 
@@ -16,11 +19,12 @@ pub struct FlowService {
     flow_store: Arc<FlowStore>,
     flow_registry: Arc<FlowRegistry>,
     scheduler_tx: Sender<SchedulerCommand>,
+    snapshot_rx: Receiver<StoreSnapshot>
 }
 
 impl FlowService {
-    pub fn new(flow_store: Arc<FlowStore>, flow_registry: Arc<FlowRegistry>, scheduler_tx: Sender<SchedulerCommand>) -> Self {
-        FlowService { flow_store, flow_registry, scheduler_tx }
+    pub fn new(flow_store: Arc<FlowStore>, flow_registry: Arc<FlowRegistry>, scheduler_tx: Sender<SchedulerCommand>, snapshot_rx: Receiver<StoreSnapshot>) -> Self {
+        FlowService { flow_store, flow_registry, scheduler_tx, snapshot_rx }
     }
 
     pub async fn list(&self) -> Result<Vec<StoredFlow>, ListFlowsError> {
@@ -86,6 +90,18 @@ impl FlowService {
             };
             Ok(())
         }).await
+    }
+
+    pub async fn validate(&self, document: serde_json::Value) -> Result<(), ValidateError> {
+        // Structural validation
+        let flow = validate_flow_document::<ValidateError>(&document)?;
+
+        let store_snapshot = self.snapshot_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
+
+        // Semantic validation
+        validate(&flow, &store_snapshot).map_err(ValidateError::ValidationFailed)?;
+        
+        Ok(())
     }
 
     /// Reserves capacity before mutating anything, so an unavailable scheduler is rejected
@@ -228,12 +244,22 @@ impl From<DeleteError> for DeleteFlowError {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum ValidateError {
+    #[error("invalid flow document: {0}")]
+    InvalidDocument(#[from] serde_json::Error),
+    #[error(transparent)]
+    InvalidFlow(#[from] FlowFactoryError),
+    #[error(transparent)]
+    ValidationFailed(FlowValidationError)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
     use std::path::Path;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, watch};
 
     struct Fixture {
         service: FlowService,
@@ -262,7 +288,9 @@ mod tests {
         let flow_store = Arc::new(FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store"));
         let flow_registry = Arc::new(flow_registry);
         let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
-        let service = FlowService::new(Arc::clone(&flow_store), Arc::clone(&flow_registry), scheduler_tx);
+        let (_, snapshot_rx) = watch::channel(StoreSnapshot::default());
+
+        let service = FlowService::new(Arc::clone(&flow_store), Arc::clone(&flow_registry), scheduler_tx, snapshot_rx);
         Fixture { service, flow_store, flow_registry, scheduler_rx }
     }
 

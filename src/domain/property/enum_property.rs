@@ -1,3 +1,4 @@
+use crate::domain::property::property::ValueKind;
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
 
@@ -60,6 +61,10 @@ impl Property for EnumProperty {
 
     fn property_type(&self) -> PropertyType {
         self.property_type
+    }
+
+    fn value_kind(&self) -> ValueKind {
+        ValueKind::Enum
     }
 
     fn readonly(&self) -> bool {

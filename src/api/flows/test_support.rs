@@ -3,12 +3,13 @@ use crate::flow_engine::SchedulerCommand;
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
+use crate::store::StoreSnapshot;
 use axum::response::Response;
 use http_body_util::BodyExt;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 pub(super) const VALID_FLOW_ID: &str = "01K7KK6H5R7Y72QJEJSJQCKMRQ";
 pub(super) const VALID_FLOW_JSON: &str = include_str!("../../../tests/resources/flows/logFlow.json");
@@ -33,7 +34,8 @@ pub(super) fn create_state(flow_registry: FlowRegistry) -> Fixture {
     let handle = PrometheusBuilder::new().build_recorder().handle();
     let flow_store = Arc::new(FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store"));
     let flow_registry = Arc::new(flow_registry);
-    let flow_service = Arc::new(FlowService::new(Arc::clone(&flow_store), Arc::clone(&flow_registry), scheduler_tx));
+    let (_, snapshot_rx) = watch::channel(StoreSnapshot::default());
+    let flow_service = Arc::new(FlowService::new(Arc::clone(&flow_store), Arc::clone(&flow_registry), scheduler_tx, snapshot_rx));
     Fixture { state: ApiState::new(handle, flow_service), flow_store, flow_registry, scheduler_rx }
 }
 

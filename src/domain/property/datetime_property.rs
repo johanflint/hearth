@@ -1,3 +1,4 @@
+use crate::domain::property::property::ValueKind;
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use chrono::{DateTime, Utc};
 use std::any::Any;
@@ -41,6 +42,10 @@ impl Property for DateTimeProperty {
 
     fn property_type(&self) -> PropertyType {
         self.property_type
+    }
+
+    fn value_kind(&self) -> ValueKind {
+        ValueKind::DateTime
     }
 
     fn readonly(&self) -> bool {
