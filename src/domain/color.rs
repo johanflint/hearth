@@ -1,8 +1,10 @@
 use crate::domain::color::Color::{CIE_xyY, Hex, RGB};
 use crate::domain::property::CartesianCoordinate;
+use ordered_float::OrderedFloat;
+use std::hash::{Hash, Hasher};
 use thiserror::Error;
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum Color {
     RGB(u8, u8, u8),
     Hex(String),
@@ -48,6 +50,33 @@ impl Color {
                 Ok(rgb_to_xyY(r, g, b))
             }
             CIE_xyY { .. } => Ok(self),
+        }
+    }
+}
+
+impl PartialEq for Color {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RGB(r1, g1, b1), RGB(r2, g2, b2)) => (r1, g1, b1) == (r2, g2, b2),
+            (Hex(a), Hex(b)) => a == b,
+            (CIE_xyY { xy: xy1, brightness: b1 }, CIE_xyY { xy: xy2, brightness: b2 }) => xy1 == xy2 && OrderedFloat(*b1) == OrderedFloat(*b2),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Color {}
+
+impl Hash for Color {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            RGB(r, g, b) => (r, g, b).hash(state),
+            Hex(value) => value.hash(state),
+            CIE_xyY { xy, brightness } => {
+                xy.hash(state);
+                OrderedFloat(*brightness).hash(state);
+            }
         }
     }
 }
@@ -229,6 +258,57 @@ mod tests {
                     brightness: 0.2848
                 }
             );
+        }
+    }
+
+    mod eq_and_hash {
+        use super::*;
+        use std::hash::DefaultHasher;
+
+        fn hash_of(color: &Color) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            color.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        fn cie(x: f64, y: f64, brightness: f64) -> Color {
+            CIE_xyY {
+                xy: CartesianCoordinate::new(x, y),
+                brightness,
+            }
+        }
+
+        #[test]
+        fn equal_colors_are_equal_and_hash_equal() {
+            for (a, b) in [
+                (RGB(1, 2, 3), RGB(1, 2, 3)),
+                (Hex("#ff00ff".to_string()), Hex("#ff00ff".to_string())),
+                (cie(0.3, 0.4, 0.5), cie(0.3, 0.4, 0.5)),
+            ] {
+                assert_eq!(a, b);
+                assert_eq!(hash_of(&a), hash_of(&b));
+            }
+        }
+
+        #[test]
+        fn different_values_are_not_equal() {
+            assert_ne!(RGB(1, 2, 3), RGB(1, 2, 4));
+            assert_ne!(Hex("#ff00ff".to_string()), Hex("#ff00fe".to_string()));
+            assert_ne!(cie(0.3, 0.4, 0.5), cie(0.3, 0.4, 0.6));
+            assert_ne!(cie(0.3, 0.4, 0.5), cie(0.3, 0.5, 0.5));
+        }
+
+        #[test]
+        fn same_color_in_different_representations_is_not_equal() {
+            assert_ne!(RGB(255, 0, 255), Hex("#ff00ff".to_string()));
+        }
+
+        #[test]
+        fn nan_brightness_is_equal_to_itself() {
+            let color = cie(0.3, 0.4, f64::NAN);
+
+            assert_eq!(color, color.clone());
+            assert_eq!(hash_of(&color), hash_of(&color.clone()));
         }
     }
 }
