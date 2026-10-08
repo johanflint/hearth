@@ -3,7 +3,7 @@ use crate::domain::device::Device;
 use crate::domain::{GeoLocation, controller_registry};
 use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
-use crate::flow_engine::property_value::{ConflictMergeSemantics, ResolvedPropertyCommand};
+use crate::flow_engine::property_command::{ConflictMergeSemantics, ResolvedPropertyCommand};
 use crate::flow_engine::{CommandMap, Context, FlowEngineError, FlowExecutionReport};
 use crate::scheduler::SchedulerCommand;
 use crate::store::{PropertyChange, StoreSnapshot};
@@ -143,7 +143,7 @@ mod tests {
     use crate::domain::property::{BooleanProperty, PropertyType};
     use crate::flow_engine::Value;
     use crate::flow_engine::flow::{FlowLink, FlowNode, FlowNodeKind};
-    use crate::flow_engine::property_value::Operation;
+    use crate::flow_engine::property_command::Operation;
     use crate::test_support::{DeviceBuilder, resolved_property_command};
     use pretty_assertions::assert_eq;
     use rstest::rstest;

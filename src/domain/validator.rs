@@ -125,7 +125,7 @@ mod tests {
     use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
-    use crate::flow_engine::property_value::{Operation, PropertyCommand};
+    use crate::flow_engine::property_command::{Operation, PropertyCommand};
     use crate::store::DeviceMap;
     use crate::test_support::{DeviceBuilder, property_command};
     use rstest::rstest;

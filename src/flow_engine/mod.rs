@@ -4,7 +4,7 @@ mod context;
 mod engine;
 mod expression;
 pub mod flow;
-pub mod property_value;
+pub mod property_command;
 mod schedule;
 pub mod scheduler;
 mod scope;

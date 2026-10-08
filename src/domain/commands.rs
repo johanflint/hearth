@@ -1,5 +1,5 @@
 use crate::domain::device::Device;
-use crate::flow_engine::property_value::ResolvedPropertyCommand;
+use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use std::collections::HashMap;
 use std::sync::Arc;
 

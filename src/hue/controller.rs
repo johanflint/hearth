@@ -7,7 +7,7 @@ use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::flow_engine::Value;
-use crate::flow_engine::property_value::ResolvedPropertyCommand;
+use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::hue::clip_to_gamut::clip_to_gamut;
 use crate::hue::domain::{LightRequest, MotionRequest, On, SetSensitivity};
 use crate::metrics::Metric;

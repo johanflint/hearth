@@ -4,7 +4,7 @@ use crate::flow_engine::Value;
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::expression::evaluate;
-use crate::flow_engine::property_value::{Operation, PropertyCommand, ResolvedPropertyCommand};
+use crate::flow_engine::property_command::{Operation, PropertyCommand, ResolvedPropertyCommand};
 use crate::flow_engine::scope::Scope;
 use crate::store::StoreSnapshot;
 use action_macros::register_action;

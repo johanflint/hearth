@@ -187,7 +187,7 @@ mod tests {
     use crate::flow_engine::Expression::Literal;
     use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
-    use crate::flow_engine::property_value::Operation;
+    use crate::flow_engine::property_command::Operation;
     use crate::test_support::property_command;
     use pretty_assertions::assert_eq;
     use serde_json::json;

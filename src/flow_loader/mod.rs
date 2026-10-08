@@ -1,6 +1,6 @@
 mod color_deserializer;
 mod factory;
-mod property_value_deserializer;
+mod property_command_deserializer;
 mod schedule_deserializer;
 mod serialized_flow;
 mod serialized_flow_link_deserializer;

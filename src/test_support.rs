@@ -2,7 +2,7 @@ use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, Property, PropertyType};
 use crate::flow_engine::Expression::Literal;
 use crate::flow_engine::Value;
-use crate::flow_engine::property_value::{Operation, PropertyCommand, ResolvedPropertyCommand};
+use crate::flow_engine::property_command::{Operation, PropertyCommand, ResolvedPropertyCommand};
 use std::collections::HashMap;
 
 pub(crate) struct DeviceBuilder {
