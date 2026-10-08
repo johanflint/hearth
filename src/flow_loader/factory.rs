@@ -187,7 +187,8 @@ mod tests {
     use crate::flow_engine::Expression::Literal;
     use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
-    use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
+    use crate::flow_engine::property_value::Operation;
+    use crate::test_support::property_command;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::time::Duration;
@@ -354,7 +355,7 @@ mod tests {
             vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(
                 "42".to_string(),
-                HashMap::from([("fan".to_string(), SetBooleanValue(true).into())]),
+                HashMap::from([("fan".to_string(), property_command(Operation::Set, Value::Boolean(true)))]),
             )))),
         );
 

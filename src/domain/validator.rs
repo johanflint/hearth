@@ -122,12 +122,12 @@ mod tests {
     use crate::domain::Number;
     use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
     use crate::flow_engine::Expression::*;
+    use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
-    use crate::flow_engine::property_value::PropertyValue::{SetBooleanValue, SetNumberValue};
-    use crate::flow_engine::{Value, property_value};
+    use crate::flow_engine::property_value::{Operation, PropertyCommand};
     use crate::store::DeviceMap;
-    use crate::test_support::DeviceBuilder;
+    use crate::test_support::{DeviceBuilder, property_command};
     use rstest::rstest;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -161,11 +161,11 @@ mod tests {
     }
 
     fn control_device(device_id: &str, property_id: &str) -> FlowNodeKind {
-        control_device_with(device_id, property_id, SetBooleanValue(true))
+        control_device_with(device_id, property_id, property_command(Operation::Set, Value::Boolean(true)))
     }
 
-    fn control_device_with(device_id: &str, property_id: &str, value: property_value::PropertyValue) -> FlowNodeKind {
-        let property = HashMap::from([(property_id.to_string(), value.into())]);
+    fn control_device_with(device_id: &str, property_id: &str, value: PropertyCommand) -> FlowNodeKind {
+        let property = HashMap::from([(property_id.to_string(), value)]);
         FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(device_id.to_string(), property))))
     }
 
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn validate_reports_a_control_device_action_that_sets_an_incompatible_value() {
-        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "on", SetNumberValue(Number::PositiveInt(50)))), &snapshot());
+        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "on", property_command(Operation::Set, Value::Number(Number::PositiveInt(50))))), &snapshot());
 
         assert_eq!(result.unwrap_err().issues(), [incompatible_value_at(KNOWN_DEVICE_ID, "on", ValueKind::Boolean, ValueKind::Number, node(NODE_ID))]);
     }
@@ -354,7 +354,7 @@ mod tests {
     #[case::too_small(Number::PositiveInt(0), value_too_small_at(KNOWN_DEVICE_ID, "brightness", Number::PositiveInt(0), Number::PositiveInt(1), node(NODE_ID)))]
     #[case::too_large(Number::PositiveInt(101), value_too_large_at(KNOWN_DEVICE_ID, "brightness", Number::PositiveInt(101), Number::PositiveInt(100), node(NODE_ID)))]
     fn validate_reports_a_control_device_action_that_sets_a_value_out_of_range(#[case] value: Number, #[case] expected: ValidationIssue) {
-        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", SetNumberValue(value))), &snapshot());
+        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", property_command(Operation::Set, Value::Number(value)))), &snapshot());
 
         assert_eq!(result.unwrap_err().issues(), [expected]);
     }

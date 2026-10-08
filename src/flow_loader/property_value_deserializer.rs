@@ -1,10 +1,7 @@
-use crate::domain::Number;
-use crate::domain::color::Color;
-use crate::flow_engine::property_value::{PropertyCommand, PropertyValue};
+use crate::flow_engine::property_value::{Operation, PropertyCommand};
+use crate::flow_engine::{Expression, Value};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
-use serde_json::Number as JsonNumber;
-use std::ops::{Index, IndexMut};
 use std::time::Duration;
 
 impl<'de> Deserialize<'de> for PropertyCommand {
@@ -12,131 +9,77 @@ impl<'de> Deserialize<'de> for PropertyCommand {
     where
         D: Deserializer<'de>,
     {
-        let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
-        let transition = value
+        let command = serde_json::Value::deserialize(deserializer)?;
+
+        let operation = command.get("operation").ok_or_else(|| Error::custom("missing field 'operation'"))?;
+        let operation = Operation::deserialize(operation).map_err(|e| Error::custom(format!("invalid field 'operation': {e}")))?;
+
+        let value = match (command.get("value"), &operation) {
+            (Some(value), _) => Expression::deserialize(value).map_err(|e| Error::custom(format!("invalid field 'value': {e}")))?,
+            (None, Operation::Toggle) => Expression::Literal { value: Value::None },
+            (None, _) => return Err(Error::custom("missing field 'value'")),
+        };
+        let transition = command
             .get("transition")
             .map(humantime_serde::deserialize::<Duration, _>)
             .transpose()
-            .map_err(|e| Error::custom(format!("invalid field 'transition': {}", e)))?;
-        let value = PropertyValue::deserialize(&value).map_err(Error::custom)?;
+            .map_err(|e| Error::custom(format!("invalid field 'transition': {e}")))?;
 
-        Ok(PropertyCommand { value, transition })
-    }
-}
-
-impl<'de> Deserialize<'de> for PropertyValue {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let mut value: serde_json::Value = Deserialize::deserialize(deserializer)?;
-        let kind = value.get("type").and_then(|v| v.as_str()).ok_or_else(|| Error::custom("missing field 'type'"))?;
-
-        match kind {
-            "boolean" => {
-                let value = value.index_mut("value").as_bool().ok_or_missing("value", "boolean")?;
-                Ok(PropertyValue::SetBooleanValue(value))
-            }
-            "toggle" => Ok(PropertyValue::ToggleBooleanValue),
-            "number" => {
-                let value = value.index_mut("value").as_number().ok_or_missing("value", "number")?;
-                Ok(PropertyValue::SetNumberValue(value.into()))
-            }
-            "increment" => {
-                let value = value.index_mut("value").as_number().ok_or_missing("value", "number")?;
-                Ok(PropertyValue::IncrementNumberValue(value.into()))
-            }
-            "decrement" => {
-                let value = value.index_mut("value").as_number().ok_or_missing("value", "number")?;
-                Ok(PropertyValue::DecrementNumberValue(value.into()))
-            }
-            "color" => {
-                let color = Color::deserialize(value.index("value")).map_err(|e| Error::custom(e.to_string()))?;
-                Ok(PropertyValue::SetColor(color))
-            }
-            _ => Err(Error::unknown_variant(&kind, &["boolean", "toggle", "number", "increment", "decrement", "color"])),
-        }
-    }
-}
-
-impl From<&JsonNumber> for Number {
-    fn from(value: &JsonNumber) -> Self {
-        if let Some(int_value) = value.as_u64() {
-            Number::PositiveInt(int_value)
-        } else if let Some(int_value) = value.as_i64() {
-            Number::NegativeInt(int_value)
-        } else if let Some(float_value) = value.as_f64() {
-            Number::Float(float_value)
-        } else {
-            panic!("Converting json value {} to Number failed", value)
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Number {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
-        Ok(value.as_number().ok_or_missing("value", "number")?.into())
-    }
-}
-
-trait OptionResultExt<T, E>
-where
-    E: Error + Sized,
-{
-    fn ok_or_missing(self, msg: &'static str, datatype: &'static str) -> Result<T, E>;
-}
-
-impl<T, E> OptionResultExt<T, E> for Option<T>
-where
-    E: Error + Sized,
-{
-    fn ok_or_missing(self, field: &'static str, datatype: &'static str) -> Result<T, E> {
-        self.ok_or_else(|| Error::custom(format!("expected field '{}' of type '{}'", field, datatype)))
+        Ok(PropertyCommand { operation, value, transition })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Number;
+    use crate::flow_engine::Expression::Literal;
+    use crate::test_support::property_command;
     use rstest::rstest;
+    use serde_json::json;
 
     #[test]
     fn deserialize_set_boolean_value_without_transition() {
         let json = r#"
           {
-            "type": "boolean",
-            "value": true
+            "operation": "set",
+            "value": {
+                "type": "literal",
+                "value": true
+            }
           }
         "#;
 
         let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap(), PropertyCommand { value: PropertyValue::SetBooleanValue(true), transition: None });
+        assert_eq!(response.unwrap(), property_command(Operation::Set, Value::Boolean(true)));
     }
 
     #[test]
     fn deserialize_set_boolean_value_with_transition() {
         let json = r#"
           {
-            "type": "boolean",
-            "value": true,
+            "operation": "set",
+            "value": {
+                "type": "literal",
+                "value": true
+            },
             "transition": "10m"
           }
         "#;
 
         let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap(), PropertyCommand { value: PropertyValue::SetBooleanValue(true), transition: Some(Duration::from_secs(600)) });
+        assert_eq!(response.unwrap(), PropertyCommand { operation: Operation::Set, value: Literal { value: Value::Boolean(true) }, transition: Some(Duration::from_secs(600)) });
     }
 
     #[test]
     fn deserialize_property_command_returns_error_for_an_invalid_transition() {
         let json = r#"
           {
-            "type": "boolean",
-            "value": true,
+            "operation": "set",
+            "value": {
+                "type": "literal",
+                "value": true
+            },
             "transition": "soon"
           }
         "#;
@@ -146,114 +89,86 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_property_command_returns_error_for_an_invalid_value() {
+    fn deserialize_property_command_returns_error_for_a_missing_value() {
         let json = r#"
           {
+            "operation": "set",
             "transition": "10m"
           }
         "#;
 
         let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap_err().to_string(), "missing field 'type'");
+        assert_eq!(response.unwrap_err().to_string(), "missing field 'value'");
     }
 
     #[test]
-    fn deserialize_set_boolean_value() {
+    fn deserialize_property_command_returns_error_for_a_missing_operation() {
         let json = r#"
           {
-            "type": "boolean",
+            "value": {
+                "type": "literal",
+                "value": true
+            }
+          }
+        "#;
+
+        let response = serde_json::from_str::<PropertyCommand>(json);
+        assert_eq!(response.unwrap_err().to_string(), "missing field 'operation'");
+    }
+
+    #[test]
+    fn deserialize_property_command_returns_error_for_an_unknown_operation() {
+        let json = r#"
+          {
+            "operation": "flip",
+            "value": {
+                "type": "literal",
+                "value": true
+            }
+          }
+        "#;
+
+        let response = serde_json::from_str::<PropertyCommand>(json);
+        assert_eq!(response.unwrap_err().to_string(), "invalid field 'operation': unknown variant `flip`, expected one of `set`, `toggle`, `increment`, `decrement`");
+    }
+
+    #[test]
+    fn deserialize_property_command_returns_error_for_an_invalid_value() {
+        let json = r#"
+          {
+            "operation": "set",
             "value": true
           }
         "#;
 
-        let response = serde_json::from_str::<PropertyValue>(json);
-        assert!(response.is_ok());
-        assert_eq!(response.unwrap(), PropertyValue::SetBooleanValue(true));
+        let response = serde_json::from_str::<PropertyCommand>(json);
+        assert!(response.unwrap_err().to_string().starts_with("invalid field 'value': "));
     }
 
     #[test]
-    fn deserialize_toggle_value() {
+    fn deserialize_toggle_property_command_without_value() {
         let json = r#"
           {
-            "type": "toggle"
+            "operation": "toggle"
           }
         "#;
 
-        let response = serde_json::from_str::<PropertyValue>(json);
-        assert!(response.is_ok());
-        assert_eq!(response.unwrap(), PropertyValue::ToggleBooleanValue);
+        let response = serde_json::from_str::<PropertyCommand>(json);
+        assert_eq!(response.unwrap(), property_command(Operation::Toggle, Value::None));
     }
 
     #[rstest]
-    #[case::for_positive_int("1337", Number::PositiveInt(1337))]
-    #[case::for_negative_int("-1337", Number::NegativeInt(-1337))]
-    #[case::for_float("13.37", Number::Float(13.37))]
-    fn deserialize_set_number_value(#[case] json_value: String, #[case] expected_number: Number) {
-        let json = format!(
-            r#"{{
-                "type": "number",
-                "value": {}
-            }}"#,
-            json_value
-        );
+    #[case::set("set", Operation::Set)]
+    #[case::toggle("toggle", Operation::Toggle)]
+    #[case::increment("increment", Operation::Increment)]
+    #[case::decrement("decrement", Operation::Decrement)]
+    fn deserialize_property_command_operations(#[case] operation: &str, #[case] expected: Operation) {
+        let json = json!({
+            "operation": operation,
+            "value": { "type": "literal", "value": 5 }
+        });
 
-        let response = serde_json::from_str::<PropertyValue>(&json);
-        assert!(response.is_ok());
-        assert_eq!(response.unwrap(), PropertyValue::SetNumberValue(expected_number));
-    }
-
-    #[rstest]
-    #[case::for_positive_int("1337", Number::PositiveInt(1337))]
-    #[case::for_negative_int("-1337", Number::NegativeInt(-1337))]
-    #[case::for_float("13.37", Number::Float(13.37))]
-    fn deserialize_increment_number_value(#[case] json_value: String, #[case] expected_number: Number) {
-        let json = format!(
-            r#"{{
-                "type": "increment",
-                "value": {}
-            }}"#,
-            json_value
-        );
-
-        let response = serde_json::from_str::<PropertyValue>(&json);
-        assert!(response.is_ok());
-        assert_eq!(response.unwrap(), PropertyValue::IncrementNumberValue(expected_number));
-    }
-
-    #[rstest]
-    #[case::for_positive_int("1337", Number::PositiveInt(1337))]
-    #[case::for_negative_int("-1337", Number::NegativeInt(-1337))]
-    #[case::for_float("13.37", Number::Float(13.37))]
-    fn deserialize_decrement_number_value(#[case] json_value: String, #[case] expected_number: Number) {
-        let json = format!(
-            r#"{{
-                "type": "decrement",
-                "value": {}
-            }}"#,
-            json_value
-        );
-
-        let response = serde_json::from_str::<PropertyValue>(&json);
-        assert!(response.is_ok());
-        assert_eq!(response.unwrap(), PropertyValue::DecrementNumberValue(expected_number));
-    }
-
-    #[rstest]
-    #[case::valid_hex("#000000", Ok(PropertyValue::SetColor(Color::Hex("#000000".to_string()))))]
-    #[case::invalid_hex("#000", Err(Error::custom("invalid value: string \"#000\", expected a 6-digit hex color")))]
-    #[case::invalid_hex("#00000Z", Err(Error::custom("invalid value: string \"#00000Z\", expected a 6-digit hex color")))]
-    fn deserialize_color_values(#[case] json_value: String, #[case] expected: serde_json::Result<PropertyValue>) {
-        let json = format!(
-            r#"{{
-                "type": "color",
-                "value": "{}"
-            }}"#,
-            json_value
-        );
-
-        let response = serde_json::from_str::<PropertyValue>(&json);
-
-        // As serde_json::Error does not implement PartialEq, use debug print for comparison
-        assert_eq!(format!("{:#?}", response), format!("{:#?}", expected));
+        let response = serde_json::from_value::<PropertyCommand>(json);
+        assert_eq!(response.unwrap(), property_command(expected, Value::Number(Number::PositiveInt(5))));
     }
 }

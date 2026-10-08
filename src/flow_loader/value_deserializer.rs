@@ -1,7 +1,9 @@
+use crate::domain::Number;
 use crate::domain::color::Color;
 use crate::flow_engine::Value;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
+use serde_json::Number as JsonNumber;
 
 impl<'de> Deserialize<'de> for Value {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -25,6 +27,20 @@ impl<'de> Deserialize<'de> for Value {
                 }
             }
             _ => Err(Error::custom("expected the value to be a boolean, a color, a number or a string")),
+        }
+    }
+}
+
+impl From<&JsonNumber> for Number {
+    fn from(value: &JsonNumber) -> Self {
+        if let Some(int_value) = value.as_u64() {
+            Number::PositiveInt(int_value)
+        } else if let Some(int_value) = value.as_i64() {
+            Number::NegativeInt(int_value)
+        } else if let Some(float_value) = value.as_f64() {
+            Number::Float(float_value)
+        } else {
+            panic!("Converting json value {} to Number failed", value)
         }
     }
 }
@@ -87,31 +103,13 @@ mod tests {
 
         assert_eq!(error.to_string(), expected);
     }
-    
-    #[test]
-    fn deserialize_numbers() {
-        let json = json!({
-            "type": "equalTo",
-            "lhs": {
-              "type": "literal",
-              "value": 42
-            },
-            "rhs": {
-              "type": "literal",
-              "value": 42.0
-            }
-        });
 
-        let expression = serde_json::from_value::<Expression>(json).unwrap();
-        let expected = EqualTo {
-            lhs: Box::new(Literal {
-                value: Value::Number(Number::PositiveInt(42)),
-            }),
-            rhs: Box::new(Literal {
-                value: Value::Number(Number::Float(42.0)),
-            }),
-        };
-        assert_eq!(expression, expected);
+    #[rstest]
+    #[case::positive_int(json!(1337), Number::PositiveInt(1337))]
+    #[case::negative_int(json!(-1337), Number::NegativeInt(-1337))]
+    #[case::float(json!(13.37), Number::Float(13.37))]
+    fn deserialize_numbers(#[case] json: serde_json::Value, #[case] expected: Number) {
+        assert_eq!(serde_json::from_value::<Value>(json).unwrap(), Value::Number(expected));
     }
 
     #[test]
