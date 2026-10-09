@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.0 (2026-10-09)
+
+### Features
+
+- Support expressions in property value ([#64](https://github.com/johanflint/hearth/pull/64))
+- Support color literals ([#63](https://github.com/johanflint/hearth/pull/63))
+- Validate flows ([#62](https://github.com/johanflint/hearth/pull/62))
+- Support transitions ([#59](https://github.com/johanflint/hearth/pull/59))
+
+### Miscellaneous Chores
+
+- Fix warnings ([#61](https://github.com/johanflint/hearth/pull/61))
+
 ## v0.2.0 (2026-10-04)
 
 ### Features
