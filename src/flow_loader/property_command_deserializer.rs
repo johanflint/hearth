@@ -1,5 +1,5 @@
-use crate::flow_engine::property_command::{Operation, PropertyCommand};
 use crate::flow_engine::Expression;
+use crate::flow_engine::property_command::PropertyCommand;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
@@ -11,9 +11,6 @@ impl<'de> Deserialize<'de> for PropertyCommand {
     {
         let command = serde_json::Value::deserialize(deserializer)?;
 
-        let operation = command.get("operation").ok_or_else(|| Error::custom("missing field 'operation'"))?;
-        let operation = Operation::deserialize(operation).map_err(|e| Error::custom(format!("invalid field 'operation': {e}")))?;
-
         let value = command.get("value").ok_or_else(|| Error::custom("missing field 'value'"))?;
         let value = Expression::deserialize(value).map_err(|e| Error::custom(format!("invalid field 'value': {e}")))?;
         let transition = command
@@ -22,7 +19,7 @@ impl<'de> Deserialize<'de> for PropertyCommand {
             .transpose()
             .map_err(|e| Error::custom(format!("invalid field 'transition': {e}")))?;
 
-        Ok(PropertyCommand { operation, value, transition })
+        Ok(PropertyCommand { value, transition })
     }
 }
 
@@ -36,10 +33,9 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn deserialize_set_boolean_value_without_transition() {
+    fn deserialize_boolean_value_without_transition() {
         let json = r#"
           {
-            "operation": "set",
             "value": {
                 "type": "literal",
                 "value": true
@@ -48,14 +44,13 @@ mod tests {
         "#;
 
         let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap(), property_command(Operation::Set, Value::Boolean(true)));
+        assert_eq!(response.unwrap(), property_command(Value::Boolean(true)));
     }
 
     #[test]
-    fn deserialize_set_boolean_value_with_transition() {
+    fn deserialize_boolean_value_with_transition() {
         let json = r#"
           {
-            "operation": "set",
             "value": {
                 "type": "literal",
                 "value": true
@@ -65,14 +60,13 @@ mod tests {
         "#;
 
         let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap(), PropertyCommand { operation: Operation::Set, value: Literal { value: Value::Boolean(true) }, transition: Some(Duration::from_secs(600)) });
+        assert_eq!(response.unwrap(), PropertyCommand { value: Literal { value: Value::Boolean(true) }, transition: Some(Duration::from_secs(600)) });
     }
 
     #[test]
     fn deserialize_property_command_returns_error_for_an_invalid_transition() {
         let json = r#"
           {
-            "operation": "set",
             "value": {
                 "type": "literal",
                 "value": true
@@ -89,7 +83,6 @@ mod tests {
     fn deserialize_property_command_returns_error_for_a_missing_value() {
         let json = r#"
           {
-            "operation": "set",
             "transition": "10m"
           }
         "#;
@@ -99,41 +92,9 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_property_command_returns_error_for_a_missing_operation() {
-        let json = r#"
-          {
-            "value": {
-                "type": "literal",
-                "value": true
-            }
-          }
-        "#;
-
-        let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap_err().to_string(), "missing field 'operation'");
-    }
-
-    #[test]
-    fn deserialize_property_command_returns_error_for_an_unknown_operation() {
-        let json = r#"
-          {
-            "operation": "flip",
-            "value": {
-                "type": "literal",
-                "value": true
-            }
-          }
-        "#;
-
-        let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap_err().to_string(), "invalid field 'operation': unknown variant `flip`, expected `set`");
-    }
-
-    #[test]
     fn deserialize_property_command_returns_error_for_an_invalid_value() {
         let json = r#"
           {
-            "operation": "set",
             "value": true
           }
         "#;
@@ -143,13 +104,12 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_property_command_operations() {
+    fn deserialize_number_value() {
         let json = json!({
-            "operation": "set",
             "value": { "type": "literal", "value": 5 }
         });
 
         let response = serde_json::from_value::<PropertyCommand>(json);
-        assert_eq!(response.unwrap(), property_command(Operation::Set, Value::Number(Number::PositiveInt(5))));
+        assert_eq!(response.unwrap(), property_command(Value::Number(Number::PositiveInt(5))));
     }
 }
