@@ -1,5 +1,5 @@
 use crate::flow_engine::property_command::{Operation, PropertyCommand};
-use crate::flow_engine::{Expression, Value};
+use crate::flow_engine::Expression;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
@@ -14,11 +14,8 @@ impl<'de> Deserialize<'de> for PropertyCommand {
         let operation = command.get("operation").ok_or_else(|| Error::custom("missing field 'operation'"))?;
         let operation = Operation::deserialize(operation).map_err(|e| Error::custom(format!("invalid field 'operation': {e}")))?;
 
-        let value = match (command.get("value"), &operation) {
-            (Some(value), _) => Expression::deserialize(value).map_err(|e| Error::custom(format!("invalid field 'value': {e}")))?,
-            (None, Operation::Toggle) => Expression::Literal { value: Value::None },
-            (None, _) => return Err(Error::custom("missing field 'value'")),
-        };
+        let value = command.get("value").ok_or_else(|| Error::custom("missing field 'value'"))?;
+        let value = Expression::deserialize(value).map_err(|e| Error::custom(format!("invalid field 'value': {e}")))?;
         let transition = command
             .get("transition")
             .map(humantime_serde::deserialize::<Duration, _>)
@@ -34,8 +31,8 @@ mod tests {
     use super::*;
     use crate::domain::Number;
     use crate::flow_engine::Expression::Literal;
+    use crate::flow_engine::Value;
     use crate::test_support::property_command;
-    use rstest::rstest;
     use serde_json::json;
 
     #[test]
@@ -129,7 +126,7 @@ mod tests {
         "#;
 
         let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap_err().to_string(), "invalid field 'operation': unknown variant `flip`, expected one of `set`, `toggle`, `increment`, `decrement`");
+        assert_eq!(response.unwrap_err().to_string(), "invalid field 'operation': unknown variant `flip`, expected `set`");
     }
 
     #[test]
@@ -146,29 +143,13 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_toggle_property_command_without_value() {
-        let json = r#"
-          {
-            "operation": "toggle"
-          }
-        "#;
-
-        let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap(), property_command(Operation::Toggle, Value::None));
-    }
-
-    #[rstest]
-    #[case::set("set", Operation::Set)]
-    #[case::toggle("toggle", Operation::Toggle)]
-    #[case::increment("increment", Operation::Increment)]
-    #[case::decrement("decrement", Operation::Decrement)]
-    fn deserialize_property_command_operations(#[case] operation: &str, #[case] expected: Operation) {
+    fn deserialize_property_command_operations() {
         let json = json!({
-            "operation": operation,
+            "operation": "set",
             "value": { "type": "literal", "value": 5 }
         });
 
         let response = serde_json::from_value::<PropertyCommand>(json);
-        assert_eq!(response.unwrap(), property_command(expected, Value::Number(Number::PositiveInt(5))));
+        assert_eq!(response.unwrap(), property_command(Operation::Set, Value::Number(Number::PositiveInt(5))));
     }
 }

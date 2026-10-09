@@ -3,7 +3,7 @@ use crate::domain::device::Device;
 use crate::domain::{GeoLocation, controller_registry};
 use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
-use crate::flow_engine::property_command::{ConflictMergeSemantics, ResolvedPropertyCommand};
+use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::flow_engine::{CommandMap, Context, FlowEngineError, FlowExecutionReport};
 use crate::scheduler::SchedulerCommand;
 use crate::store::{PropertyChange, StoreSnapshot};
@@ -85,8 +85,7 @@ fn merged_command(writes: &[ProposedWrite]) -> Option<&ResolvedPropertyCommand> 
         return Some(&first.command);
     }
 
-    let all_equal = writes.iter().all(|w| w.command == first.command);
-    (first.command.operation.conflict_merge_semantics() == ConflictMergeSemantics::DeduplicateIfEqual && all_equal).then_some(&first.command)
+    writes.iter().all(|w| w.command == first.command).then_some(&first.command)
 }
 
 fn log_conflict(device_id: &DeviceId, property_id: &PropertyId, writes: &[ProposedWrite]) {
@@ -248,31 +247,6 @@ mod tests {
         assert_eq!(result, HashMap::new());
     }
 
-    #[rstest]
-    #[case::toggle(Operation::Toggle, Value::Boolean(true))]
-    #[case::increment(Operation::Increment, Value::Number(Number::PositiveInt(42)))]
-    #[case::decrement(Operation::Decrement, Value::Number(Number::PositiveInt(42)))]
-    fn merge_command_maps_equal_relative_proposals_skip_property(#[case] operation: Operation, #[case] value: Value) {
-        let flow = create_flow("flow");
-        let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(operation.clone(), value.clone()))]));
-        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(operation, value))]));
-
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
-        assert_eq!(result, HashMap::new());
-    }
-
-    #[test]
-    fn merge_command_maps_relative_and_absolute_proposals_skip_property() {
-        let flow = create_flow("flow");
-        let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Number(Number::PositiveInt(42))))]));
-        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))]));
-
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
-        assert_eq!(result, HashMap::new());
-    }
-
     #[test]
     fn merge_command_maps_conflicting_property_preserves_independent_property() {
         let flow = create_flow("flow");
@@ -291,26 +265,11 @@ mod tests {
     }
 
     #[test]
-    fn merge_command_maps_single_relative_proposal_returns_property() {
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))]));
-        let flow = create_flow("flow");
-        let result = merge_command_maps(vec![(flow, Ok(report))]);
-
-        assert_eq!(
-            result,
-            HashMap::from([(
-                DEVICE_ID.to_string(),
-                HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))])
-            )])
-        );
-    }
-
-    #[test]
     fn merge_command_maps_different_devices_separately() {
         let flow = create_flow("flow");
         let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))]));
-        let report2 = create_report(DEVICE2_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))]));
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Number(Number::PositiveInt(42))))]));
+        let report2 = create_report(DEVICE2_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Number(Number::PositiveInt(42))))]));
 
         let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
         assert_eq!(
@@ -318,11 +277,11 @@ mod tests {
             HashMap::from([
                 (
                     DEVICE_ID.to_string(),
-                    HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))])
+                    HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Number(Number::PositiveInt(42))))])
                 ),
                 (
                     DEVICE2_ID.to_string(),
-                    HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))])
+                    HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Number(Number::PositiveInt(42))))])
                 ),
             ])
         );
