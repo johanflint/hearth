@@ -124,6 +124,20 @@ impl ControlDeviceAction {
 
 pub type CommandMap = HashMap<String, HashMap<String, ResolvedPropertyCommand>>;
 
+fn clamp_to_range(device_id: &str, property_id: &str, property: &dyn Property, value: Value) -> Value {
+    let (Value::Number(number), Some(number_property)) = (&value, property.as_any().downcast_ref::<NumberProperty>()) else {
+        return value;
+    };
+
+    match number_property.validate_value(*number) {
+        ValidatedValue::Clamped(clamped, error) => {
+            info!(device_id, property_id, "⚠️ Invalid value '{}' for property '{}' ({}), clamped to '{}'", number, property_id, error, clamped);
+            Value::Number(clamped)
+        }
+        ValidatedValue::Valid(_) | ValidatedValue::Invalid(_) => value,
+    }
+}
+
 #[async_trait]
 impl Action for ControlDeviceAction {
     fn kind(&self) -> &'static str {
@@ -148,10 +162,10 @@ impl Action for ControlDeviceAction {
 
         let device_command_map = command_map.entry(self.device_id.clone()).or_insert_with(HashMap::new);
         for (property_id, property_command) in self.property.iter() {
-            if !device.properties.contains_key(property_id) {
+            let Some(property) = device.properties.get(property_id) else {
                 warn!(device_id = self.device_id, property_id, "Unable to control device '{}'... unknown property '{}'", self.device_id, property_id);
                 continue;
-            }
+            };
 
             let value = match evaluate(&property_command.value, context) {
                 Ok(value) => value,
@@ -160,6 +174,7 @@ impl Action for ControlDeviceAction {
                     continue;
                 }
             };
+            let value = clamp_to_range(&self.device_id, property_id, property.as_ref(), value);
 
             let resolved_command = ResolvedPropertyCommand { operation: property_command.operation.clone(), value, transition: property_command.transition };
             let result = device_command_map.insert(property_id.clone(), resolved_command);
@@ -443,6 +458,23 @@ mod tests {
 
         let expected = ResolvedPropertyCommand { operation: Operation::Set, value: Value::Number(number(60)), transition };
         assert_eq!(command_map, Some(HashMap::from([("lamp".to_string(), HashMap::from([("brightness".to_string(), expected)]))])));
+    }
+
+    #[rstest]
+    #[case::too_large(Expression::Add{ lhs: brightness(), rhs: Box::new(Expression::Literal { value: Value::Number(number(60)) }) }, number(100))]
+    #[case::too_small(Expression::Subtract{ lhs: brightness(), rhs: Box::new(Expression::Literal { value: Value::Number(number(60)) }) }, number(1))]
+    #[tokio::test]
+    async fn execute_clamps_a_calculated_value_to_the_property_range(#[case] value: Expression, #[case] expected: Number) {
+        let action = control_device_with("lamp", "brightness", PropertyCommand { operation: Operation::Set, value, transition: None });
+
+        let command_map = execute(&action).await;
+
+        let expected = ResolvedPropertyCommand { operation: Operation::Set, value: Value::Number(expected), transition: None };
+        assert_eq!(command_map, Some(HashMap::from([("lamp".to_string(), HashMap::from([("brightness".to_string(), expected)]))])));
+    }
+
+    fn brightness() -> Box<Expression> {
+        Box::new(Expression::PropertyValue { device_id: "lamp".to_string(), property_id: "brightness".to_string() })
     }
 
     #[tokio::test]
