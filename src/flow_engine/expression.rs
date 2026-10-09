@@ -80,12 +80,7 @@ impl Expression {
                 ValueKind::Boolean => ValueKind::Boolean,
                 kind => return Err(self.incompatible_operands("Boolean", vec![kind])),
             },
-            Literal { value: Value::Boolean(_) } => ValueKind::Boolean,
-            Literal { value: Value::Color(_) } => ValueKind::Color,
-            Literal { value: Value::DateTime(_) } => ValueKind::DateTime,
-            Literal { value: Value::String(_) } => ValueKind::Enum,
-            Literal { value: Value::Number(_) } => ValueKind::Number,
-            Literal { value: Value::None } => ValueKind::None,
+            Literal { value } => value.kind(),
             PropertyChanged { .. } => ValueKind::Boolean,
             PropertyValue { device_id, property_id } => {
                 let device = find_device(device_id, snapshot)?;
@@ -153,6 +148,19 @@ pub enum Value {
     None,
 }
 
+impl Value {
+    pub fn kind(&self) -> ValueKind {
+        match self {
+            Value::Boolean(_) => ValueKind::Boolean,
+            Value::Color(_) => ValueKind::Color,
+            Value::DateTime(_) => ValueKind::DateTime,
+            Value::Number(_) => ValueKind::Number,
+            Value::None => ValueKind::None,
+            Value::String(_) => ValueKind::Enum,
+        }
+    }
+}
+
 #[derive(PartialEq, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum TemporalExpression {
@@ -183,11 +191,11 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a == b)),
             (Value::String(a), Value::String(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::None, Value::None) => Ok(Value::Boolean(true)),
-            _ => Err(ExpressionError::OperandTypeMismatch {
+            (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
                 operand: "EqualTo",
-                expected: "Boolean|Color|DateTime|Number|String",
-                actual_lhs: format!("{:?}", lhs),
-                actual_rhs: format!("{:?}", rhs),
+                expected: EQUATABLE,
+                actual_lhs: lhs.kind(),
+                actual_rhs: rhs.kind(),
             }),
         },
         NotEqualTo { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
@@ -197,39 +205,39 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a != b)),
             (Value::String(a), Value::String(b)) => Ok(Value::Boolean(!a.eq(&b))),
             (Value::None, Value::None) => Ok(Value::Boolean(false)),
-            _ => Err(ExpressionError::OperandTypeMismatch {
+            (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
                 operand: "NotEqualTo",
-                expected: "Boolean|Color|DateTime|Number|String",
-                actual_lhs: format!("{:?}", lhs),
-                actual_rhs: format!("{:?}", rhs),
+                expected: EQUATABLE,
+                actual_lhs: lhs.kind(),
+                actual_rhs: rhs.kind(),
             }),
         },
 
         // Logic
         And { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a && b)),
-            _ => Err(ExpressionError::OperandTypeMismatch {
+            (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
                 operand: "And",
-                expected: "Boolean",
-                actual_lhs: format!("{:?}", lhs),
-                actual_rhs: format!("{:?}", rhs),
+                expected: BOOLEAN,
+                actual_lhs: lhs.kind(),
+                actual_rhs: rhs.kind(),
             }),
         },
         Or { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
             (Value::Boolean(a), Value::Boolean(b)) => Ok(Value::Boolean(a || b)),
-            _ => Err(ExpressionError::OperandTypeMismatch {
+            (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
                 operand: "Or",
-                expected: "Boolean",
-                actual_lhs: format!("{:?}", lhs),
-                actual_rhs: format!("{:?}", rhs),
+                expected: BOOLEAN,
+                actual_lhs: lhs.kind(),
+                actual_rhs: rhs.kind(),
             }),
         },
         Not { expression } => match evaluate(expression, context)? {
             Value::Boolean(b) => Ok(Value::Boolean(!b)),
-            _ => Err(ExpressionError::UnaryOperandTypeMismatch {
+            value => Err(ExpressionError::UnaryOperandTypeMismatch {
                 operand: "Not",
-                expected: "Boolean",
-                actual: format!("{:?}", expression),
+                expected: BOOLEAN,
+                actual: value.kind(),
             }),
         },
 
@@ -381,26 +389,30 @@ fn compare(lhs: &Expression, rhs: &Expression, cmp: fn(Ordering) -> bool, contex
             actual_rhs: format!("{:?}", rhs),
         })?))),
         (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(cmp(a.cmp(&b)))),
-        _ => Err(ExpressionError::OperandTypeMismatch {
+        (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
             operand: "Compare",
-            expected: "Number|DateTime",
-            actual_lhs: format!("{:?}", lhs),
-            actual_rhs: format!("{:?}", rhs),
+            expected: COMPARABLE,
+            actual_lhs: lhs.kind(),
+            actual_rhs: rhs.kind(),
         }),
     }
 }
 
+const BOOLEAN: &[ValueKind] = &[ValueKind::Boolean];
+const COMPARABLE: &[ValueKind] = &[ValueKind::Number, ValueKind::DateTime];
+const EQUATABLE: &[ValueKind] = &[ValueKind::Boolean, ValueKind::Color, ValueKind::DateTime, ValueKind::Enum, ValueKind::None, ValueKind::Number];
+
 #[derive(Error, PartialEq, Debug)]
 pub enum ExpressionError {
-    #[error("operand type mismatch for operand {operand}, expected {expected}, but got {actual_lhs} and {actual_rhs}")]
+    #[error("operand type mismatch for operand {operand}, expected {}, but got {actual_lhs} and {actual_rhs}", join_kinds(.expected))]
     OperandTypeMismatch {
         operand: &'static str,
-        expected: &'static str,
-        actual_lhs: String,
-        actual_rhs: String,
+        expected: &'static [ValueKind],
+        actual_lhs: ValueKind,
+        actual_rhs: ValueKind,
     },
-    #[error("operand type mismatch for operand {operand}, expected {expected} but got {actual}")]
-    UnaryOperandTypeMismatch { operand: &'static str, expected: &'static str, actual: String },
+    #[error("operand type mismatch for operand {operand}, expected {} but got {actual}", join_kinds(.expected))]
+    UnaryOperandTypeMismatch { operand: &'static str, expected: &'static [ValueKind], actual: ValueKind },
     #[error("unknown device '{0}'")]
     UnknownDevice(String),
     #[error("unknown property '{property_id}' for device '{device_id}'")]
@@ -409,6 +421,10 @@ pub enum ExpressionError {
     UnsupportedPropertyType(PropertyType),
     #[error("unable to compare given Numbers {actual_lhs} and {actual_rhs}")]
     ComparisonFailed { actual_lhs: String, actual_rhs: String },
+}
+
+fn join_kinds(kinds: &[ValueKind]) -> String {
+    kinds.iter().map(ValueKind::to_string).collect::<Vec<_>>().join("|")
 }
 
 #[cfg(test)]
@@ -563,9 +579,9 @@ mod tests {
             ).unwrap_err();
             assert_eq!(result, OperandTypeMismatch {
                 operand: "Compare",
-                expected: "Number|DateTime",
-                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
-                actual_rhs: "Literal { value: Boolean(false) }".to_string(),
+                expected: COMPARABLE,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::Boolean,
             });
         }
 
@@ -602,9 +618,9 @@ mod tests {
                 result,
                 OperandTypeMismatch {
                     operand: "Compare",
-                    expected: "Number|DateTime",
-                    actual_lhs: "Literal { value: Color(RGB(255, 0, 0)) }".to_string(),
-                    actual_rhs: "Literal { value: Color(RGB(0, 0, 255)) }".to_string(),
+                    expected: COMPARABLE,
+                    actual_lhs: ValueKind::Color,
+                    actual_rhs: ValueKind::Color,
                 }
             );
         }
@@ -647,9 +663,9 @@ mod tests {
             ).unwrap_err();
             assert_eq!(result, OperandTypeMismatch {
                 operand: "Compare",
-                expected: "Number|DateTime",
-                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
-                actual_rhs: "Literal { value: Boolean(false) }".to_string(),
+                expected: COMPARABLE,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::Boolean,
             });
         }
 
@@ -686,9 +702,9 @@ mod tests {
                 result,
                 OperandTypeMismatch {
                     operand: "Compare",
-                    expected: "Number|DateTime",
-                    actual_lhs: "Literal { value: Color(RGB(255, 0, 0)) }".to_string(),
-                    actual_rhs: "Literal { value: Color(RGB(0, 0, 255)) }".to_string(),
+                    expected: COMPARABLE,
+                    actual_lhs: ValueKind::Color,
+                    actual_rhs: ValueKind::Color,
                 }
             );
         }
@@ -731,9 +747,9 @@ mod tests {
             ).unwrap_err();
             assert_eq!(result, OperandTypeMismatch {
                 operand: "Compare",
-                expected: "Number|DateTime",
-                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
-                actual_rhs: "Literal { value: Boolean(false) }".to_string(),
+                expected: COMPARABLE,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::Boolean,
             });
         }
 
@@ -790,9 +806,9 @@ mod tests {
             ).unwrap_err();
             assert_eq!(result, OperandTypeMismatch {
                 operand: "Compare",
-                expected: "Number|DateTime",
-                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
-                actual_rhs: "Literal { value: Boolean(false) }".to_string(),
+                expected: COMPARABLE,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::Boolean,
             });
         }
 
@@ -830,9 +846,9 @@ mod tests {
                 result,
                 OperandTypeMismatch {
                     operand: "Compare",
-                    expected: "Number|DateTime",
-                    actual_lhs: "Literal { value: Color(RGB(255, 0, 0)) }".to_string(),
-                    actual_rhs: "Literal { value: Color(RGB(0, 0, 255)) }".to_string(),
+                    expected: COMPARABLE,
+                    actual_lhs: ValueKind::Color,
+                    actual_rhs: ValueKind::Color,
                 }
             );
         }
@@ -947,21 +963,21 @@ mod tests {
         #[rstest]
         #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "EqualTo",
-                expected: "Boolean|Color|DateTime|Number|String",
-                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
-                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+                expected: EQUATABLE,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::Number,
             })]
         #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "EqualTo",
-                expected: "Boolean|Color|DateTime|Number|String",
-                actual_lhs: "Literal { value: None }".to_string(),
-                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+                expected: EQUATABLE,
+                actual_lhs: ValueKind::None,
+                actual_rhs: ValueKind::Number,
             })]
         #[case(Value::Color(Color::Hex("#ff0000".to_string())), Value::String("#ff0000".to_string()), OperandTypeMismatch{
                 operand: "EqualTo",
-                expected: "Boolean|Color|DateTime|Number|String",
-                actual_lhs: "Literal { value: Color(Hex(\"#ff0000\")) }".to_string(),
-                actual_rhs: "Literal { value: String(\"#ff0000\") }".to_string(),
+                expected: EQUATABLE,
+                actual_lhs: ValueKind::Color,
+                actual_rhs: ValueKind::Enum,
             })]
         fn mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
             let result = evaluate(
@@ -1087,21 +1103,21 @@ mod tests {
         #[rstest]
         #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "NotEqualTo",
-                expected: "Boolean|Color|DateTime|Number|String",
-                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
-                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+                expected: EQUATABLE,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::Number,
             })]
         #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
                 operand: "NotEqualTo",
-                expected: "Boolean|Color|DateTime|Number|String",
-                actual_lhs: "Literal { value: None }".to_string(),
-                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+                expected: EQUATABLE,
+                actual_lhs: ValueKind::None,
+                actual_rhs: ValueKind::Number,
             })]
         #[case(Value::Color(Color::Hex("#ff0000".to_string())), Value::String("#ff0000".to_string()), OperandTypeMismatch{
                 operand: "NotEqualTo",
-                expected: "Boolean|Color|DateTime|Number|String",
-                actual_lhs: "Literal { value: Color(Hex(\"#ff0000\")) }".to_string(),
-                actual_rhs: "Literal { value: String(\"#ff0000\") }".to_string(),
+                expected: EQUATABLE,
+                actual_lhs: ValueKind::Color,
+                actual_rhs: ValueKind::Enum,
             })]
         fn mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
             let result = evaluate(
@@ -1136,21 +1152,21 @@ mod tests {
     #[rstest]
     #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
                 operand: "And",
-                expected: "Boolean",
-                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
-                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+                expected: BOOLEAN,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::Number,
         })]
     #[case(Value::Boolean(false), Value::None, OperandTypeMismatch {
                 operand: "And",
-                expected: "Boolean",
-                actual_lhs: "Literal { value: Boolean(false) }".to_string(),
-                actual_rhs: "Literal { value: None }".to_string(),
+                expected: BOOLEAN,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::None,
             })]
     #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
                 operand: "And",
-                expected: "Boolean",
-                actual_lhs: "Literal { value: None }".to_string(),
-                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+                expected: BOOLEAN,
+                actual_lhs: ValueKind::None,
+                actual_rhs: ValueKind::Number,
         })]
     fn and_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
         let result = evaluate(
@@ -1184,21 +1200,21 @@ mod tests {
     #[rstest]
     #[case(Value::Boolean(true), Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
                 operand: "Or",
-                expected: "Boolean",
-                actual_lhs: "Literal { value: Boolean(true) }".to_string(),
-                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+                expected: BOOLEAN,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::Number,
         })]
     #[case(Value::Boolean(false), Value::None, OperandTypeMismatch {
                 operand: "Or",
-                expected: "Boolean",
-                actual_lhs: "Literal { value: Boolean(false) }".to_string(),
-                actual_rhs: "Literal { value: None }".to_string(),
+                expected: BOOLEAN,
+                actual_lhs: ValueKind::Boolean,
+                actual_rhs: ValueKind::None,
         })]
     #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch {
                 operand: "Or",
-                expected: "Boolean",
-                actual_lhs: "Literal { value: None }".to_string(),
-                actual_rhs: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+                expected: BOOLEAN,
+                actual_lhs: ValueKind::None,
+                actual_rhs: ValueKind::Number,
         })]
     fn or_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
         let result = evaluate(
@@ -1229,13 +1245,13 @@ mod tests {
     #[rstest]
     #[case(Value::None, UnaryOperandTypeMismatch {
                 operand: "Not",
-                expected: "Boolean",
-                actual: "Literal { value: None }".to_string(),
+                expected: BOOLEAN,
+                actual: ValueKind::None,
         })]
     #[case(Value::Number(Number::PositiveInt(2)), UnaryOperandTypeMismatch {
                 operand: "Not",
-                expected: "Boolean",
-                actual: "Literal { value: Number(PositiveInt(2)) }".to_string(),
+                expected: BOOLEAN,
+                actual: ValueKind::Number,
         })]
     fn not_mismatch(#[case] value: Value, #[case] expected: ExpressionError) {
         let result = evaluate(
@@ -1558,9 +1574,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::number_literal(Literal { value: Value::Number(Number::PositiveInt(42)) }, Some(Value::Number(Number::PositiveInt(42))))]
-    #[case::boolean_literal(Literal { value: Value::Boolean(true) }, Some(Value::Boolean(true)))]
-    #[case::property_value(PropertyValue { device_id: "light".to_string(), property_id: "brightness".to_string() }, None)]
+    #[case::number_literal(Literal{ value: Value::Number(Number::PositiveInt(42)) }, Some(Value::Number(Number::PositiveInt(42))))]
+    #[case::boolean_literal(Literal{ value: Value::Boolean(true) }, Some(Value::Boolean(true)))]
+    #[case::property_value(PropertyValue{ device_id: "light".to_string(), property_id: "brightness".to_string() }, None)]
     #[case::operator_on_literals(
         EqualTo{ lhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }), rhs: Box::new(Literal{ value: Value::Number(Number::PositiveInt(1)) }) },
         None
