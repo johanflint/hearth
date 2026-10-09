@@ -1,8 +1,10 @@
-use crate::domain::property::{NumberProperty, Property, PropertyError, ValidatedValue};
-use crate::domain::{Problem, find_device, find_property};
+use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyError, PropertyLocator, ValidatedValue, ValueKind};
+use crate::domain::{Number, Problem, find_device, find_property};
+use crate::flow_engine::Value;
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
-use crate::flow_engine::property_value::{PropertyCommand, PropertyValue};
+use crate::flow_engine::expression::evaluate;
+use crate::flow_engine::property_command::{Operation, PropertyCommand, ResolvedPropertyCommand};
 use crate::flow_engine::scope::Scope;
 use crate::store::StoreSnapshot;
 use action_macros::register_action;
@@ -90,7 +92,7 @@ impl ControlDeviceAction {
         ControlDeviceAction { device_id, property }
     }
 
-    fn validate_command(&self, property_id: &str, property: &dyn Property, command: &PropertyCommand) -> Option<Problem> {
+    fn validate_command(&self, snapshot: &StoreSnapshot, property_id: &str, property: &dyn Property, command: &PropertyCommand) -> Option<Problem> {
         let device_id = self.device_id.clone();
         let property_id = property_id.to_string();
 
@@ -98,17 +100,28 @@ impl ControlDeviceAction {
             return Some(Problem::ReadOnlyProperty { device_id, property_id });
         }
 
-        let expected = property.value_kind();
-        let actual = command.value.value_kind();
+        let actual = match command.operation {
+            Operation::Toggle => ValueKind::Boolean,
+            Operation::Set | Operation::Increment | Operation::Decrement => match command.value.value_kind(snapshot) {
+                Ok(kind) => kind,
+                Err(problem) => return Some(problem),
+            }
+        };
+
+        let expected = match command.operation {
+            Operation::Increment | Operation::Decrement if actual != ValueKind::Number => ValueKind::Number,
+            _ => property.value_kind(),
+        };
+
         if expected != actual {
-            return Some(Problem::IncompatibleValue { device_id, property_id, expected, actual });
+            return Some(Problem::IncompatibleValue { device_id, property_id, expected, actual })
         }
 
-        // Only check absolutele values, increments and decrements depend on the runtime value and are clamped
-        let PropertyValue::SetNumberValue(value) = command.value else {
+        let (Operation::Set, Some(Value::Number(value))) = (&command.operation, command.value.constant_value()) else {
             return None;
         };
         let number_property = property.as_any().downcast_ref::<NumberProperty>()?;
+        let value = *value;
         match number_property.validate_value(value) {
             ValidatedValue::Clamped(minimum, PropertyError::ValueTooSmall) => Some(Problem::ValueTooSmall { device_id, property_id, value, minimum }),
             ValidatedValue::Clamped(maximum, PropertyError::ValueTooLarge) => Some(Problem::ValueTooLarge { device_id, property_id, value, maximum }),
@@ -117,7 +130,7 @@ impl ControlDeviceAction {
     }
 }
 
-pub type CommandMap = HashMap<String, HashMap<String, PropertyCommand>>;
+pub type CommandMap = HashMap<String, HashMap<String, ResolvedPropertyCommand>>;
 
 #[async_trait]
 impl Action for ControlDeviceAction {
@@ -143,11 +156,58 @@ impl Action for ControlDeviceAction {
 
         let device_command_map = command_map.entry(self.device_id.clone()).or_insert_with(HashMap::new);
         for (property_id, property_command) in self.property.iter() {
-            let result = device_command_map.insert(property_id.clone(), property_command.clone());
+            if !device.properties.contains_key(property_id) {
+                warn!(device_id = self.device_id, property_id, "Unable to control device '{}'... unknown property '{}'", self.device_id, property_id);
+                continue;
+            }
+
+            let result = match evaluate(&property_command.value, context) {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(device_id = self.device_id, property_id, "⚠️ Evaluating expression... failed: {}", err);
+                    continue;
+                }
+            };
+            let value: Value = match (&property_command.operation, result) {
+                (Operation::Set, value) => value,
+                (Operation::Toggle, _) => {
+                    let Some(current_value) = device.resolve_property::<BooleanProperty>(&PropertyLocator::Name(property_id.to_string())) else {
+                        warn!(device_id = self.device_id, property_id, "⚠️ Only a boolean property can be toggled");
+                        continue;
+                    };
+                    Value::Boolean(!current_value.value())
+                }
+                (Operation::Increment, Value::Number(number_value)) => {
+                    let Some(current_value) = device.resolve_property::<NumberProperty>(&PropertyLocator::Name(property_id.to_string())) else {
+                        warn!(device_id = self.device_id, property_id, "⚠️ Only a number property can be incremented");
+                        continue;
+                    };
+
+                    Value::Number(current_value.value().unwrap_or(Number::PositiveInt(0)) + number_value)
+                }
+                (Operation::Decrement, Value::Number(number_value)) => {
+                    let Some(current_value) = device.resolve_property::<NumberProperty>(&PropertyLocator::Name(property_id.to_string())) else {
+                        warn!(device_id = self.device_id, property_id, "⚠️ Only a number property can be decremented");
+                        continue;
+                    };
+
+                    Value::Number(current_value.value().unwrap_or(Number::PositiveInt(0)) - number_value)
+                }
+                (operation, value) => {
+                    warn!(
+                        device_id = self.device_id, property_id,
+                        "⚠️ Unable to control device '{}', operation '{:?}' requires a number, got '{:?}'", self.device_id, operation, value
+                    );
+                    continue;
+                }
+            };
+
+            let resolved_command = ResolvedPropertyCommand { operation: property_command.operation.clone(), value, transition: property_command.transition };
+            let result = device_command_map.insert(property_id.clone(), resolved_command);
             if let Some(previous_value) = result {
                 warn!(
                     device_id = self.device_id,
-                    "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'", property_id, device.name, previous_value
+                    "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'", property_id, device.name, previous_value.value
                 );
             }
         }
@@ -162,7 +222,7 @@ impl Action for ControlDeviceAction {
         self.property
             .iter()
             .filter_map(|(property_id, command)| match find_property(device, property_id) {
-                Ok(property) => self.validate_command(property_id, property, command),
+                Ok(property) => self.validate_command(snapshot, property_id, property, command),
                 Err(problem) => Some(problem),
             })
             .collect()
@@ -179,10 +239,9 @@ mod tests {
     use crate::domain::Number;
     use crate::domain::color::Color;
     use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind};
-    use crate::flow_engine::property_value::PropertyValue;
-    use crate::flow_engine::property_value::PropertyValue::SetBooleanValue;
+    use crate::flow_engine::Expression;
     use crate::store::DeviceMap;
-    use crate::test_support::DeviceBuilder;
+    use crate::test_support::{DeviceBuilder, property_command};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use std::io;
@@ -203,12 +262,12 @@ mod tests {
     }
 
     fn control_device(device_id: &str, property_ids: &[&str]) -> ControlDeviceAction {
-        let property = property_ids.iter().map(|id| (id.to_string(), SetBooleanValue(true).into())).collect();
+        let property = property_ids.iter().map(|id| (id.to_string(), property_command(Operation::Set, Value::Boolean(true)))).collect();
         ControlDeviceAction::new(device_id.to_string(), property)
     }
 
-    fn control_device_with(device_id: &str, property_id: &str, value: PropertyValue) -> ControlDeviceAction {
-        ControlDeviceAction::new(device_id.to_string(), HashMap::from([(property_id.to_string(), value.into())]))
+    fn control_device_with(device_id: &str, property_id: &str, command: PropertyCommand) -> ControlDeviceAction {
+        ControlDeviceAction::new(device_id.to_string(), HashMap::from([(property_id.to_string(), command)]))
     }
 
     fn number(value: u64) -> Number {
@@ -243,8 +302,11 @@ mod tests {
             "deviceId": "42",
             "property": {
                 "fan": {
-                    "type": "boolean",
-                    "value": true
+                    "operation": "set",
+                    "value": {
+                      "type": "literal",
+                      "value": true
+                    }
                 }
             }
         }"#;
@@ -253,7 +315,7 @@ mod tests {
 
         let expected = ControlDeviceAction {
             device_id: "42".to_string(),
-            property: HashMap::from([("fan".to_string(), SetBooleanValue(true).into())]),
+            property: HashMap::from([("fan".to_string(), property_command(Operation::Set, Value::Boolean(true)))]),
         };
 
         let action = node.as_any().downcast_ref::<ControlDeviceAction>().unwrap();
@@ -314,42 +376,44 @@ mod tests {
     }
 
     #[rstest]
-    #[case::set_boolean("on", SetBooleanValue(true))]
-    #[case::toggle_boolean("on", PropertyValue::ToggleBooleanValue)]
-    #[case::set_number("brightness", PropertyValue::SetNumberValue(number(50)))]
-    #[case::set_number_to_the_minimum("brightness", PropertyValue::SetNumberValue(number(1)))]
-    #[case::set_number_to_the_maximum("brightness", PropertyValue::SetNumberValue(number(100)))]
-    #[case::set_float_within_the_range("brightness", PropertyValue::SetNumberValue(Number::Float(99.5)))]
-    #[case::set_number_without_a_range("temperature", PropertyValue::SetNumberValue(number(1_000_000)))]
-    #[case::increment_past_the_maximum("brightness", PropertyValue::IncrementNumberValue(number(1000)))]
-    #[case::decrement_past_the_minimum("brightness", PropertyValue::DecrementNumberValue(number(1000)))]
-    #[case::increment_number("brightness", PropertyValue::IncrementNumberValue(number(10)))]
-    #[case::decrement_number("brightness", PropertyValue::DecrementNumberValue(number(10)))]
-    #[case::set_color("color", PropertyValue::SetColor(red()))]
-    fn control_device_validate_accepts_a_value_that_matches_the_property(#[case] property_id: &str, #[case] value: PropertyValue) {
-        assert_eq!(control_device_with("lamp", property_id, value).validate(&snapshot()), []);
+    #[case::set_boolean("on", property_command(Operation::Set, Value::Boolean(true)))]
+    #[case::toggle_boolean("on", property_command(Operation::Toggle, Value::None))]
+    #[case::set_number("brightness", property_command(Operation::Set, Value::Number(number(50))))]
+    #[case::set_number_to_the_minimum("brightness", property_command(Operation::Set, Value::Number(number(1))))]
+    #[case::set_number_to_the_maximum("brightness", property_command(Operation::Set, Value::Number(number(100))))]
+    #[case::set_float_within_the_range("brightness", property_command(Operation::Set, Value::Number(Number::Float(99.5))))]
+    #[case::set_float_to_the_minimum("brightness", property_command(Operation::Set, Value::Number(Number::Float(1.0))))]
+    #[case::set_float_to_the_maximum("brightness", property_command(Operation::Set, Value::Number(Number::Float(100.0))))]
+    #[case::set_number_without_a_range("temperature", property_command(Operation::Set, Value::Number(number(1_000_000))))]
+    #[case::increment_past_the_maximum("brightness", property_command(Operation::Increment, Value::Number(number(1000))))]
+    #[case::decrement_past_the_minimum("brightness", property_command(Operation::Decrement, Value::Number(number(1000))))]
+    #[case::increment_number("brightness", property_command(Operation::Increment, Value::Number(number(10))))]
+    #[case::decrement_number("brightness", property_command(Operation::Decrement, Value::Number(number(10))))]
+    #[case::set_color("color", property_command(Operation::Set, Value::Color(red())))]
+    fn control_device_validate_accepts_a_value_that_matches_the_property(#[case] property_id: &str, #[case] command: PropertyCommand) {
+        assert_eq!(control_device_with("lamp", property_id, command).validate(&snapshot()), []);
     }
 
     #[rstest]
-    #[case::number_for_boolean("on", PropertyValue::SetNumberValue(number(50)), ValueKind::Boolean, ValueKind::Number)]
-    #[case::color_for_boolean("on", PropertyValue::SetColor(red()), ValueKind::Boolean, ValueKind::Color)]
-    #[case::boolean_for_number("brightness", SetBooleanValue(true), ValueKind::Number, ValueKind::Boolean)]
-    #[case::toggle_for_number("brightness", PropertyValue::ToggleBooleanValue, ValueKind::Number, ValueKind::Boolean)]
-    #[case::increment_for_color("color", PropertyValue::IncrementNumberValue(number(10)), ValueKind::Color, ValueKind::Number)]
+    #[case::number_for_boolean("on", property_command(Operation::Set, Value::Number(number(50))), ValueKind::Boolean, ValueKind::Number)]
+    #[case::color_for_boolean("on", property_command(Operation::Set, Value::Color(red())), ValueKind::Boolean, ValueKind::Color)]
+    #[case::boolean_for_number("brightness", property_command(Operation::Set, Value::Boolean(true)), ValueKind::Number, ValueKind::Boolean)]
+    #[case::toggle_for_number("brightness", property_command(Operation::Toggle, Value::None), ValueKind::Number, ValueKind::Boolean)]
+    #[case::increment_for_color("color", property_command(Operation::Increment, Value::Number(number(10))), ValueKind::Color, ValueKind::Number)]
     fn control_device_validate_reports_an_incompatible_value(
         #[case] property_id: &str,
-        #[case] value: PropertyValue,
+        #[case] command: PropertyCommand,
         #[case] expected: ValueKind,
         #[case] actual: ValueKind,
     ) {
-        let problems = control_device_with("lamp", property_id, value).validate(&snapshot());
+        let problems = control_device_with("lamp", property_id, command).validate(&snapshot());
 
         assert_eq!(problems, [Problem::IncompatibleValue { device_id: "lamp".to_string(), property_id: property_id.to_string(), expected, actual }]);
     }
 
     #[test]
     fn control_device_validate_reports_a_readonly_property_instead_of_an_incompatible_value() {
-        let problems = control_device_with("lamp", "motion", PropertyValue::SetNumberValue(number(50))).validate(&snapshot());
+        let problems = control_device_with("lamp", "motion", property_command(Operation::Set, Value::Number(number(50)))).validate(&snapshot());
 
         assert_eq!(problems, [Problem::ReadOnlyProperty { device_id: "lamp".to_string(), property_id: "motion".to_string() }]);
     }
@@ -359,7 +423,7 @@ mod tests {
     #[case::negative_int(Number::NegativeInt(-1))]
     #[case::float(Number::Float(0.5))]
     fn control_device_validate_reports_a_value_below_the_minimum(#[case] value: Number) {
-        let problems = control_device_with("lamp", "brightness", PropertyValue::SetNumberValue(value)).validate(&snapshot());
+        let problems = control_device_with("lamp", "brightness", property_command(Operation::Set, Value::Number(value))).validate(&snapshot());
 
         assert_eq!(problems, [Problem::ValueTooSmall { device_id: "lamp".to_string(), property_id: "brightness".to_string(), value, minimum: number(1) }]);
     }
@@ -368,8 +432,42 @@ mod tests {
     #[case::positive_int(number(101))]
     #[case::float(Number::Float(100.5))]
     fn control_device_validate_reports_a_value_above_the_maximum(#[case] value: Number) {
-        let problems = control_device_with("lamp", "brightness", PropertyValue::SetNumberValue(value)).validate(&snapshot());
+        let problems = control_device_with("lamp", "brightness", property_command(Operation::Set, Value::Number(value))).validate(&snapshot());
 
         assert_eq!(problems, [Problem::ValueTooLarge { device_id: "lamp".to_string(), property_id: "brightness".to_string(), value, maximum: number(100) }]);
+    }
+
+    #[test]
+    fn control_device_validate_skips_the_range_for_a_value_that_is_only_known_at_runtime() {
+        let command = PropertyCommand {
+            operation: Operation::Set,
+            value: Expression::PropertyValue { device_id: "lamp".to_string(), property_id: "temperature".to_string() },
+            transition: None,
+        };
+
+        assert_eq!(control_device_with("lamp", "brightness", command).validate(&snapshot()), []);
+    }
+
+    #[test]
+    fn control_device_validate_reports_a_range_problem_for_each_property() {
+        let action = ControlDeviceAction::new(
+            "lamp".to_string(),
+            HashMap::from([
+                ("brightness".to_string(), property_command(Operation::Set, Value::Number(number(101)))),
+                ("on".to_string(), property_command(Operation::Set, Value::Boolean(true))),
+                ("missing".to_string(), property_command(Operation::Set, Value::Boolean(true))),
+            ]),
+        );
+
+        let mut problems = action.validate(&snapshot());
+        problems.sort_by_key(|problem| problem.to_string());
+
+        assert_eq!(
+            problems,
+            [
+                Problem::UnknownProperty { device_id: "lamp".to_string(), property_id: "missing".to_string() },
+                Problem::ValueTooLarge { device_id: "lamp".to_string(), property_id: "brightness".to_string(), value: number(101), maximum: number(100) },
+            ]
+        );
     }
 }

@@ -3,7 +3,7 @@ use crate::domain::device::Device;
 use crate::domain::{GeoLocation, controller_registry};
 use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
-use crate::flow_engine::property_value::{ConflictMergeSemantics, PropertyCommand};
+use crate::flow_engine::property_command::{ConflictMergeSemantics, ResolvedPropertyCommand};
 use crate::flow_engine::{CommandMap, Context, FlowEngineError, FlowExecutionReport};
 use crate::scheduler::SchedulerCommand;
 use crate::store::{PropertyChange, StoreSnapshot};
@@ -20,7 +20,7 @@ type PropertyId = String;
 #[derive(Debug)]
 struct ProposedWrite {
     origin: Arc<Flow>,
-    command: PropertyCommand,
+    command: ResolvedPropertyCommand,
 }
 
 type ProposalMap = HashMap<(DeviceId, PropertyId), Vec<ProposedWrite>>;
@@ -78,7 +78,7 @@ fn merge_command_maps(reports: Vec<(Arc<Flow>, Result<FlowExecutionReport, FlowE
     merged_map
 }
 
-fn merged_command(writes: &[ProposedWrite]) -> Option<&PropertyCommand> {
+fn merged_command(writes: &[ProposedWrite]) -> Option<&ResolvedPropertyCommand> {
     let first = writes.first()?;
 
     if writes.len() == 1 {
@@ -86,7 +86,7 @@ fn merged_command(writes: &[ProposedWrite]) -> Option<&PropertyCommand> {
     }
 
     let all_equal = writes.iter().all(|w| w.command == first.command);
-    (first.command.value.conflict_merge_semantics() == ConflictMergeSemantics::DeduplicateIfEqual && all_equal).then_some(&first.command)
+    (first.command.operation.conflict_merge_semantics() == ConflictMergeSemantics::DeduplicateIfEqual && all_equal).then_some(&first.command)
 }
 
 fn log_conflict(device_id: &DeviceId, property_id: &PropertyId, writes: &[ProposedWrite]) {
@@ -118,7 +118,7 @@ async fn dispatch_commands(snapshot: &StoreSnapshot, command_map: CommandMap) {
 }
 
 // Drops properties that a flow is not allowed to write (unknown and marked as readonly).
-fn filter_flow_editable_properties(device: &Device, properties: HashMap<PropertyId, PropertyCommand>) -> HashMap<PropertyId, PropertyCommand> {
+fn filter_flow_editable_properties(device: &Device, properties: HashMap<PropertyId, ResolvedPropertyCommand>) -> HashMap<PropertyId, ResolvedPropertyCommand> {
     properties
         .into_iter()
         .filter(|(property_id, _)| match device.properties.get(property_id) {
@@ -143,9 +143,8 @@ mod tests {
     use crate::domain::property::{BooleanProperty, PropertyType};
     use crate::flow_engine::Value;
     use crate::flow_engine::flow::{FlowLink, FlowNode, FlowNodeKind};
-    use crate::flow_engine::property_value::PropertyValue;
-    use crate::flow_engine::property_value::PropertyValue::*;
-    use crate::test_support::DeviceBuilder;
+    use crate::flow_engine::property_command::Operation;
+    use crate::test_support::{DeviceBuilder, resolved_property_command};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use std::any::Any;
@@ -154,7 +153,7 @@ mod tests {
     const DEVICE_ID: &str = "device_id";
     const DEVICE2_ID: &str = "device2_id";
 
-    fn create_report(device_id: &str, properties: HashMap<String, PropertyCommand>) -> FlowExecutionReport {
+    fn create_report(device_id: &str, properties: HashMap<String, ResolvedPropertyCommand>) -> FlowExecutionReport {
         let mut command_map = HashMap::new();
         command_map.insert(device_id.to_string(), properties);
 
@@ -173,30 +172,30 @@ mod tests {
 
     #[test]
     fn merge_command_maps_single_proposal_returns_property() {
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), SetBooleanValue(true).into())]));
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]));
         let flow = create_flow("flow");
         let result = merge_command_maps(vec![(flow, Ok(report))]);
 
         assert_eq!(
             result,
-            HashMap::from([(DEVICE_ID.to_string(), HashMap::from([("property_id".to_string(), SetBooleanValue(true).into())]))])
+            HashMap::from([(DEVICE_ID.to_string(), HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]))])
         );
     }
 
     #[rstest]
-    #[case::set_boolean_value(SetBooleanValue(true))]
-    #[case::set_number_value(SetNumberValue(Number::PositiveInt(1)))]
-    #[case::set_color(SetColor(Color::Hex("#000000".to_string())))]
-    fn merge_command_maps_equal_absolute_proposals_deduplicate(#[case] property_value: PropertyValue) {
+    #[case::boolean(Value::Boolean(true))]
+    #[case::number(Value::Number(Number::PositiveInt(1)))]
+    #[case::color(Value::Color(Color::Hex("#000000".to_string())))]
+    fn merge_command_maps_equal_absolute_proposals_deduplicate(#[case] value: Value) {
         let flow = create_flow("flow");
         let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), property_value.clone().into())]));
-        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), property_value.clone().into())]));
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, value.clone()))]));
+        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, value.clone()))]));
 
         let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
         assert_eq!(
             result,
-            HashMap::from([(DEVICE_ID.to_string(), HashMap::from([("property_id".to_string(), property_value.into())]))])
+            HashMap::from([(DEVICE_ID.to_string(), HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, value))]))])
         );
     }
 
@@ -205,20 +204,20 @@ mod tests {
         let flow = create_flow("flow");
         let flow2 = create_flow("other_flow");
         let flow3 = create_flow("third_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), SetBooleanValue(true).into())]));
-        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), SetBooleanValue(true).into())]));
-        let report3 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), SetBooleanValue(true).into())]));
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]));
+        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]));
+        let report3 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]));
 
         let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2)), (flow3, Ok(report3))]);
-        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), HashMap::from([("property_id".to_string(), SetBooleanValue(true).into())]))]));
+        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]))]));
     }
 
     #[test]
     fn merge_command_maps_different_absolute_proposals_skip_property() {
         let flow = create_flow("flow");
         let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), SetBooleanValue(true).into())]));
-        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), SetBooleanValue(false).into())]));
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]));
+        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(false)))]));
 
         let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
         assert_eq!(result, HashMap::new());
@@ -228,7 +227,7 @@ mod tests {
     fn merge_command_maps_equal_proposals_with_equal_transitions_deduplicate() {
         let flow = create_flow("flow");
         let flow2 = create_flow("other_flow");
-        let command = PropertyCommand { value: SetBooleanValue(false), transition: Some(Duration::from_secs(600)) };
+        let command = ResolvedPropertyCommand { operation: Operation::Set, value: Value::Boolean(false), transition: Some(Duration::from_secs(600)) };
         let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), command.clone())]));
         let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), command.clone())]));
 
@@ -242,30 +241,33 @@ mod tests {
     fn merge_command_maps_equal_values_with_different_transitions_skip_property(#[case] transition: Option<Duration>, #[case] transition2: Option<Duration>) {
         let flow = create_flow("flow");
         let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), PropertyCommand { value: SetBooleanValue(false), transition })]));
-        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), PropertyCommand { value: SetBooleanValue(false), transition: transition2 })]));
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), ResolvedPropertyCommand { operation: Operation::Set, value: Value::Boolean(false), transition })]));
+        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), ResolvedPropertyCommand { operation: Operation::Set, value: Value::Boolean(false), transition: transition2 })]));
+
+        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
+        assert_eq!(result, HashMap::new());
+    }
+
+    #[rstest]
+    #[case::toggle(Operation::Toggle, Value::Boolean(true))]
+    #[case::increment(Operation::Increment, Value::Number(Number::PositiveInt(42)))]
+    #[case::decrement(Operation::Decrement, Value::Number(Number::PositiveInt(42)))]
+    fn merge_command_maps_equal_relative_proposals_skip_property(#[case] operation: Operation, #[case] value: Value) {
+        let flow = create_flow("flow");
+        let flow2 = create_flow("other_flow");
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(operation.clone(), value.clone()))]));
+        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(operation, value))]));
 
         let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
         assert_eq!(result, HashMap::new());
     }
 
     #[test]
-    fn merge_command_maps_different_relative_proposals_skip_property() {
+    fn merge_command_maps_relative_and_absolute_proposals_skip_property() {
         let flow = create_flow("flow");
         let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), IncrementNumberValue(Number::PositiveInt(42)).into())]));
-        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), IncrementNumberValue(Number::PositiveInt(42)).into())]));
-
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
-        assert_eq!(result, HashMap::new());
-    }
-
-    #[test]
-    fn merge_command_maps_relevative_and_absolute_proposals_skip_property() {
-        let flow = create_flow("flow");
-        let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), SetNumberValue(Number::PositiveInt(42)).into())]));
-        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), IncrementNumberValue(Number::PositiveInt(42)).into())]));
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Number(Number::PositiveInt(42))))]));
+        let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))]));
 
         let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
         assert_eq!(result, HashMap::new());
@@ -275,22 +277,22 @@ mod tests {
     fn merge_command_maps_conflicting_property_preserves_independent_property() {
         let flow = create_flow("flow");
         let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), SetBooleanValue(true).into())]));
-        let report2 = create_report(
-            DEVICE_ID,
-            HashMap::from([("property_id".to_string(), SetBooleanValue(false).into()), ("property2_id".to_string(), SetBooleanValue(false).into())]),
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]));
+        let report2 = create_report(DEVICE_ID, HashMap::from([
+            ("property_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(false))),
+            ("property2_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(false)))]),
         );
 
         let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
         assert_eq!(
             result,
-            HashMap::from([(DEVICE_ID.to_string(), HashMap::from([("property2_id".to_string(), SetBooleanValue(false).into())]))])
+            HashMap::from([(DEVICE_ID.to_string(), HashMap::from([("property2_id".to_string(), resolved_property_command(Operation::Set, Value::Boolean(false)))]))])
         );
     }
 
     #[test]
     fn merge_command_maps_single_relative_proposal_returns_property() {
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), IncrementNumberValue(Number::PositiveInt(42)).into())]));
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))]));
         let flow = create_flow("flow");
         let result = merge_command_maps(vec![(flow, Ok(report))]);
 
@@ -298,7 +300,7 @@ mod tests {
             result,
             HashMap::from([(
                 DEVICE_ID.to_string(),
-                HashMap::from([("property_id".to_string(), IncrementNumberValue(Number::PositiveInt(42)).into())])
+                HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))])
             )])
         );
     }
@@ -307,8 +309,8 @@ mod tests {
     fn merge_command_maps_different_devices_separately() {
         let flow = create_flow("flow");
         let flow2 = create_flow("other_flow");
-        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), IncrementNumberValue(Number::PositiveInt(42)).into())]));
-        let report2 = create_report(DEVICE2_ID, HashMap::from([("property_id".to_string(), IncrementNumberValue(Number::PositiveInt(42)).into())]));
+        let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))]));
+        let report2 = create_report(DEVICE2_ID, HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))]));
 
         let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
         assert_eq!(
@@ -316,11 +318,11 @@ mod tests {
             HashMap::from([
                 (
                     DEVICE_ID.to_string(),
-                    HashMap::from([("property_id".to_string(), IncrementNumberValue(Number::PositiveInt(42)).into())])
+                    HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))])
                 ),
                 (
                     DEVICE2_ID.to_string(),
-                    HashMap::from([("property_id".to_string(), IncrementNumberValue(Number::PositiveInt(42)).into())])
+                    HashMap::from([("property_id".to_string(), resolved_property_command(Operation::Increment, Value::Number(Number::PositiveInt(42))))])
                 ),
             ])
         );
@@ -338,11 +340,11 @@ mod tests {
             .with_properties(vec![Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, false, None, false))])
             .build();
 
-        let properties = HashMap::from([("on".to_string(), SetBooleanValue(true).into())]);
+        let properties = HashMap::from([("on".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]);
 
         let result = filter_flow_editable_properties(&device, properties);
 
-        assert_eq!(result, HashMap::from([("on".to_string(), SetBooleanValue(true).into())]));
+        assert_eq!(result, HashMap::from([("on".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]));
     }
 
     #[test]
@@ -351,7 +353,7 @@ mod tests {
             .with_properties(vec![Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, true, None, false))])
             .build();
 
-        let properties = HashMap::from([("on".to_string(), SetBooleanValue(true).into())]);
+        let properties = HashMap::from([("on".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]);
 
         let result = filter_flow_editable_properties(&device, properties);
 
@@ -364,7 +366,7 @@ mod tests {
             .with_properties(vec![Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, true, None, false))])
             .build();
 
-        let properties = HashMap::from([("does_not_exist".to_string(), SetBooleanValue(true).into())]);
+        let properties = HashMap::from([("does_not_exist".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]);
 
         let result = filter_flow_editable_properties(&device, properties);
 
@@ -379,10 +381,12 @@ mod tests {
                 Box::new(BooleanProperty::new("brightness".to_string(), PropertyType::Brightness, true, None, false)),
             ])
             .build();
-        let properties = HashMap::from([("on".to_string(), SetBooleanValue(true).into()), ("brightness".to_string(), SetBooleanValue(true).into())]);
+        let properties = HashMap::from([
+            ("on".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true))),
+            ("brightness".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]);
 
         let result = filter_flow_editable_properties(&device, properties);
 
-        assert_eq!(result, HashMap::from([("on".to_string(), SetBooleanValue(true).into())]));
+        assert_eq!(result, HashMap::from([("on".to_string(), resolved_property_command(Operation::Set, Value::Boolean(true)))]));
     }
 }

@@ -39,6 +39,7 @@ pub enum ValueKind {
     Color,
     DateTime,
     Enum,
+    None,
     Number,
 }
 
@@ -49,6 +50,7 @@ impl fmt::Display for ValueKind {
             ValueKind::Color => "color",
             ValueKind::DateTime => "datetime",
             ValueKind::Enum => "enum",
+            ValueKind::None => "none",
             ValueKind::Number => "number",
         };
         f.write_str(kind)

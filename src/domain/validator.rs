@@ -47,7 +47,7 @@ pub fn find_property<'a>(device: &'a Device, property_id: &str) -> Result<&'a dy
 }
 
 fn validate_expression(snapshot: &StoreSnapshot, expression: &Expression) -> Vec<Problem> {
-    expression.walk()
+    let problems: Vec<Problem> = expression.walk()
         .filter_map(|expression| match expression {
             Expression::PropertyChanged { device_id, property_id } |
             Expression::PropertyValue { device_id, property_id } => {
@@ -55,7 +55,13 @@ fn validate_expression(snapshot: &StoreSnapshot, expression: &Expression) -> Vec
             }
             _ => None
         })
-        .collect()
+        .collect();
+
+    if !problems.is_empty() {
+        return problems;
+    }
+
+    expression.value_kind(snapshot).err().into_iter().collect()
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -104,6 +110,8 @@ pub enum Problem {
     ReadOnlyProperty { device_id: String, property_id: String },
     #[error("incompatible value for property '{property_id}' for device '{device_id}': expected {expected}, got {actual}")]
     IncompatibleValue { device_id: String, property_id: String, expected: ValueKind, actual: ValueKind },
+    #[error("incompatible operands for '{operator}': expected {expected}, got {}", .actual.iter().map(ToString::to_string).collect::<Vec<_>>().join(" and "))]
+    IncompatibleOperands { operator: &'static str, expected: &'static str, actual: Vec<ValueKind> },
     #[error("value too small for property '{property_id}' for device '{device_id}': minimum {minimum}, got {value}")]
     ValueTooSmall { device_id: String, property_id: String, value: Number, minimum: Number },
     #[error("value too large for property '{property_id}' for device '{device_id}': maximum {maximum}, got {value}")]
@@ -122,12 +130,12 @@ mod tests {
     use crate::domain::Number;
     use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
     use crate::flow_engine::Expression::*;
+    use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
-    use crate::flow_engine::property_value::PropertyValue::{SetBooleanValue, SetNumberValue};
-    use crate::flow_engine::{Value, property_value};
+    use crate::flow_engine::property_command::{Operation, PropertyCommand};
     use crate::store::DeviceMap;
-    use crate::test_support::DeviceBuilder;
+    use crate::test_support::{DeviceBuilder, property_command};
     use rstest::rstest;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -161,11 +169,11 @@ mod tests {
     }
 
     fn control_device(device_id: &str, property_id: &str) -> FlowNodeKind {
-        control_device_with(device_id, property_id, SetBooleanValue(true))
+        control_device_with(device_id, property_id, property_command(Operation::Set, Value::Boolean(true)))
     }
 
-    fn control_device_with(device_id: &str, property_id: &str, value: property_value::PropertyValue) -> FlowNodeKind {
-        let property = HashMap::from([(property_id.to_string(), value.into())]);
+    fn control_device_with(device_id: &str, property_id: &str, value: PropertyCommand) -> FlowNodeKind {
+        let property = HashMap::from([(property_id.to_string(), value)]);
         FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(device_id.to_string(), property))))
     }
 
@@ -238,6 +246,10 @@ mod tests {
         Problem::IncompatibleValue { device_id: device_id.to_string(), property_id: property_id.to_string(), expected, actual }.at(location)
     }
 
+    fn incompatible_operands_at(operator: &'static str, expected: &'static str, actual: Vec<ValueKind>, location: Location) -> ValidationIssue {
+        Problem::IncompatibleOperands { operator, expected, actual }.at(location)
+    }
+
     #[rstest]
     #[case::literal(Literal{ value: Value::Boolean(true) })]
     #[case::property_changed(property_changed(KNOWN_DEVICE_ID))]
@@ -301,6 +313,36 @@ mod tests {
         assert_eq!(result.unwrap_err().issues(), [unknown_device(KNOWN_DEVICE_ID)]);
     }
 
+    #[test]
+    fn validate_reports_incompatible_operands_in_the_trigger() {
+        let trigger = EqualTo { lhs: Box::new(Literal { value: Value::Boolean(true) }), rhs: Box::new(Literal { value: Value::String("short_release".to_string()) }) };
+
+        let result = validate(&flow_with_trigger(trigger), &snapshot());
+
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [incompatible_operands_at("EqualTo", "operands of the same kind", vec![ValueKind::Boolean, ValueKind::Enum], Location::Trigger)]
+        );
+    }
+
+    #[test]
+    fn validate_reports_incompatible_operands_in_a_conditional_node() {
+        let condition = And { lhs: Box::new(property_value(KNOWN_DEVICE_ID)), rhs: Box::new(property_value_of(KNOWN_DEVICE_ID, "brightness")) };
+
+        let result = validate(&flow_with_node(FlowNodeKind::Conditional(condition)), &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [incompatible_operands_at("And", "Boolean", vec![ValueKind::Boolean, ValueKind::Number], node(NODE_ID))]);
+    }
+
+    #[test]
+    fn validate_only_reports_the_unknown_device_when_the_operands_are_incompatible_too() {
+        let trigger = And { lhs: Box::new(property_value("unknown")), rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }) };
+
+        let result = validate(&flow_with_trigger(trigger), &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown")]);
+    }
+
     #[rstest]
     #[case::conditional(FlowNodeKind::Conditional(property_value(KNOWN_DEVICE_ID)))]
     #[case::control_device(control_device(KNOWN_DEVICE_ID, "on"))]
@@ -345,7 +387,7 @@ mod tests {
 
     #[test]
     fn validate_reports_a_control_device_action_that_sets_an_incompatible_value() {
-        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "on", SetNumberValue(Number::PositiveInt(50)))), &snapshot());
+        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "on", property_command(Operation::Set, Value::Number(Number::PositiveInt(50))))), &snapshot());
 
         assert_eq!(result.unwrap_err().issues(), [incompatible_value_at(KNOWN_DEVICE_ID, "on", ValueKind::Boolean, ValueKind::Number, node(NODE_ID))]);
     }
@@ -354,7 +396,7 @@ mod tests {
     #[case::too_small(Number::PositiveInt(0), value_too_small_at(KNOWN_DEVICE_ID, "brightness", Number::PositiveInt(0), Number::PositiveInt(1), node(NODE_ID)))]
     #[case::too_large(Number::PositiveInt(101), value_too_large_at(KNOWN_DEVICE_ID, "brightness", Number::PositiveInt(101), Number::PositiveInt(100), node(NODE_ID)))]
     fn validate_reports_a_control_device_action_that_sets_a_value_out_of_range(#[case] value: Number, #[case] expected: ValidationIssue) {
-        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", SetNumberValue(value))), &snapshot());
+        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", property_command(Operation::Set, Value::Number(value)))), &snapshot());
 
         assert_eq!(result.unwrap_err().issues(), [expected]);
     }

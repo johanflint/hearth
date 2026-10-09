@@ -1,5 +1,8 @@
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, Property, PropertyType};
+use crate::flow_engine::Expression::Literal;
+use crate::flow_engine::Value;
+use crate::flow_engine::property_command::{Operation, PropertyCommand, ResolvedPropertyCommand};
 use std::collections::HashMap;
 
 pub(crate) struct DeviceBuilder {
@@ -43,4 +46,12 @@ impl DeviceBuilder {
             controller_id: None,
         }
     }
+}
+
+pub(crate) fn property_command(operation: Operation, value: Value) -> PropertyCommand {
+    PropertyCommand { operation, value: Literal { value }, transition: None }
+}
+
+pub(crate) fn resolved_property_command(operation: Operation, value: Value) -> ResolvedPropertyCommand {
+    ResolvedPropertyCommand { operation, value, transition: None }
 }
