@@ -47,7 +47,7 @@ pub fn find_property<'a>(device: &'a Device, property_id: &str) -> Result<&'a dy
 }
 
 fn validate_expression(snapshot: &StoreSnapshot, expression: &Expression) -> Vec<Problem> {
-    expression.walk()
+    let problems: Vec<Problem> = expression.walk()
         .filter_map(|expression| match expression {
             Expression::PropertyChanged { device_id, property_id } |
             Expression::PropertyValue { device_id, property_id } => {
@@ -55,7 +55,13 @@ fn validate_expression(snapshot: &StoreSnapshot, expression: &Expression) -> Vec
             }
             _ => None
         })
-        .collect()
+        .collect();
+
+    if !problems.is_empty() {
+        return problems;
+    }
+
+    expression.value_kind(snapshot).err().into_iter().collect()
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -240,6 +246,10 @@ mod tests {
         Problem::IncompatibleValue { device_id: device_id.to_string(), property_id: property_id.to_string(), expected, actual }.at(location)
     }
 
+    fn incompatible_operands_at(operator: &'static str, expected: &'static str, actual: Vec<ValueKind>, location: Location) -> ValidationIssue {
+        Problem::IncompatibleOperands { operator, expected, actual }.at(location)
+    }
+
     #[rstest]
     #[case::literal(Literal{ value: Value::Boolean(true) })]
     #[case::property_changed(property_changed(KNOWN_DEVICE_ID))]
@@ -301,6 +311,36 @@ mod tests {
         let result = validate(&flow_with_trigger(property_changed(KNOWN_DEVICE_ID)), &StoreSnapshot::default());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device(KNOWN_DEVICE_ID)]);
+    }
+
+    #[test]
+    fn validate_reports_incompatible_operands_in_the_trigger() {
+        let trigger = EqualTo { lhs: Box::new(Literal { value: Value::Boolean(true) }), rhs: Box::new(Literal { value: Value::String("short_release".to_string()) }) };
+
+        let result = validate(&flow_with_trigger(trigger), &snapshot());
+
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [incompatible_operands_at("EqualTo", "operands of the same kind", vec![ValueKind::Boolean, ValueKind::Enum], Location::Trigger)]
+        );
+    }
+
+    #[test]
+    fn validate_reports_incompatible_operands_in_a_conditional_node() {
+        let condition = And { lhs: Box::new(property_value(KNOWN_DEVICE_ID)), rhs: Box::new(property_value_of(KNOWN_DEVICE_ID, "brightness")) };
+
+        let result = validate(&flow_with_node(FlowNodeKind::Conditional(condition)), &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [incompatible_operands_at("And", "Boolean", vec![ValueKind::Boolean, ValueKind::Number], node(NODE_ID))]);
+    }
+
+    #[test]
+    fn validate_only_reports_the_unknown_device_when_the_operands_are_incompatible_too() {
+        let trigger = And { lhs: Box::new(property_value("unknown")), rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }) };
+
+        let result = validate(&flow_with_trigger(trigger), &snapshot());
+
+        assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown")]);
     }
 
     #[rstest]
