@@ -39,6 +39,7 @@ pub enum ValueKind {
     Color,
     DateTime,
     Enum,
+    None,
     Number,
 }
 

@@ -1,10 +1,11 @@
 use crate::domain::color::Color;
-use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, PropertyType};
-use crate::domain::{Number, Time, WeekdayCondition};
+use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, PropertyType, ValueKind};
+use crate::domain::{Number, Problem, Time, WeekdayCondition, find_device, find_property};
 use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
 use crate::flow_engine::solar_event::EventTime;
+use crate::store::StoreSnapshot;
 use chrono::{DateTime, NaiveTime, Utc};
 use serde::Deserialize;
 use std::cmp::Ordering;
@@ -43,6 +44,36 @@ pub enum Expression {
 impl Expression {
     pub fn contains_property_changed(&self) -> bool {
         self.walk().any(|expression| matches!(expression, Expression::PropertyChanged { .. }))
+    }
+
+    pub fn value_kind(&self, snapshot: &StoreSnapshot) -> Result<ValueKind, Problem> {
+        use Expression::*;
+
+        let value_kind = match self {
+            GreaterThanOrEqualTo { .. }
+            | GreaterThan { .. }
+            | LessThan { .. }
+            | LessThanOrEqualTo { .. }
+            | EqualTo { .. }
+            | NotEqualTo { .. }
+            | And { .. }
+            | Or { .. }
+            | Not { .. } => ValueKind::Boolean,
+            Literal { value: Value::Boolean(_) } => ValueKind::Boolean,
+            Literal { value: Value::Color(_) } => ValueKind::Color,
+            Literal { value: Value::DateTime(_) } => ValueKind::DateTime,
+            Literal { value: Value::String(_) } => ValueKind::Enum,
+            Literal { value: Value::Number(_) } => ValueKind::Number,
+            Literal { value: Value::None } => ValueKind::None,
+            PropertyChanged { .. } => ValueKind::Boolean,
+            PropertyValue { device_id, property_id } => {
+                let device = find_device(device_id, snapshot)?;
+                find_property(device, property_id)?.value_kind()
+            },
+            Temporal { .. } => ValueKind::Boolean,
+        };
+
+        Ok(value_kind)
     }
 
     /// Visits this expression and all itssub-expressions depth-first, left before right
