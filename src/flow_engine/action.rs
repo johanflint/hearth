@@ -204,6 +204,7 @@ mod tests {
     use rstest::rstest;
     use std::io;
     use std::sync::Arc;
+    use std::time::Duration;
 
     fn snapshot() -> StoreSnapshot {
         let device = DeviceBuilder::new("lamp")
@@ -420,5 +421,54 @@ mod tests {
                 Problem::ValueTooLarge { device_id: "lamp".to_string(), property_id: "brightness".to_string(), value: number(101), maximum: number(100) },
             ]
         );
+    }
+
+    async fn execute(action: &ControlDeviceAction) -> Option<CommandMap> {
+        let context = Context::builder().snapshot(snapshot()).build();
+        let mut scope = Scope::new();
+        action.execute(&context, &mut scope).await;
+        scope.get::<CommandMap>("command_map").cloned()
+    }
+
+    #[tokio::test]
+    async fn execute_resolves_the_expression_against_the_snapshot() {
+        let brightness_plus_ten = Expression::Add {
+            lhs: Box::new(Expression::PropertyValue { device_id: "lamp".to_string(), property_id: "brightness".to_string() }),
+            rhs: Box::new(Expression::Literal { value: Value::Number(number(10)) }),
+        };
+        let transition = Some(Duration::from_secs(1));
+        let action = control_device_with("lamp", "brightness", PropertyCommand { operation: Operation::Set, value: brightness_plus_ten, transition });
+
+        let command_map = execute(&action).await;
+
+        let expected = ResolvedPropertyCommand { operation: Operation::Set, value: Value::Number(number(60)), transition };
+        assert_eq!(command_map, Some(HashMap::from([("lamp".to_string(), HashMap::from([("brightness".to_string(), expected)]))])));
+    }
+
+    #[tokio::test]
+    async fn execute_skips_a_property_whose_expression_fails_to_evaluate() {
+        let invalid = Expression::Add {
+            lhs: Box::new(Expression::Literal { value: Value::Boolean(true) }),
+            rhs: Box::new(Expression::Literal { value: Value::Number(number(10)) }),
+        };
+        let action = control_device_with("lamp", "brightness", PropertyCommand { operation: Operation::Set, value: invalid, transition: None });
+
+        let command_map = execute(&action).await;
+
+        assert_eq!(command_map, Some(HashMap::from([("lamp".to_string(), HashMap::new())])));
+    }
+
+    #[tokio::test]
+    async fn execute_skips_an_unknown_property() {
+        let command_map = execute(&control_device("lamp", &["unknown"])).await;
+
+        assert_eq!(command_map, Some(HashMap::from([("lamp".to_string(), HashMap::new())])));
+    }
+
+    #[tokio::test]
+    async fn execute_ignores_an_unknown_device() {
+        let command_map = execute(&control_device("unknown", &["on"])).await;
+
+        assert_eq!(command_map, None);
     }
 }
