@@ -46,6 +46,13 @@ impl Expression {
         self.walk().any(|expression| matches!(expression, Expression::PropertyChanged { .. }))
     }
 
+    pub fn constant_value(&self) -> Option<&Value> {
+        match self {
+            Expression::Literal { value } => Some(value),
+            _ => None,
+        }
+    }
+
     pub fn value_kind(&self, snapshot: &StoreSnapshot) -> Result<ValueKind, Problem> {
         use Expression::*;
 
@@ -1548,6 +1555,19 @@ mod tests {
         }).collect();
 
         assert_eq!(visited, vec!["or", "gt", "number", "property", "not", "boolean"]);
+    }
+
+    #[rstest]
+    #[case::number_literal(Literal { value: Value::Number(Number::PositiveInt(42)) }, Some(Value::Number(Number::PositiveInt(42))))]
+    #[case::boolean_literal(Literal { value: Value::Boolean(true) }, Some(Value::Boolean(true)))]
+    #[case::property_value(PropertyValue { device_id: "light".to_string(), property_id: "brightness".to_string() }, None)]
+    #[case::operator_on_literals(
+        EqualTo{ lhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }), rhs: Box::new(Literal{ value: Value::Number(Number::PositiveInt(1)) }) },
+        None
+    )]
+    #[case::temporal(Temporal{ expression: IsDaytime }, None)]
+    fn constant_value_is_only_known_for_a_literal(#[case] expression: Expression, #[case] expected: Option<Value>) {
+        assert_eq!(expression.constant_value(), expected.as_ref());
     }
 
     mod value_kind {

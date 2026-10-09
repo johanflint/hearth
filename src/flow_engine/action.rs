@@ -1,11 +1,11 @@
-use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyLocator, ValueKind};
+use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyError, PropertyLocator, ValidatedValue, ValueKind};
 use crate::domain::{Number, Problem, find_device, find_property};
+use crate::flow_engine::Value;
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::expression::evaluate;
 use crate::flow_engine::property_command::{Operation, PropertyCommand, ResolvedPropertyCommand};
 use crate::flow_engine::scope::Scope;
-use crate::flow_engine::Value;
 use crate::store::StoreSnapshot;
 use action_macros::register_action;
 use async_trait::async_trait;
@@ -117,7 +117,16 @@ impl ControlDeviceAction {
             return Some(Problem::IncompatibleValue { device_id, property_id, expected, actual })
         }
 
-        None
+        let (Operation::Set, Some(Value::Number(value))) = (&command.operation, command.value.constant_value()) else {
+            return None;
+        };
+        let number_property = property.as_any().downcast_ref::<NumberProperty>()?;
+        let value = *value;
+        match number_property.validate_value(value) {
+            ValidatedValue::Clamped(minimum, PropertyError::ValueTooSmall) => Some(Problem::ValueTooSmall { device_id, property_id, value, minimum }),
+            ValidatedValue::Clamped(maximum, PropertyError::ValueTooLarge) => Some(Problem::ValueTooLarge { device_id, property_id, value, maximum }),
+            ValidatedValue::Valid(_) | ValidatedValue::Clamped(..) | ValidatedValue::Invalid(_) => None,
+        }
     }
 }
 
@@ -230,6 +239,7 @@ mod tests {
     use crate::domain::Number;
     use crate::domain::color::Color;
     use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind};
+    use crate::flow_engine::Expression;
     use crate::store::DeviceMap;
     use crate::test_support::{DeviceBuilder, property_command};
     use pretty_assertions::assert_eq;
@@ -372,6 +382,8 @@ mod tests {
     #[case::set_number_to_the_minimum("brightness", property_command(Operation::Set, Value::Number(number(1))))]
     #[case::set_number_to_the_maximum("brightness", property_command(Operation::Set, Value::Number(number(100))))]
     #[case::set_float_within_the_range("brightness", property_command(Operation::Set, Value::Number(Number::Float(99.5))))]
+    #[case::set_float_to_the_minimum("brightness", property_command(Operation::Set, Value::Number(Number::Float(1.0))))]
+    #[case::set_float_to_the_maximum("brightness", property_command(Operation::Set, Value::Number(Number::Float(100.0))))]
     #[case::set_number_without_a_range("temperature", property_command(Operation::Set, Value::Number(number(1_000_000))))]
     #[case::increment_past_the_maximum("brightness", property_command(Operation::Increment, Value::Number(number(1000))))]
     #[case::decrement_past_the_minimum("brightness", property_command(Operation::Decrement, Value::Number(number(1000))))]
@@ -423,5 +435,39 @@ mod tests {
         let problems = control_device_with("lamp", "brightness", property_command(Operation::Set, Value::Number(value))).validate(&snapshot());
 
         assert_eq!(problems, [Problem::ValueTooLarge { device_id: "lamp".to_string(), property_id: "brightness".to_string(), value, maximum: number(100) }]);
+    }
+
+    #[test]
+    fn control_device_validate_skips_the_range_for_a_value_that_is_only_known_at_runtime() {
+        let command = PropertyCommand {
+            operation: Operation::Set,
+            value: Expression::PropertyValue { device_id: "lamp".to_string(), property_id: "temperature".to_string() },
+            transition: None,
+        };
+
+        assert_eq!(control_device_with("lamp", "brightness", command).validate(&snapshot()), []);
+    }
+
+    #[test]
+    fn control_device_validate_reports_a_range_problem_for_each_property() {
+        let action = ControlDeviceAction::new(
+            "lamp".to_string(),
+            HashMap::from([
+                ("brightness".to_string(), property_command(Operation::Set, Value::Number(number(101)))),
+                ("on".to_string(), property_command(Operation::Set, Value::Boolean(true))),
+                ("missing".to_string(), property_command(Operation::Set, Value::Boolean(true))),
+            ]),
+        );
+
+        let mut problems = action.validate(&snapshot());
+        problems.sort_by_key(|problem| problem.to_string());
+
+        assert_eq!(
+            problems,
+            [
+                Problem::UnknownProperty { device_id: "lamp".to_string(), property_id: "missing".to_string() },
+                Problem::ValueTooLarge { device_id: "lamp".to_string(), property_id: "brightness".to_string(), value: number(101), maximum: number(100) },
+            ]
+        );
     }
 }
