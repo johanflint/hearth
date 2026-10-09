@@ -50,15 +50,29 @@ impl Expression {
         use Expression::*;
 
         let value_kind = match self {
-            GreaterThanOrEqualTo { .. }
-            | GreaterThan { .. }
-            | LessThan { .. }
-            | LessThanOrEqualTo { .. }
-            | EqualTo { .. }
-            | NotEqualTo { .. }
-            | And { .. }
-            | Or { .. }
-            | Not { .. } => ValueKind::Boolean,
+            GreaterThanOrEqualTo { lhs, rhs } | GreaterThan { lhs, rhs } | LessThan { lhs, rhs } | LessThanOrEqualTo { lhs, rhs } => {
+                match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
+                    (ValueKind::Number, ValueKind::Number) | (ValueKind::DateTime, ValueKind::DateTime) => ValueKind::Boolean,
+                    (lhs, rhs) => return Err(self.incompatible_operands("Number|DateTime", vec![lhs, rhs])),
+                }
+            }
+            EqualTo { lhs, rhs } | NotEqualTo { lhs, rhs } => {
+                let (lhs, rhs) = (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?);
+                if lhs != rhs {
+                    return Err(self.incompatible_operands("operands of the same kind", vec![lhs, rhs]));
+                }
+                ValueKind::Boolean
+            }
+            And { lhs, rhs } | Or { lhs, rhs } => {
+                match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
+                    (ValueKind::Boolean, ValueKind::Boolean) => ValueKind::Boolean,
+                    (lhs, rhs) => return Err(self.incompatible_operands("Boolean", vec![lhs, rhs])),
+                }
+            }
+            Not { expression } => match expression.value_kind(snapshot)? {
+                ValueKind::Boolean => ValueKind::Boolean,
+                kind => return Err(self.incompatible_operands("Boolean", vec![kind])),
+            },
             Literal { value: Value::Boolean(_) } => ValueKind::Boolean,
             Literal { value: Value::Color(_) } => ValueKind::Color,
             Literal { value: Value::DateTime(_) } => ValueKind::DateTime,
@@ -74,6 +88,25 @@ impl Expression {
         };
 
         Ok(value_kind)
+    }
+
+    fn incompatible_operands(&self, expected: &'static str, actual: Vec<ValueKind>) -> Problem {
+        use Expression::*;
+
+        let operator = match self {
+            GreaterThanOrEqualTo { .. } => "GreaterThanOrEqualTo",
+            GreaterThan { .. } => "GreaterThan",
+            LessThan { .. } => "LessThan",
+            LessThanOrEqualTo { .. } => "LessThanOrEqualTo",
+            EqualTo { .. } => "EqualTo",
+            NotEqualTo { .. } => "NotEqualTo",
+            And { .. } => "And",
+            Or { .. } => "Or",
+            Not { .. } => "Not",
+            Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => "Unknown",
+        };
+
+        Problem::IncompatibleOperands { operator, expected, actual }
     }
 
     /// Visits this expression and all itssub-expressions depth-first, left before right
@@ -1515,5 +1548,102 @@ mod tests {
         }).collect();
 
         assert_eq!(visited, vec!["or", "gt", "number", "property", "not", "boolean"]);
+    }
+
+    mod value_kind {
+        use super::*;
+        use crate::domain::property::ValueKind;
+
+        const DEVICE_ID: &str = "ab917a9a-a7d5-4853-9518-75909236a182";
+
+        fn snapshot() -> StoreSnapshot {
+            let device = device();
+            StoreSnapshot { devices: Arc::new(HashMap::from([(device.id.clone(), Arc::new(device))])) }
+        }
+
+        fn literal(value: Value) -> Box<Expression> {
+            Box::new(Literal { value })
+        }
+
+        fn property_value(device_id: &str, property_id: &str) -> Box<Expression> {
+            Box::new(PropertyValue { device_id: device_id.to_string(), property_id: property_id.to_string() })
+        }
+
+        #[rstest]
+        #[case::boolean(*literal(Value::Boolean(true)), ValueKind::Boolean)]
+        #[case::color(*literal(Value::Color(Color::Hex("#ff0000".to_string()))), ValueKind::Color)]
+        #[case::date_time(*literal(Value::DateTime(utc_with_ymd(2000, 8, 4))), ValueKind::DateTime)]
+        #[case::string(*literal(Value::String("normal".to_string())), ValueKind::Enum)]
+        #[case::number(*literal(Value::Number(Number::PositiveInt(42))), ValueKind::Number)]
+        #[case::boolean_property(*property_value(DEVICE_ID, "on"), ValueKind::Boolean)]
+        #[case::number_property(*property_value(DEVICE_ID, "brightness"), ValueKind::Number)]
+        #[case::enum_property(*property_value(DEVICE_ID, "batteryState"), ValueKind::Enum)]
+        #[case::property_changed(PropertyChanged{ device_id: DEVICE_ID.to_string(), property_id: "on".to_string() }, ValueKind::Boolean)]
+        #[case::temporal(Temporal{ expression: IsDaytime }, ValueKind::Boolean)]
+        #[case::compare_numbers(GreaterThan{ lhs: property_value(DEVICE_ID, "brightness"), rhs: literal(Value::Number(Number::PositiveInt(50))) }, ValueKind::Boolean)]
+        #[case::compare_date_times(
+            LessThan{ lhs: literal(Value::DateTime(utc_with_ymd(2000, 8, 4))), rhs: literal(Value::DateTime(utc_with_ymd(2000, 8, 5))) },
+            ValueKind::Boolean
+        )]
+        #[case::equal_enums(EqualTo{ lhs: property_value(DEVICE_ID, "batteryState"), rhs: literal(Value::String("low".to_string())) }, ValueKind::Boolean)]
+        #[case::not_equal_colors(NotEqualTo{ lhs: property_value(DEVICE_ID, "color"), rhs: literal(Value::Color(Color::Hex("#ff0000".to_string()))) }, ValueKind::Boolean)]
+        #[case::and(And{ lhs: literal(Value::Boolean(true)), rhs: property_value(DEVICE_ID, "on") }, ValueKind::Boolean)]
+        #[case::or(Or{ lhs: literal(Value::Boolean(true)), rhs: literal(Value::Boolean(false)) }, ValueKind::Boolean)]
+        #[case::not(Not{ expression: property_value(DEVICE_ID, "on") }, ValueKind::Boolean)]
+        fn infers_the_kind(#[case] expression: Expression, #[case] expected: ValueKind) {
+            assert_eq!(expression.value_kind(&snapshot()), Ok(expected));
+        }
+
+        #[rstest]
+        #[case::compare_booleans(
+            GreaterThanOrEqualTo{ lhs: literal(Value::Boolean(true)), rhs: literal(Value::Boolean(false)) },
+            Problem::IncompatibleOperands{ operator: "GreaterThanOrEqualTo", expected: "Number|DateTime", actual: vec![ValueKind::Boolean, ValueKind::Boolean] }
+        )]
+        #[case::compare_number_with_date_time(
+            LessThanOrEqualTo{ lhs: literal(Value::Number(Number::PositiveInt(1))), rhs: literal(Value::DateTime(utc_with_ymd(2000, 8, 4))) },
+            Problem::IncompatibleOperands{ operator: "LessThanOrEqualTo", expected: "Number|DateTime", actual: vec![ValueKind::Number, ValueKind::DateTime] }
+        )]
+        #[case::equal_different_kinds(
+            EqualTo{ lhs: property_value(DEVICE_ID, "on"), rhs: literal(Value::Number(Number::PositiveInt(1))) },
+            Problem::IncompatibleOperands{ operator: "EqualTo", expected: "operands of the same kind", actual: vec![ValueKind::Boolean, ValueKind::Number] }
+        )]
+        #[case::not_equal_different_kinds(
+            NotEqualTo{ lhs: literal(Value::String("low".to_string())), rhs: literal(Value::Boolean(true)) },
+            Problem::IncompatibleOperands{ operator: "NotEqualTo", expected: "operands of the same kind", actual: vec![ValueKind::Enum, ValueKind::Boolean] }
+        )]
+        #[case::and_with_a_number(
+            And{ lhs: literal(Value::Boolean(true)), rhs: property_value(DEVICE_ID, "brightness") },
+            Problem::IncompatibleOperands{ operator: "And", expected: "Boolean", actual: vec![ValueKind::Boolean, ValueKind::Number] }
+        )]
+        #[case::or_with_a_color(
+            Or{ lhs: literal(Value::Color(Color::Hex("#ff0000".to_string()))), rhs: literal(Value::Boolean(false)) },
+            Problem::IncompatibleOperands{ operator: "Or", expected: "Boolean", actual: vec![ValueKind::Color, ValueKind::Boolean] }
+        )]
+        #[case::not_a_number(
+            Not{ expression: literal(Value::Number(Number::PositiveInt(1))) },
+            Problem::IncompatibleOperands{ operator: "Not", expected: "Boolean", actual: vec![ValueKind::Number] }
+        )]
+        #[case::nested(
+            And{ lhs: Box::new(Not { expression: literal(Value::Number(Number::PositiveInt(1))) }), rhs: literal(Value::Boolean(true)) },
+            Problem::IncompatibleOperands{ operator: "Not", expected: "Boolean", actual: vec![ValueKind::Number] }
+        )]
+        #[case::unknown_device(
+            *property_value("missing", "on"),
+            Problem::UnknownDevice { device_id: "missing".to_string() }
+        )]
+        #[case::unknown_property(
+            EqualTo{ lhs: property_value(DEVICE_ID, "missing"), rhs: literal(Value::Boolean(true)) },
+            Problem::UnknownProperty{ device_id: DEVICE_ID.to_string(), property_id: "missing".to_string() }
+        )]
+        fn reports_a_problem(#[case] expression: Expression, #[case] expected: Problem) {
+            assert_eq!(expression.value_kind(&snapshot()), Err(expected));
+        }
+
+        #[test]
+        fn incompatible_operands_displays_the_operator_and_the_operand_kinds() {
+            let problem = Problem::IncompatibleOperands { operator: "And", expected: "Boolean", actual: vec![ValueKind::Boolean, ValueKind::Number] };
+
+            assert_eq!(problem.to_string(), "incompatible operands for 'And': expected Boolean, got boolean and number");
+        }
     }
 }

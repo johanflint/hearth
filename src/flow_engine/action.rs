@@ -1,11 +1,11 @@
-use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyLocator};
+use crate::domain::property::{BooleanProperty, NumberProperty, Property, PropertyLocator, ValueKind};
 use crate::domain::{Number, Problem, find_device, find_property};
-use crate::flow_engine::Value;
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::expression::evaluate;
 use crate::flow_engine::property_command::{Operation, PropertyCommand, ResolvedPropertyCommand};
 use crate::flow_engine::scope::Scope;
+use crate::flow_engine::Value;
 use crate::store::StoreSnapshot;
 use action_macros::register_action;
 use async_trait::async_trait;
@@ -92,12 +92,29 @@ impl ControlDeviceAction {
         ControlDeviceAction { device_id, property }
     }
 
-    fn validate_command(&self, property_id: &str, property: &dyn Property, _command: &PropertyCommand) -> Option<Problem> {
+    fn validate_command(&self, snapshot: &StoreSnapshot, property_id: &str, property: &dyn Property, command: &PropertyCommand) -> Option<Problem> {
         let device_id = self.device_id.clone();
         let property_id = property_id.to_string();
 
         if property.readonly() {
             return Some(Problem::ReadOnlyProperty { device_id, property_id });
+        }
+
+        let actual = match command.operation {
+            Operation::Toggle => ValueKind::Boolean,
+            Operation::Set | Operation::Increment | Operation::Decrement => match command.value.value_kind(snapshot) {
+                Ok(kind) => kind,
+                Err(problem) => return Some(problem),
+            }
+        };
+
+        let expected = match command.operation {
+            Operation::Increment | Operation::Decrement if actual != ValueKind::Number => ValueKind::Number,
+            _ => property.value_kind(),
+        };
+
+        if expected != actual {
+            return Some(Problem::IncompatibleValue { device_id, property_id, expected, actual })
         }
 
         None
@@ -196,7 +213,7 @@ impl Action for ControlDeviceAction {
         self.property
             .iter()
             .filter_map(|(property_id, command)| match find_property(device, property_id) {
-                Ok(property) => self.validate_command(property_id, property, command),
+                Ok(property) => self.validate_command(snapshot, property_id, property, command),
                 Err(problem) => Some(problem),
             })
             .collect()

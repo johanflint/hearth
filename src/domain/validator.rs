@@ -104,6 +104,8 @@ pub enum Problem {
     ReadOnlyProperty { device_id: String, property_id: String },
     #[error("incompatible value for property '{property_id}' for device '{device_id}': expected {expected}, got {actual}")]
     IncompatibleValue { device_id: String, property_id: String, expected: ValueKind, actual: ValueKind },
+    #[error("incompatible operands for '{operator}': expected {expected}, got {}", .actual.iter().map(ToString::to_string).collect::<Vec<_>>().join(" and "))]
+    IncompatibleOperands { operator: &'static str, expected: &'static str, actual: Vec<ValueKind> },
     #[error("value too small for property '{property_id}' for device '{device_id}': minimum {minimum}, got {value}")]
     ValueTooSmall { device_id: String, property_id: String, value: Number, minimum: Number },
     #[error("value too large for property '{property_id}' for device '{device_id}': maximum {maximum}, got {value}")]
