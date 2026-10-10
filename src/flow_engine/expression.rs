@@ -9,6 +9,8 @@ use crate::store::StoreSnapshot;
 use chrono::{DateTime, NaiveTime, Utc};
 use serde::Deserialize;
 use std::cmp::Ordering;
+use std::fmt;
+use std::fmt::Formatter;
 use thiserror::Error;
 use tracing::warn;
 
@@ -152,6 +154,57 @@ impl Expression {
     }
 }
 
+// Wraps nested binary expressions in parentheses so the output never relies on operator precedence
+struct Operand<'a>(&'a Expression);
+
+impl fmt::Display for Operand<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        use Expression::*;
+
+        match self.0 {
+            Not { .. } | Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => write!(f, "{}", self.0),
+            _ => write!(f, "({})", self.0),
+        }
+    }
+}
+
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        use Expression::*;
+
+        match self {
+            // Comparison
+            GreaterThanOrEqualTo { lhs, rhs } => write!(f, "{} >= {}", Operand(lhs), Operand(rhs)),
+            GreaterThan { lhs, rhs } => write!(f, "{} > {}", Operand(lhs), Operand(rhs)),
+            LessThan { lhs, rhs } => write!(f, "{} < {}", Operand(lhs), Operand(rhs)),
+            LessThanOrEqualTo { lhs, rhs } => write!(f, "{} <= {}", Operand(lhs), Operand(rhs)),
+
+            // Equality
+            EqualTo { lhs, rhs } => write!(f, "{} == {}", Operand(lhs), Operand(rhs)),
+            NotEqualTo { lhs, rhs } => write!(f, "{} != {}", Operand(lhs), Operand(rhs)),
+
+            // Logic
+            And { lhs, rhs } => write!(f, "{} && {}", Operand(lhs), Operand(rhs)),
+            Or { lhs, rhs } => write!(f, "{} || {}", Operand(lhs), Operand(rhs)),
+            Not { expression } => write!(f, "!{}", Operand(expression)),
+
+            // Arithmetic
+            Add { lhs, rhs } => write!(f, "{} + {}", Operand(lhs), Operand(rhs)),
+            Subtract { lhs, rhs } => write!(f, "{} - {}", Operand(lhs), Operand(rhs)),
+
+            // Literal
+            Literal { value } => write!(f, "{value}"),
+
+            // Property
+            PropertyChanged { device_id, property_id } => write!(f, "changed({device_id}.{property_id})"),
+            PropertyValue { device_id, property_id } => write!(f, "{device_id}.{property_id}"),
+
+            // Temporal
+            Temporal { expression } => write!(f, "{expression}"),
+        }
+    }
+}
+
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub enum Value {
     Boolean(bool),
@@ -160,6 +213,19 @@ pub enum Value {
     Number(Number),
     String(String),
     None,
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Boolean(value) => write!(f, "{value}"),
+            Value::Color(color) => write!(f, "{color}"),
+            Value::DateTime(value) => f.write_str(&value.to_rfc3339()),
+            Value::Number(value) => write!(f, "{value}"),
+            Value::String(value) => write!(f, "{value:?}"),
+            Value::None => f.write_str("none"),
+        }
+    }
 }
 
 impl Value {
@@ -185,6 +251,20 @@ pub enum TemporalExpression {
     HasSunSet,   // Now >= sunset
     IsDaytime,   // Now between sunrise and sunset
     IsNighttime, // Now < sunrise or now > sunset
+}
+
+impl fmt::Display for TemporalExpression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            TemporalExpression::IsToday { when } => write!(f, "isToday({when})"),
+            TemporalExpression::IsBeforeTime { time } => write!(f, "isBeforeTime({time})"),
+            TemporalExpression::IsAfterTime { time } => write!(f, "isAfterTime({time})"),
+            TemporalExpression::HasSunRisen => write!(f, "hasSunRisen"),
+            TemporalExpression::HasSunSet => write!(f, "hasSunSet"),
+            TemporalExpression::IsDaytime => write!(f, "isDaytime"),
+            TemporalExpression::IsNighttime => write!(f, "isNighttime"),
+        }
+    }
 }
 
 pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, ExpressionError> {
@@ -1788,6 +1868,59 @@ mod tests {
             let problem = Problem::IncompatibleOperands { operator: "And", expected: "Boolean", actual: vec![ValueKind::Boolean, ValueKind::Number] };
 
             assert_eq!(problem.to_string(), "incompatible operands for 'And': expected Boolean, got boolean and number");
+        }
+    }
+
+    mod display {
+        use super::*;
+
+        fn literal(value: Value) -> Box<Expression> {
+            Box::new(Literal { value })
+        }
+
+        fn property_value(property_id: &str) -> Box<Expression> {
+            Box::new(PropertyValue { device_id: "lamp".to_string(), property_id: property_id.to_string() })
+        }
+
+        fn number(value: u64) -> Box<Expression> {
+            literal(Value::Number(Number::PositiveInt(value)))
+        }
+
+        #[rstest]
+        #[case::add(Add{ lhs: property_value("brightness"), rhs: number(10) }, "lamp.brightness + 10")]
+        #[case::subtract(Subtract{ lhs: property_value("brightness"), rhs: literal(Value::Number(Number::Float(0.5))) }, "lamp.brightness - 0.5")]
+        #[case::greater_than_or_equal_to(GreaterThanOrEqualTo{ lhs: property_value("brightness"), rhs: literal(Value::Number(Number::NegativeInt(-1))) }, "lamp.brightness >= -1")]
+        #[case::greater_than(GreaterThan{ lhs: property_value("brightness"), rhs: number(1) }, "lamp.brightness > 1")]
+        #[case::less_than(LessThan{ lhs: property_value("brightness"), rhs: number(1) }, "lamp.brightness < 1")]
+        #[case::less_than_or_equal_to(LessThanOrEqualTo{ lhs: property_value("brightness"), rhs: number(1) }, "lamp.brightness <= 1")]
+        #[case::equal_to(EqualTo{ lhs: property_value("on"), rhs: literal(Value::Boolean(true)) }, "lamp.on == true")]
+        #[case::not_equal_to(NotEqualTo{ lhs: property_value("button"), rhs: literal(Value::String("short_release".to_string())) }, "lamp.button != \"short_release\"")]
+        #[case::nested_logic(
+            And{ lhs: Box::new(Not { expression: property_value("on") }), rhs: Box::new(Or { lhs: literal(Value::Boolean(true)), rhs: literal(Value::None) }) },
+            "!lamp.on && (true || none)"
+        )]
+        #[case::repeated_and(
+            And{ lhs: Box::new(And { lhs: property_value("on"), rhs: property_value("motion") }), rhs: literal(Value::Boolean(true)) }, "(lamp.on && lamp.motion) && true"
+        )]
+        #[case::arithmetic_in_comparison(GreaterThan{ lhs: Box::new(Add { lhs: property_value("brightness"), rhs: number(10) }), rhs: number(50) }, "(lamp.brightness + 10) > 50")]
+        #[case::nested_arithmetic(Subtract{ lhs: property_value("brightness"), rhs: Box::new(Subtract { lhs: number(10), rhs: number(5) }) }, "lamp.brightness - (10 - 5)")]
+        #[case::not_of_binary(Not{ expression: Box::new(And { lhs: property_value("on"), rhs: property_value("motion") }) }, "!(lamp.on && lamp.motion)")]
+        #[case::not_of_not(Not{ expression: Box::new(Not { expression: property_value("on") }) }, "!!lamp.on")]
+        #[case::property_changed(PropertyChanged{ device_id: "lamp".to_string(), property_id: "button".to_string() }, "changed(lamp.button)")]
+        #[case::rgb_color(*literal(Value::Color(Color::RGB(255, 0, 0))), "RGB(255, 0, 0)")]
+        #[case::hex_color(*literal(Value::Color(Color::Hex("#ff0000".to_string()))), "#ff0000")]
+        #[case::cie_color(*literal(Value::Color(Color::CIE_xyY { xy: CartesianCoordinate::new(0.675, 0.322), brightness: 0.2126 })), "xyY(0.675, 0.322, 0.2126)"
+        )]
+        #[case::date_time(*literal(Value::DateTime(utc_with_ymd(2000, 8, 4))), "2000-08-04T00:00:00+00:00")]
+        #[case::is_today(Temporal{ expression: IsToday { when: WeekdayCondition::Weekend } }, "isToday(weekend)")]
+        #[case::is_before_time(Temporal{ expression: IsBeforeTime { time: Time { hour: 7, minute: 5 } } }, "isBeforeTime(07:05)")]
+        #[case::is_after_time(Temporal{ expression: IsAfterTime { time: Time { hour: 22, minute: 30 } } }, "isAfterTime(22:30)")]
+        #[case::has_sun_risen(Temporal{ expression: HasSunRisen }, "hasSunRisen")]
+        #[case::has_sun_set(Temporal{ expression: HasSunSet }, "hasSunSet")]
+        #[case::is_daytime(Temporal{ expression: IsDaytime }, "isDaytime")]
+        #[case::is_nighttime(Temporal{ expression: IsNighttime }, "isNighttime")]
+        fn formats_the_expression(#[case] expression: Expression, #[case] expected: &str) {
+            assert_eq!(expression.to_string(), expected);
         }
     }
 }

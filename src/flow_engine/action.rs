@@ -170,10 +170,11 @@ impl Action for ControlDeviceAction {
             let value = match evaluate(&property_command.value, context) {
                 Ok(value) => value,
                 Err(err) => {
-                    warn!(device_id = self.device_id, property_id, "⚠️ Evaluating expression... failed: {}", err);
+                    warn!(device_id = self.device_id, property_id, expression = %property_command.value, "⚠️ Evaluating expression... failed: {}", err);
                     continue;
                 }
             };
+            info!(device_id = self.device_id, property_id, "Evaluated '{}' → '{}'", property_command.value, value);
             let value = clamp_to_range(&self.device_id, property_id, property.as_ref(), value);
 
             let resolved_command = ResolvedPropertyCommand { value, transition: property_command.transition };

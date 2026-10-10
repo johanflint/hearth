@@ -24,12 +24,12 @@ pub async fn execute(flow: Arc<Flow>, node_id: Option<String>, context: &Context
     // continuation for edge-trigged expressions like PropertyChanged, whose "changed" fact is only true for
     // the original event.
     if node_id.is_none() {
-        debug!("⚖️ Evaluating trigger condition for flow...");
+        debug!(trigger = %flow.trigger(), "⚖️ Evaluating trigger condition for flow...");
         let result = evaluate(flow.trigger(), context);
         match result {
             Ok(Value::Boolean(true)) => debug!("⚖️ Evaluating trigger condition for flow... true"),
             Ok(result) => {
-                debug!(result = ?result, "⚖️ Evaluating trigger condition for flow... false, skipping execution");
+                debug!(%result, "⚖️ Evaluating trigger condition for flow... false, skipping execution");
                 return Ok(FlowExecutionReport::empty());
             }
             Err(error) => {
@@ -86,20 +86,20 @@ async fn execute_node<'a>(node: &'a FlowNode, context: &Context, scope: &mut Sco
             node.outgoing_nodes().first()
         }
         FlowNodeKind::Conditional(expression) => {
-            debug!(?expression, "⚖️ Evaluating conditional node '{}'...", node.id());
+            debug!(%expression, "⚖️ Evaluating conditional node '{}'...", node.id());
             let result = evaluate(expression, context);
             match result {
                 Ok(value) => {
                     let flow_link = node.outgoing_nodes().iter().find(|link| *link.value() == value);
                     if flow_link.is_none() {
-                        error!(expression_result = ?value, "⚖️ Evaluating conditional node '{}'... failed, next node not found", node.id());
+                        error!(expression_result = %value, "⚖️ Evaluating conditional node '{}'... failed, next node not found", node.id());
                         return Err(FlowEngineError::NoMatchingFlowLink {
                             node_id: node.id().to_string(),
                             evaluated_value: value,
                         });
                     }
 
-                    info!(result = ?value, "⚖️ Evaluating conditional node '{}'... OK, link found", node.id());
+                    info!(result = %value, "⚖️ Evaluating conditional node '{}'... OK, link found", node.id());
                     flow_link
                 }
                 Err(error) => {
