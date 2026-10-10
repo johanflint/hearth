@@ -502,4 +502,24 @@ mod tests {
 
         assert_eq!(command_map, None);
     }
+
+    #[test]
+    fn deserialize_control_device_action_error_names_the_property() {
+        let json = serde_json::json!({
+            "type": "controlDevice",
+            "deviceId": "42",
+            "property": {
+                "on": {
+                    "type": "boolean",
+                    "value": true
+                }
+            }
+        });
+
+        let error = Box::<dyn Action>::deserialize(&json).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "property.on.value: invalid type: boolean `true`, expected internally tagged enum Expression"
+        );
+    }
 }
