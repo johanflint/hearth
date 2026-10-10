@@ -9,6 +9,8 @@ use crate::store::StoreSnapshot;
 use chrono::{DateTime, NaiveTime, Utc};
 use serde::Deserialize;
 use std::cmp::Ordering;
+use std::fmt;
+use std::fmt::Formatter;
 use thiserror::Error;
 use tracing::warn;
 
@@ -29,6 +31,10 @@ pub enum Expression {
     And { lhs: Box<Expression>, rhs: Box<Expression> },
     Or { lhs: Box<Expression>, rhs: Box<Expression> },
     Not { expression: Box<Expression> },
+
+    // Arithmetic
+    Add { lhs: Box<Expression>, rhs: Box<Expression> },
+    Subtract { lhs: Box<Expression>, rhs: Box<Expression> },
 
     // Literal
     Literal { value: Value },
@@ -80,6 +86,12 @@ impl Expression {
                 ValueKind::Boolean => ValueKind::Boolean,
                 kind => return Err(self.incompatible_operands("Boolean", vec![kind])),
             },
+            Add { lhs, rhs } | Subtract { lhs, rhs } => {
+                match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
+                    (ValueKind::Number, ValueKind::Number) => ValueKind::Number,
+                    (lhs, rhs) => return Err(self.incompatible_operands("Number", vec![lhs, rhs])),
+                }
+            },
             Literal { value } => value.kind(),
             PropertyChanged { .. } => ValueKind::Boolean,
             PropertyValue { device_id, property_id } => {
@@ -105,13 +117,15 @@ impl Expression {
             And { .. } => "And",
             Or { .. } => "Or",
             Not { .. } => "Not",
+            Add { .. } => "Add",
+            Subtract { .. } => "Subtract",
             Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => "Unknown",
         };
 
         Problem::IncompatibleOperands { operator, expected, actual }
     }
 
-    /// Visits this expression and all itssub-expressions depth-first, left before right
+    /// Visits this expression and all its sub-expressions depth-first, left before right
     pub fn walk(&self) -> impl Iterator<Item=&Expression> + '_ {
         use Expression::*;
         let mut stack = vec![self];
@@ -125,7 +139,9 @@ impl Expression {
                 | EqualTo { lhs, rhs }
                 | NotEqualTo { lhs, rhs }
                 | And { lhs, rhs }
-                | Or { lhs, rhs } => {
+                | Or { lhs, rhs }
+                | Add { lhs, rhs }
+                | Subtract { lhs, rhs } => {
                     stack.push(rhs);
                     stack.push(lhs);
                 }
@@ -138,6 +154,57 @@ impl Expression {
     }
 }
 
+// Wraps nested binary expressions in parentheses so the output never relies on operator precedence
+struct Operand<'a>(&'a Expression);
+
+impl fmt::Display for Operand<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        use Expression::*;
+
+        match self.0 {
+            Not { .. } | Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => write!(f, "{}", self.0),
+            _ => write!(f, "({})", self.0),
+        }
+    }
+}
+
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        use Expression::*;
+
+        match self {
+            // Comparison
+            GreaterThanOrEqualTo { lhs, rhs } => write!(f, "{} >= {}", Operand(lhs), Operand(rhs)),
+            GreaterThan { lhs, rhs } => write!(f, "{} > {}", Operand(lhs), Operand(rhs)),
+            LessThan { lhs, rhs } => write!(f, "{} < {}", Operand(lhs), Operand(rhs)),
+            LessThanOrEqualTo { lhs, rhs } => write!(f, "{} <= {}", Operand(lhs), Operand(rhs)),
+
+            // Equality
+            EqualTo { lhs, rhs } => write!(f, "{} == {}", Operand(lhs), Operand(rhs)),
+            NotEqualTo { lhs, rhs } => write!(f, "{} != {}", Operand(lhs), Operand(rhs)),
+
+            // Logic
+            And { lhs, rhs } => write!(f, "{} && {}", Operand(lhs), Operand(rhs)),
+            Or { lhs, rhs } => write!(f, "{} || {}", Operand(lhs), Operand(rhs)),
+            Not { expression } => write!(f, "!{}", Operand(expression)),
+
+            // Arithmetic
+            Add { lhs, rhs } => write!(f, "{} + {}", Operand(lhs), Operand(rhs)),
+            Subtract { lhs, rhs } => write!(f, "{} - {}", Operand(lhs), Operand(rhs)),
+
+            // Literal
+            Literal { value } => write!(f, "{value}"),
+
+            // Property
+            PropertyChanged { device_id, property_id } => write!(f, "changed({device_id}.{property_id})"),
+            PropertyValue { device_id, property_id } => write!(f, "{device_id}.{property_id}"),
+
+            // Temporal
+            Temporal { expression } => write!(f, "{expression}"),
+        }
+    }
+}
+
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub enum Value {
     Boolean(bool),
@@ -146,6 +213,19 @@ pub enum Value {
     Number(Number),
     String(String),
     None,
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Boolean(value) => write!(f, "{value}"),
+            Value::Color(color) => write!(f, "{color}"),
+            Value::DateTime(value) => f.write_str(&value.to_rfc3339()),
+            Value::Number(value) => write!(f, "{value}"),
+            Value::String(value) => write!(f, "{value:?}"),
+            Value::None => f.write_str("none"),
+        }
+    }
 }
 
 impl Value {
@@ -171,6 +251,20 @@ pub enum TemporalExpression {
     HasSunSet,   // Now >= sunset
     IsDaytime,   // Now between sunrise and sunset
     IsNighttime, // Now < sunrise or now > sunset
+}
+
+impl fmt::Display for TemporalExpression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            TemporalExpression::IsToday { when } => write!(f, "isToday({when})"),
+            TemporalExpression::IsBeforeTime { time } => write!(f, "isBeforeTime({time})"),
+            TemporalExpression::IsAfterTime { time } => write!(f, "isAfterTime({time})"),
+            TemporalExpression::HasSunRisen => write!(f, "hasSunRisen"),
+            TemporalExpression::HasSunSet => write!(f, "hasSunSet"),
+            TemporalExpression::IsDaytime => write!(f, "isDaytime"),
+            TemporalExpression::IsNighttime => write!(f, "isNighttime"),
+        }
+    }
 }
 
 pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, ExpressionError> {
@@ -238,6 +332,26 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 operand: "Not",
                 expected: BOOLEAN,
                 actual: value.kind(),
+            }),
+        },
+
+        // Arithmetic
+        Add { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
+            (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
+                operand: "Add",
+                expected: NUMBER,
+                actual_lhs: lhs.kind(),
+                actual_rhs: rhs.kind(),
+            }),
+        },
+        Subtract { lhs, rhs } => match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
+            (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
+                operand: "Subtract",
+                expected: NUMBER,
+                actual_lhs: lhs.kind(),
+                actual_rhs: rhs.kind(),
             }),
         },
 
@@ -399,6 +513,7 @@ fn compare(lhs: &Expression, rhs: &Expression, cmp: fn(Ordering) -> bool, contex
 }
 
 const BOOLEAN: &[ValueKind] = &[ValueKind::Boolean];
+const NUMBER: &[ValueKind] = &[ValueKind::Number];
 const COMPARABLE: &[ValueKind] = &[ValueKind::Number, ValueKind::DateTime];
 const EQUATABLE: &[ValueKind] = &[ValueKind::Boolean, ValueKind::Color, ValueKind::DateTime, ValueKind::Enum, ValueKind::None, ValueKind::Number];
 
@@ -1265,6 +1380,56 @@ mod tests {
     }
 
     #[rstest]
+    #[case::positive_ints(Number::PositiveInt(3), Number::PositiveInt(2), Number::PositiveInt(5))]
+    #[case::negative_result(Number::PositiveInt(3), Number::NegativeInt(-5), Number::NegativeInt(-2))]
+    #[case::float(Number::PositiveInt(3), Number::Float(0.5), Number::Float(3.5))]
+    fn add(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: Number) {
+        let result = evaluate(
+            &Add {
+                lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                rhs: Box::new(Literal { value: Value::Number(rhs) }),
+            },
+            &Context::default(),
+        )
+            .unwrap();
+        assert_eq!(result, Value::Number(expected));
+    }
+
+    #[rstest]
+    #[case::positive_ints(Number::PositiveInt(3), Number::PositiveInt(2), Number::PositiveInt(1))]
+    #[case::negative_result(Number::PositiveInt(3), Number::PositiveInt(5), Number::NegativeInt(-2))]
+    #[case::float(Number::PositiveInt(3), Number::Float(0.5), Number::Float(2.5))]
+    fn subtract(#[case] lhs: Number, #[case] rhs: Number, #[case] expected: Number) {
+        let result = evaluate(
+            &Subtract {
+                lhs: Box::new(Literal { value: Value::Number(lhs) }),
+                rhs: Box::new(Literal { value: Value::Number(rhs) }),
+            },
+            &Context::default(),
+        )
+            .unwrap();
+        assert_eq!(result, Value::Number(expected));
+    }
+
+    #[rstest]
+    #[case::add_boolean(
+        Add{ lhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }), rhs: Box::new(Literal { value: Value::Boolean(true) }) },
+        OperandTypeMismatch{ operand: "Add", expected: NUMBER, actual_lhs: ValueKind::Number, actual_rhs: ValueKind::Boolean }
+    )]
+    #[case::add_none(
+        Add{ lhs: Box::new(Literal { value: Value::None }), rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }) },
+        OperandTypeMismatch{ operand: "Add", expected: NUMBER, actual_lhs: ValueKind::None, actual_rhs: ValueKind::Number }
+    )]
+    #[case::subtract_string(
+        Subtract{ lhs: Box::new(Literal { value: Value::String("low".to_string()) }), rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }) },
+        OperandTypeMismatch{ operand: "Subtract", expected: NUMBER, actual_lhs: ValueKind::Enum, actual_rhs: ValueKind::Number }
+    )]
+    fn arithmetic_mismatch(#[case] expression: Expression, #[case] expected: ExpressionError) {
+        let result = evaluate(&expression, &Context::default()).unwrap_err();
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
     #[case::rgb(Color::RGB(255, 0, 0))]
     #[case::hex(Color::Hex("#ff0000".to_string()))]
     #[case::cie_xyy(cie_xyy(0.675, 0.322, 0.2126))]
@@ -1574,6 +1739,15 @@ mod tests {
     }
 
     #[rstest]
+    #[case::add(Add{ lhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }), rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(2)) }) })]
+    #[case::subtract(Subtract{ lhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }), rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(2)) }) })]
+    fn walk_visits_both_operands_of_an_arithmetic_expression(#[case] expression: Expression) {
+        let visited: Vec<Option<&Value>> = expression.walk().map(Expression::constant_value).collect();
+
+        assert_eq!(visited, vec![None, Some(&Value::Number(Number::PositiveInt(1))), Some(&Value::Number(Number::PositiveInt(2)))]);
+    }
+
+    #[rstest]
     #[case::number_literal(Literal{ value: Value::Number(Number::PositiveInt(42)) }, Some(Value::Number(Number::PositiveInt(42))))]
     #[case::boolean_literal(Literal{ value: Value::Boolean(true) }, Some(Value::Boolean(true)))]
     #[case::property_value(PropertyValue{ device_id: "light".to_string(), property_id: "brightness".to_string() }, None)]
@@ -1626,6 +1800,12 @@ mod tests {
         #[case::and(And{ lhs: literal(Value::Boolean(true)), rhs: property_value(DEVICE_ID, "on") }, ValueKind::Boolean)]
         #[case::or(Or{ lhs: literal(Value::Boolean(true)), rhs: literal(Value::Boolean(false)) }, ValueKind::Boolean)]
         #[case::not(Not{ expression: property_value(DEVICE_ID, "on") }, ValueKind::Boolean)]
+        #[case::add(Add{ lhs: property_value(DEVICE_ID, "brightness"), rhs: literal(Value::Number(Number::PositiveInt(10))) }, ValueKind::Number)]
+        #[case::subtract(Subtract{ lhs: property_value(DEVICE_ID, "brightness"), rhs: literal(Value::Number(Number::Float(0.5))) }, ValueKind::Number)]
+        #[case::nested_arithmetic(
+            GreaterThan{ lhs: Box::new(Add { lhs: property_value(DEVICE_ID, "brightness"), rhs: literal(Value::Number(Number::PositiveInt(10))) }), rhs: literal(Value::Number(Number::PositiveInt(50))) },
+            ValueKind::Boolean
+        )]
         fn infers_the_kind(#[case] expression: Expression, #[case] expected: ValueKind) {
             assert_eq!(expression.value_kind(&snapshot()), Ok(expected));
         }
@@ -1663,6 +1843,14 @@ mod tests {
             And{ lhs: Box::new(Not { expression: literal(Value::Number(Number::PositiveInt(1))) }), rhs: literal(Value::Boolean(true)) },
             Problem::IncompatibleOperands{ operator: "Not", expected: "Boolean", actual: vec![ValueKind::Number] }
         )]
+        #[case::add_a_boolean(
+            Add{ lhs: property_value(DEVICE_ID, "brightness"), rhs: property_value(DEVICE_ID, "on") },
+            Problem::IncompatibleOperands{ operator: "Add", expected: "Number", actual: vec![ValueKind::Number, ValueKind::Boolean] }
+        )]
+        #[case::subtract_a_date_time(
+            Subtract{ lhs: literal(Value::DateTime(utc_with_ymd(2000, 8, 4))), rhs: literal(Value::Number(Number::PositiveInt(1))) },
+            Problem::IncompatibleOperands{ operator: "Subtract", expected: "Number", actual: vec![ValueKind::DateTime, ValueKind::Number] }
+        )]
         #[case::unknown_device(
             *property_value("missing", "on"),
             Problem::UnknownDevice { device_id: "missing".to_string() }
@@ -1680,6 +1868,59 @@ mod tests {
             let problem = Problem::IncompatibleOperands { operator: "And", expected: "Boolean", actual: vec![ValueKind::Boolean, ValueKind::Number] };
 
             assert_eq!(problem.to_string(), "incompatible operands for 'And': expected Boolean, got boolean and number");
+        }
+    }
+
+    mod display {
+        use super::*;
+
+        fn literal(value: Value) -> Box<Expression> {
+            Box::new(Literal { value })
+        }
+
+        fn property_value(property_id: &str) -> Box<Expression> {
+            Box::new(PropertyValue { device_id: "lamp".to_string(), property_id: property_id.to_string() })
+        }
+
+        fn number(value: u64) -> Box<Expression> {
+            literal(Value::Number(Number::PositiveInt(value)))
+        }
+
+        #[rstest]
+        #[case::add(Add{ lhs: property_value("brightness"), rhs: number(10) }, "lamp.brightness + 10")]
+        #[case::subtract(Subtract{ lhs: property_value("brightness"), rhs: literal(Value::Number(Number::Float(0.5))) }, "lamp.brightness - 0.5")]
+        #[case::greater_than_or_equal_to(GreaterThanOrEqualTo{ lhs: property_value("brightness"), rhs: literal(Value::Number(Number::NegativeInt(-1))) }, "lamp.brightness >= -1")]
+        #[case::greater_than(GreaterThan{ lhs: property_value("brightness"), rhs: number(1) }, "lamp.brightness > 1")]
+        #[case::less_than(LessThan{ lhs: property_value("brightness"), rhs: number(1) }, "lamp.brightness < 1")]
+        #[case::less_than_or_equal_to(LessThanOrEqualTo{ lhs: property_value("brightness"), rhs: number(1) }, "lamp.brightness <= 1")]
+        #[case::equal_to(EqualTo{ lhs: property_value("on"), rhs: literal(Value::Boolean(true)) }, "lamp.on == true")]
+        #[case::not_equal_to(NotEqualTo{ lhs: property_value("button"), rhs: literal(Value::String("short_release".to_string())) }, "lamp.button != \"short_release\"")]
+        #[case::nested_logic(
+            And{ lhs: Box::new(Not { expression: property_value("on") }), rhs: Box::new(Or { lhs: literal(Value::Boolean(true)), rhs: literal(Value::None) }) },
+            "!lamp.on && (true || none)"
+        )]
+        #[case::repeated_and(
+            And{ lhs: Box::new(And { lhs: property_value("on"), rhs: property_value("motion") }), rhs: literal(Value::Boolean(true)) }, "(lamp.on && lamp.motion) && true"
+        )]
+        #[case::arithmetic_in_comparison(GreaterThan{ lhs: Box::new(Add { lhs: property_value("brightness"), rhs: number(10) }), rhs: number(50) }, "(lamp.brightness + 10) > 50")]
+        #[case::nested_arithmetic(Subtract{ lhs: property_value("brightness"), rhs: Box::new(Subtract { lhs: number(10), rhs: number(5) }) }, "lamp.brightness - (10 - 5)")]
+        #[case::not_of_binary(Not{ expression: Box::new(And { lhs: property_value("on"), rhs: property_value("motion") }) }, "!(lamp.on && lamp.motion)")]
+        #[case::not_of_not(Not{ expression: Box::new(Not { expression: property_value("on") }) }, "!!lamp.on")]
+        #[case::property_changed(PropertyChanged{ device_id: "lamp".to_string(), property_id: "button".to_string() }, "changed(lamp.button)")]
+        #[case::rgb_color(*literal(Value::Color(Color::RGB(255, 0, 0))), "RGB(255, 0, 0)")]
+        #[case::hex_color(*literal(Value::Color(Color::Hex("#ff0000".to_string()))), "#ff0000")]
+        #[case::cie_color(*literal(Value::Color(Color::CIE_xyY { xy: CartesianCoordinate::new(0.675, 0.322), brightness: 0.2126 })), "xyY(0.675, 0.322, 0.2126)"
+        )]
+        #[case::date_time(*literal(Value::DateTime(utc_with_ymd(2000, 8, 4))), "2000-08-04T00:00:00+00:00")]
+        #[case::is_today(Temporal{ expression: IsToday { when: WeekdayCondition::Weekend } }, "isToday(weekend)")]
+        #[case::is_before_time(Temporal{ expression: IsBeforeTime { time: Time { hour: 7, minute: 5 } } }, "isBeforeTime(07:05)")]
+        #[case::is_after_time(Temporal{ expression: IsAfterTime { time: Time { hour: 22, minute: 30 } } }, "isAfterTime(22:30)")]
+        #[case::has_sun_risen(Temporal{ expression: HasSunRisen }, "hasSunRisen")]
+        #[case::has_sun_set(Temporal{ expression: HasSunSet }, "hasSunSet")]
+        #[case::is_daytime(Temporal{ expression: IsDaytime }, "isDaytime")]
+        #[case::is_nighttime(Temporal{ expression: IsNighttime }, "isNighttime")]
+        fn formats_the_expression(#[case] expression: Expression, #[case] expected: &str) {
+            assert_eq!(expression.to_string(), expected);
         }
     }
 }
