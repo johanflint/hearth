@@ -123,12 +123,12 @@ impl HueController {
                         ValidatedValue::Valid(value) => value.as_u64(),
                         ValidatedValue::Clamped(value, PropertyError::ValueTooSmall) => {
                             #[rustfmt::skip]
-                                        warn!(device_id = device.id, ?color_temperature_property, "🌈 Color temperature value of '{}K' is too small, clamped to the minimum valid value of '{}K'", color_temperature, value);
+                            warn!(device_id = device.id, ?color_temperature_property, "🌈 Color temperature value of '{}K' is too small, clamped to the minimum valid value of '{}K'", color_temperature, value);
                             value.as_u64()
                         }
                         ValidatedValue::Clamped(value, PropertyError::ValueTooLarge) => {
                             #[rustfmt::skip]
-                                        warn!(device_id = device.id, ?color_temperature_property, "🌈 Color temperature value of '{}K' is too large, clamped to the maximim valid value of '{}K'", color_temperature, value);
+                            warn!(device_id = device.id, ?color_temperature_property, "🌈 Color temperature value of '{}K' is too large, clamped to the maximim valid value of '{}K'", color_temperature, value);
                             value.as_u64()
                         }
                         ValidatedValue::Clamped(value, error) => {
