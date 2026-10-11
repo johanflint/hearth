@@ -88,7 +88,7 @@ fn problem_code(problem: &Problem) -> &'static str {
         Problem::UnknownProperty { .. } => "unknownProperty",
         Problem::ReadOnlyProperty { .. } => "readonlyProperty",
         Problem::IncompatibleValue { .. } => "incompatibleValue",
-        Problem::IncompatibleOperands { .. } => "incompatibleValue",
+        Problem::IncompatibleOperands { .. } => "incompatibleOperands",
         Problem::ValueTooSmall { .. } => "valueTooSmall",
         Problem::ValueTooLarge { .. } => "valueTooLarge",
     }

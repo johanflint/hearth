@@ -16,7 +16,6 @@
         "deviceId": "42",
         "property": {
           "fan": {
-            "operation": "set",
             "value": {
               "type": "literal",
               "value": true

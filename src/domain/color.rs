@@ -1,6 +1,8 @@
 use crate::domain::color::Color::{CIE_xyY, Hex, RGB};
 use crate::domain::property::CartesianCoordinate;
 use ordered_float::OrderedFloat;
+use std::fmt;
+use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
 use thiserror::Error;
 
@@ -77,6 +79,16 @@ impl Hash for Color {
                 xy.hash(state);
                 OrderedFloat(*brightness).hash(state);
             }
+        }
+    }
+}
+
+impl fmt::Display for Color {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            RGB(r, g, b) => write!(f, "RGB({r}, {g}, {b})"),
+            Hex(hex) => write!(f, "{hex}"),
+            CIE_xyY { xy, brightness } => write!(f, "xyY({}, {}, {brightness})", xy.x(), xy.y()),
         }
     }
 }

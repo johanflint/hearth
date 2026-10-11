@@ -1,6 +1,7 @@
 use crate::flow_engine::action::Action;
 use crate::flow_engine::{Expression, Schedule, Value};
-use serde::Deserialize;
+use serde::de::Error;
+use serde::{Deserialize, Deserializer};
 use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
@@ -9,6 +10,7 @@ pub struct SerializedFlow {
     pub(crate) name: String,
     pub(crate) schedule: Option<Schedule>,
     pub(crate) trigger: Option<Expression>,
+    #[serde(deserialize_with = "deserialize_nodes")]
     pub(crate) nodes: Vec<SerializedFlowNode>,
 }
 
@@ -42,6 +44,23 @@ impl SerializedFlowNode {
             SerializedFlowNode::SleepNode(node) => vec![&node.outgoing_node],
         }
     }
+}
+
+// Prefixes errors with the node id, asserde loses track of where in the json an error occurred
+fn deserialize_nodes<'de, D>(deserializer: D) -> Result<Vec<SerializedFlowNode>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let nodes = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    nodes.iter()
+        .enumerate()
+        .map(|(index, node)| {
+            SerializedFlowNode::deserialize(node).map_err(|e| match node.get("id").and_then(serde_json::Value::as_str) {
+                Some(id) => Error::custom(format!("node '{id}': {e}")),
+                None => Error::custom(format!("node at index {index}: {e}")),
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +113,7 @@ mod tests {
     use crate::flow_engine::Expression::{EqualTo, Literal};
     use crate::flow_engine::Value;
     use crate::flow_engine::action::LogAction;
+    use serde_json::json;
 
     #[tokio::test]
     async fn test_serialized_flow() {
@@ -180,5 +200,35 @@ mod tests {
         // As ActionFlowNode's action cannot implement PartialEq, use debug print for comparison
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
         println!("{:?}", flow);
+    }
+
+    #[test]
+    fn deserialize_error_names_the_node_id() {
+        let json = json!({
+            "id": "01K7KK6H5R7Y72QJEJSJQCKMRQ",
+            "name": "flow",
+            "nodes": [
+                { "type": "startNode", "id": "startNode", "outgoingNode": "sleepNode" },
+                { "type": "sleepNode", "id": "sleepNode", "outgoingNode": "endNode", "duration": "forever" },
+            ]
+        });
+
+        let error = SerializedFlow::deserialize(&json).unwrap_err();
+        assert!(error.to_string().starts_with("node 'sleepNode': "), "got {error}");
+    }
+
+    #[test]
+    fn deserialize_error_names_the_node_index_without_an_id() {
+        let json = json!({
+            "id": "01K7KK6H5R7Y72QJEJSJQCKMRQ",
+            "name": "flow",
+            "nodes": [
+                { "type": "startNode", "id": "startNode", "outgoingNode": "endNode" },
+                { "type": "endNode" },
+            ]
+        });
+
+        let error = SerializedFlow::deserialize(&json).unwrap_err();
+        assert_eq!(error.to_string(), "node at index 1: missing field `id`");
     }
 }

@@ -187,7 +187,6 @@ mod tests {
     use crate::flow_engine::Expression::Literal;
     use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
-    use crate::flow_engine::property_command::Operation;
     use crate::test_support::property_command;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -355,7 +354,7 @@ mod tests {
             vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(
                 "42".to_string(),
-                HashMap::from([("fan".to_string(), property_command(Operation::Set, Value::Boolean(true)))]),
+                HashMap::from([("fan".to_string(), property_command(Value::Boolean(true)))]),
             )))),
         );
 
