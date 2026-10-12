@@ -1,3 +1,4 @@
+use crate::claim_registry::{Claim, ClaimOrigin};
 use crate::domain::commands::Command;
 use crate::domain::device::Device;
 use crate::domain::{ClaimMode, GeoLocation, controller_registry};
@@ -27,13 +28,22 @@ struct Proposal<T> {
 type ProposalMap = HashMap<(DeviceId, PropertyId), Vec<Proposal<ResolvedPropertyCommand>>>;
 type ClaimProposalMap = HashMap<DeviceId, Vec<Proposal<ClaimMode>>>;
 
+// The commands for one device after merging the command maps of all flows
+#[derive(Default, PartialEq, Debug)]
+pub struct DispatchCommand {
+    pub claim: Option<Claim>,
+    pub properties: HashMap<PropertyId, ResolvedPropertyCommand>,
+}
+
+pub type DispatchMap = HashMap<DeviceId, DispatchCommand>;
+
 #[instrument(skip_all, fields(flow = flow.name(), node_id = node_id.as_deref().unwrap_or("<start>")))]
 pub async fn execute_flow(flow: Arc<Flow>, node_id: Option<String>, snapshot: StoreSnapshot, tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
     let context = Context::builder().snapshot(snapshot.clone()).location(geo_location).build();
     let result = flow_engine::execute(flow.clone(), node_id, &context, tx).await;
 
-    let command_map = merge_command_maps(vec![(flow, result)]);
-    dispatch_commands(&snapshot, command_map).await;
+    let dispatch_map = merge_command_maps(vec![(flow, result)]);
+    dispatch_commands(&snapshot, dispatch_map).await;
 }
 
 #[instrument(skip_all)]
@@ -46,11 +56,11 @@ pub async fn execute_flows(flows: Vec<Arc<Flow>>, snapshot: StoreSnapshot, chang
     .collect::<Vec<_>>()
     .await;
 
-    let command_map = merge_command_maps(results);
-    dispatch_commands(&snapshot, command_map).await;
+    let dispatch_map = merge_command_maps(results);
+    dispatch_commands(&snapshot, dispatch_map).await;
 }
 
-fn merge_command_maps(reports: Vec<(Arc<Flow>, Result<FlowExecutionReport, FlowEngineError>)>) -> CommandMap {
+fn merge_command_maps(reports: Vec<(Arc<Flow>, Result<FlowExecutionReport, FlowEngineError>)>) -> DispatchMap {
     let mut proposals: ProposalMap = HashMap::new();
     let mut claim_proposals: ClaimProposalMap = HashMap::new();
 
@@ -73,7 +83,7 @@ fn merge_command_maps(reports: Vec<(Arc<Flow>, Result<FlowExecutionReport, FlowE
         }
     }
 
-    let mut merged_map: CommandMap = HashMap::new();
+    let mut merged_map: DispatchMap = HashMap::new();
     for ((device_id, property_id), writes) in proposals {
         let Some(command) = agreed_value(&writes) else {
             log_conflict(&device_id, &property_id, &writes);
@@ -83,11 +93,12 @@ fn merge_command_maps(reports: Vec<(Arc<Flow>, Result<FlowExecutionReport, FlowE
     }
 
     for (device_id, claims) in claim_proposals {
-        let Some(claim) = agreed_value(&claims) else {
+        let Some(mode) = agreed_value(&claims) else {
             log_claim_conflict(&device_id, &claims);
             continue;
         };
-        merged_map.entry(device_id).or_default().claim = Some(*claim);
+        let origin = ClaimOrigin::Flows(flow_ids(&claims));
+        merged_map.entry(device_id).or_default().claim = Some(Claim { mode: *mode, origin });
     }
 
     merged_map
@@ -113,11 +124,17 @@ fn describe<T: Debug>(proposals: &[Proposal<T>]) -> Vec<String> {
     descriptions
 }
 
-async fn dispatch_commands(snapshot: &StoreSnapshot, command_map: CommandMap) {
-    for (device_id, device_command) in command_map {
+fn flow_ids<T>(proposals: &[Proposal<T>]) -> Vec<String> {
+    let mut flow_ids: Vec<String> = proposals.iter().map(|p| p.origin.id().to_string()).collect();
+    flow_ids.sort_unstable();
+    flow_ids
+}
+
+async fn dispatch_commands(snapshot: &StoreSnapshot, dispatch_map: DispatchMap) {
+    for (device_id, device_command) in dispatch_map {
         if let Some(device) = snapshot.devices.get(&device_id) {
-            if !claim_registry::authorize(&device_id, device_command.claim) {
-                info!(device_id, "Device '{}' is claimed, skipping writes without a claim", device.name);
+            if let Err(origin) = claim_registry::authorize(&device_id, device_command.claim) {
+                info!(device_id, claimed_by = %origin, "Device '{}' is claimed by {}, skipping writes without a claim", device.name, origin);
                 continue;
             }
 
@@ -195,8 +212,13 @@ mod tests {
         Arc::new(Flow::new(id.to_string(), id.to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap())
     }
 
-    fn device_command(properties: HashMap<String, ResolvedPropertyCommand>) -> DeviceCommand {
-        DeviceCommand { claim: None, properties }
+    fn device_command(properties: HashMap<String, ResolvedPropertyCommand>) -> DispatchCommand {
+        DispatchCommand { claim: None, properties }
+    }
+
+    fn flow_claim(mode: ClaimMode, flow_ids: &[&str]) -> Option<Claim> {
+        let flow_ids = flow_ids.iter().map(|id| id.to_string()).collect();
+        Some(Claim { mode, origin: ClaimOrigin::Flows(flow_ids) })
     }
 
     fn on_command() -> HashMap<String, ResolvedPropertyCommand> {
@@ -329,7 +351,7 @@ mod tests {
 
         let result = merge_command_maps(vec![(create_flow("flow"), Ok(report))]);
 
-        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), DeviceCommand { claim: Some(claim), properties: on_command() })]));
+        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), DispatchCommand { claim: flow_claim(claim, &["flow"]), properties: on_command() })]));
     }
 
     #[test]
@@ -338,17 +360,20 @@ mod tests {
 
         let result = merge_command_maps(vec![(create_flow("flow"), Ok(report))]);
 
-        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), DeviceCommand { claim: Some(ClaimMode::Release), properties: HashMap::new() })]));
+        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), DispatchCommand { claim: flow_claim(ClaimMode::Release, &["flow"]), properties: HashMap::new() })]));
     }
 
     #[test]
-    fn merge_command_maps_equal_claims_deduplicate() {
+    fn merge_command_maps_equal_claims_deduplicate_and_keep_the_sorted_origins() {
         let report = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Claim), on_command());
         let report2 = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Claim), on_command());
 
-        let result = merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("other_flow"), Ok(report)), (create_flow("flow"), Ok(report2))]);
 
-        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), DeviceCommand { claim: Some(ClaimMode::Claim), properties: on_command() })]));
+        assert_eq!(
+            result,
+            HashMap::from([(DEVICE_ID.to_string(), DispatchCommand { claim: flow_claim(ClaimMode::Claim, &["flow", "other_flow"]), properties: on_command() })])
+        );
     }
 
     #[test]
@@ -358,7 +383,7 @@ mod tests {
 
         let result = merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
 
-        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), DeviceCommand { claim: Some(ClaimMode::Claim), properties: on_command() })]));
+        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), DispatchCommand { claim: flow_claim(ClaimMode::Claim, &["flow"]), properties: on_command() })]));
     }
 
     #[test]
@@ -391,8 +416,8 @@ mod tests {
         assert_eq!(
             result,
             HashMap::from([
-                (DEVICE_ID.to_string(), DeviceCommand { claim: Some(ClaimMode::Claim), properties: HashMap::new() }),
-                (DEVICE2_ID.to_string(), DeviceCommand { claim: Some(ClaimMode::Release), properties: HashMap::new() }),
+                (DEVICE_ID.to_string(), DispatchCommand { claim: flow_claim(ClaimMode::Claim, &["flow"]), properties: HashMap::new() }),
+                (DEVICE2_ID.to_string(), DispatchCommand { claim: flow_claim(ClaimMode::Release, &["other_flow"]), properties: HashMap::new() }),
             ])
         );
     }
