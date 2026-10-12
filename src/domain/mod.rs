@@ -1,3 +1,4 @@
+mod claim_mode;
 pub mod color;
 pub mod commands;
 pub mod controller;
@@ -15,6 +16,7 @@ mod battery_state;
 mod validator;
 
 pub use battery_state::BatteryState;
+pub use claim_mode::ClaimMode;
 pub use connectivity::Connectivity;
 pub use geo_location::GeoLocation;
 pub use number::Number;

@@ -1,3 +1,4 @@
+mod claim_mode_deserializer;
 mod color_deserializer;
 mod factory;
 mod schedule_deserializer;
