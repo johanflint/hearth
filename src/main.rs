@@ -21,6 +21,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 mod api;
 mod app_config;
+mod claim_registry;
 mod domain;
 mod execute_flows;
 mod extensions;

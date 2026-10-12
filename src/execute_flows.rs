@@ -1,19 +1,19 @@
 use crate::domain::commands::Command;
 use crate::domain::device::Device;
 use crate::domain::{ClaimMode, GeoLocation, controller_registry};
-use crate::flow_engine;
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::flow_engine::{CommandMap, Context, FlowEngineError, FlowExecutionReport};
 use crate::scheduler::SchedulerCommand;
 use crate::store::{PropertyChange, StoreSnapshot};
+use crate::{claim_registry, flow_engine};
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
-use tracing::{instrument, warn};
+use tracing::{info, instrument, warn};
 
 type DeviceId = String;
 type PropertyId = String;
@@ -116,6 +116,11 @@ fn describe<T: Debug>(proposals: &[Proposal<T>]) -> Vec<String> {
 async fn dispatch_commands(snapshot: &StoreSnapshot, command_map: CommandMap) {
     for (device_id, device_command) in command_map {
         if let Some(device) = snapshot.devices.get(&device_id) {
+            if !claim_registry::authorize(&device_id, device_command.claim) {
+                info!(device_id, "Device '{}' is claimed, skipping writes without a claim", device.name);
+                continue;
+            }
+
             let properties = filter_flow_editable_properties(device, device_command.properties);
             if properties.is_empty() {
                 continue;
