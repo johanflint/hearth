@@ -127,8 +127,8 @@ impl Problem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::Number;
     use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
+    use crate::domain::Number;
     use crate::flow_engine::Expression::*;
     use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
@@ -174,7 +174,7 @@ mod tests {
 
     fn control_device_with(device_id: &str, property_id: &str, value: PropertyCommand) -> FlowNodeKind {
         let property = HashMap::from([(property_id.to_string(), value)]);
-        FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(device_id.to_string(), property))))
+        FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(device_id.to_string(), None, property))))
     }
 
     fn log() -> FlowNodeKind {

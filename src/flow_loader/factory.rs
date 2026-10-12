@@ -354,6 +354,7 @@ mod tests {
             vec![FlowLink::new(Arc::new(end_node), Value::None)],
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(
                 "42".to_string(),
+                None,
                 HashMap::from([("fan".to_string(), property_command(Value::Boolean(true)))]),
             )))),
         );
