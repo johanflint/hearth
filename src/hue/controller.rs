@@ -10,6 +10,7 @@ use crate::flow_engine::Value;
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::hue::clip_to_gamut::clip_to_gamut;
 use crate::hue::domain::{LightRequest, MotionRequest, On, SetSensitivity};
+use crate::hue::pending_writes::PendingWrites;
 use crate::metrics::Metric;
 use async_trait::async_trait;
 use humantime_serde::re::humantime::format_duration;
@@ -18,12 +19,13 @@ use reqwest::Client;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{info, instrument, warn};
 
 #[derive(Debug)]
 pub struct HueController {
     client: Client,
+    pending_writes: Arc<PendingWrites>,
     config: Arc<AppConfig>,
 }
 
@@ -52,8 +54,8 @@ impl Controller for HueController {
 }
 
 impl HueController {
-    pub fn new(client: Client, config: Arc<AppConfig>) -> Self {
-        HueController { client, config }
+    pub fn new(client: Client, pending_writes: Arc<PendingWrites>, config: Arc<AppConfig>) -> Self {
+        HueController { client, pending_writes, config }
     }
 
     async fn control_device_light(&self, device: Arc<Device>, property: Arc<HashMap<String, ResolvedPropertyCommand>>) {
@@ -158,6 +160,8 @@ impl HueController {
         });
 
         let request = LightRequest::new(on, brightness, color_temperature, color, transition);
+        self.pending_writes.record(light_id, &request, Instant::now());
+
         let url = format!("{}/clip/v2/resource/light/{}", self.config.hue().url(), light_id);
         self.send_request(&request, &url, &device, "light").await;
     }

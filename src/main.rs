@@ -92,7 +92,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Scheduled flows");
 
     let hue_client = hue::new_client(&config)?;
-    let hue_controller = hue::Controller::new(hue_client.clone(), config.clone());
+    let pending_writes = Arc::new(hue::PendingWrites::default());
+    let hue_controller = hue::Controller::new(hue_client.clone(), pending_writes.clone(), config.clone());
     controller_registry::register(Arc::new(hue_controller));
     info!("✅  Initialized controllers");
 

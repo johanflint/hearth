@@ -1,21 +1,23 @@
 mod client;
 mod clip_to_gamut;
+mod connectivity;
 mod controller;
 mod discoverer;
 mod domain;
+mod enrich_devices;
+mod map_connectivity_changed;
+mod map_device_power_changed;
 mod map_light_changed;
 mod map_lights;
-mod observer;
 mod map_motion_sensors;
 mod map_motion_sensors_changed;
 mod map_remotes;
 mod map_remotes_changed;
-mod enrich_devices;
-mod map_connectivity_changed;
-mod connectivity;
-mod map_device_power_changed;
+mod observer;
+mod pending_writes;
 
 pub use client::new_client;
 pub use controller::HueController as Controller;
 pub use discoverer::discover;
 pub use observer::observe;
+pub use pending_writes::PendingWrites;
