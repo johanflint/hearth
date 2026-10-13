@@ -547,6 +547,7 @@ mod tests {
     use super::*;
     use crate::domain::Weekday::*;
     use crate::domain::device::Device;
+    use crate::domain::events::InitiatedBy;
     use crate::domain::property::{CartesianCoordinate, Gamut, Property, Unit};
     use crate::domain::{GeoLocation, Weekday};
     use crate::flow_engine::context::ContextBuilder;
@@ -1442,7 +1443,7 @@ mod tests {
     #[test]
     fn property_changed_evaluates_to_true_when_it_matches_the_context() {
         let context = Context::builder()
-            .changed(Some(PropertyChange { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() }))
+            .changed(Some(PropertyChange { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string(), initiated_by: InitiatedBy::Hearth }))
             .build();
         let expression = PropertyChanged { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() };
         assert_eq!(evaluate(&expression, &context), Ok(Value::Boolean(true)));
@@ -1451,7 +1452,7 @@ mod tests {
     #[test]
     fn property_changed_evaluates_to_false_for_a_different_property() {
         let context = Context::builder()
-            .changed(Some(PropertyChange { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "brightness".to_string() }))
+            .changed(Some(PropertyChange { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "brightness".to_string(), initiated_by: InitiatedBy::Hearth }))
             .build();
         let expression = PropertyChanged { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() };
         assert_eq!(evaluate(&expression, &context), Ok(Value::Boolean(false)));

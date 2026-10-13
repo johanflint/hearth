@@ -205,6 +205,7 @@ impl FlowExecutionReport {
 mod tests {
     use super::*;
     use crate::domain::Number;
+    use crate::domain::events::InitiatedBy;
     use crate::flow_engine::Expression::Literal;
     use crate::flow_engine::action::LogAction;
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNodeKind};
@@ -297,7 +298,7 @@ mod tests {
 
         // The property change that fires the flow - only true for this event's context
         let triggering_context = Context::builder()
-            .changed(Some(PropertyChange { device_id: "device".to_string(), property_id: "on".to_string() }))
+            .changed(Some(PropertyChange { device_id: "device".to_string(), property_id: "on".to_string(), initiated_by: InitiatedBy::Hearth }))
             .build();
         execute(flow.clone(), None, &triggering_context, scheduler_tx.clone()).await.unwrap();
         assert!(matches!(scheduler_rx.recv().await, Some(SchedulerCommand::ScheduleOnce { node_id, .. }) if node_id == "midNode"));

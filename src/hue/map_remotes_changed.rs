@@ -1,4 +1,4 @@
-use crate::domain::events::Event;
+use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::PropertyLocator;
 use crate::hue::domain::ButtonChanged;
 
@@ -12,11 +12,13 @@ pub fn map_remote_changed(property: ButtonChanged) -> Vec<Event> {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::ExternalId(property.id.to_string()),
             value: Some(report.event),
+            initiated_by: InitiatedBy::External,
         },
         Event::DateTimePropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::ExternalId(property.id),
             value: Some(report.updated),
+            initiated_by: InitiatedBy::External,
         }
     ]
 }
@@ -51,11 +53,13 @@ mod tests {
                     device_id: owner().rid,
                     property_id: PropertyLocator::ExternalId("5568ab93-2bef-4739-a667-8beb87898f78".to_string()),
                     value: Some("short_release".to_string()),
+                    initiated_by: InitiatedBy::External,
                 },
                 Event::DateTimePropertyChanged {
                     device_id: owner().rid,
                     property_id: PropertyLocator::ExternalId("5568ab93-2bef-4739-a667-8beb87898f78".to_string()),
                     value: Some(updated),
+                    initiated_by: InitiatedBy::External,
                 },
             ]
         );

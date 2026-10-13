@@ -90,8 +90,8 @@ async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, p
         ChangedProperty::Light(property) => {
             let is_echo = pending_writes.confirm(&property, Instant::now());
             let initiated_by = if is_echo { InitiatedBy::Hearth } else { InitiatedBy::External };
-            info!(light_id = property.id, "*** Light changed, initiated by: {initiated_by:?}");
-            for event in map_light_changed_property(property) {
+            debug!(light_id = property.id, ?initiated_by, "Light changed");
+            for event in map_light_changed_property(property, initiated_by) {
                 tx.send(event).await.unwrap_or_else(|e| {
                     warn!("⚠️ Unable to send changed light event: {}", e);
                 });

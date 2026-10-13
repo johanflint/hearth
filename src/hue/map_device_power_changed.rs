@@ -1,4 +1,4 @@
-use crate::domain::events::Event;
+use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::PropertyLocator;
 use crate::domain::{BatteryState, Number};
 use crate::hue::domain::DevicePowerChanged;
@@ -14,11 +14,13 @@ pub fn map_device_power_changed(property: DevicePowerChanged) -> Vec<Event> {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::Name("batteryLevel".to_string()),
             value: power_state.battery_level.map(|level| Number::PositiveInt(u64::from(level))),
+            initiated_by: InitiatedBy::External,
         },
         Event::EnumPropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::Name("batteryState".to_string()),
             value: battery_state,
+            initiated_by: InitiatedBy::External,
         },
     ]
 }
@@ -55,11 +57,13 @@ mod tests {
                     device_id: owner().rid,
                     property_id: PropertyLocator::Name("batteryLevel".to_string()),
                     value: Some(Number::PositiveInt(56)),
+                    initiated_by: InitiatedBy::External,
                 },
                 Event::EnumPropertyChanged {
                     device_id: owner().rid,
                     property_id: PropertyLocator::Name("batteryState".to_string()),
                     value: Some("normal".to_string()),
+                    initiated_by: InitiatedBy::External,
                 }
             ]
         );
@@ -85,11 +89,13 @@ mod tests {
                     device_id: owner().rid,
                     property_id: PropertyLocator::Name("batteryLevel".to_string()),
                     value: None,
+                    initiated_by: InitiatedBy::External,
                 },
                 Event::EnumPropertyChanged {
                     device_id: owner().rid,
                     property_id: PropertyLocator::Name("batteryState".to_string()),
                     value: None,
+                    initiated_by: InitiatedBy::External,
                 }
             ]
         );

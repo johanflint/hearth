@@ -1,17 +1,18 @@
 use crate::domain::Number;
-use crate::domain::events::Event;
+use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::{CartesianCoordinate, PropertyLocator};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::LightChanged;
 use tracing::warn;
 
-pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
+pub fn map_light_changed_property(property: LightChanged, initiated_by: InitiatedBy) -> Vec<Event> {
     let mut events = Vec::<Event>::with_capacity(4);
     if let Some(on) = property.on {
         events.push(Event::BooleanPropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::Name("on".to_string()),
             value: on.on,
+            initiated_by,
         });
     }
 
@@ -20,6 +21,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::Name("brightness".to_string()),
             value: Some(Number::Float(dimming.brightness)),
+            initiated_by,
         });
     }
 
@@ -33,6 +35,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
                 device_id: property.owner.rid.to_string(),
                 property_id: PropertyLocator::Name("colorTemperature".to_string()),
                 value: Some(Number::PositiveInt(clamped.mirek_to_kelvin())),
+                initiated_by,
             });
         }
     }
@@ -43,6 +46,7 @@ pub fn map_light_changed_property(property: LightChanged) -> Vec<Event> {
             property_id: PropertyLocator::Name("color".to_string()),
             xy: CartesianCoordinate::new(color.xy.x, color.xy.y),
             gamut: color.gamut.map(|mut g| g.take_gamut()),
+            initiated_by,
         });
     }
 
@@ -73,7 +77,7 @@ mod tests {
             color: None,
         };
 
-        let result = map_light_changed_property(light_changed);
+        let result = map_light_changed_property(light_changed, InitiatedBy::Hearth);
         assert_eq!(result.len(), 0);
     }
 
@@ -91,14 +95,15 @@ mod tests {
             color: None,
         };
 
-        let result = map_light_changed_property(light_changed);
+        let result = map_light_changed_property(light_changed, InitiatedBy::Hearth);
         assert_eq!(result.len(), 1);
         assert_eq!(
             result[0],
             BooleanPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
                 property_id: PropertyLocator::Name("on".to_string()),
-                value: true
+                value: true,
+                initiated_by: InitiatedBy::Hearth,
             }
         );
     }
@@ -120,7 +125,7 @@ mod tests {
             color: None,
         };
 
-        let result = map_light_changed_property(light_changed);
+        let result = map_light_changed_property(light_changed, InitiatedBy::Hearth);
         assert_eq!(result.len(), 1);
         assert_eq!(
             result[0],
@@ -128,6 +133,7 @@ mod tests {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
                 property_id: PropertyLocator::Name("brightness".to_string()),
                 value: Some(Float(20.8)),
+                initiated_by: InitiatedBy::Hearth,
             }
         );
     }
@@ -146,14 +152,15 @@ mod tests {
             color: None,
         };
 
-        let result = map_light_changed_property(light_changed);
+        let result = map_light_changed_property(light_changed, InitiatedBy::Hearth);
         assert_eq!(result.len(), 1);
         assert_eq!(
             result[0],
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
                 property_id: PropertyLocator::Name("colorTemperature".to_string()),
-                value: Some(PositiveInt(6535))
+                value: Some(PositiveInt(6535)),
+                initiated_by: InitiatedBy::Hearth,
             }
         );
     }
@@ -172,7 +179,7 @@ mod tests {
             color: None,
         };
 
-        let result = map_light_changed_property(light_changed);
+        let result = map_light_changed_property(light_changed, InitiatedBy::Hearth);
         assert_eq!(result.len(), 0);
     }
 
@@ -192,14 +199,15 @@ mod tests {
             color: None,
         };
 
-        let result = map_light_changed_property(light_changed);
+        let result = map_light_changed_property(light_changed, InitiatedBy::Hearth);
         assert_eq!(result.len(), 1);
         assert_eq!(
             result[0],
             NumberPropertyChanged {
                 device_id: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
                 property_id: PropertyLocator::Name("colorTemperature".to_string()),
-                value: Some(PositiveInt(expected_kelvin))
+                value: Some(PositiveInt(expected_kelvin)),
+                initiated_by: InitiatedBy::Hearth,
             }
         );
     }
@@ -225,7 +233,7 @@ mod tests {
             }),
         };
 
-        let result = map_light_changed_property(light_changed);
+        let result = map_light_changed_property(light_changed, InitiatedBy::External);
         assert_eq!(result.len(), 1);
         assert_eq!(
             result[0],
@@ -238,7 +246,31 @@ mod tests {
                     CartesianCoordinate::new(0.3, 0.4),
                     CartesianCoordinate::new(0.5, 0.6)
                 )),
+                initiated_by: InitiatedBy::External,
             }
         );
+    }
+
+    #[test]
+    fn passes_initiated_by_to_every_event() {
+        let light_changed = LightChanged {
+            id: "42".to_string(),
+            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
+            on: Some(On { on: true }),
+            dimming: Some(Dimming { brightness: 50.0, min_dim_level: None }),
+            color_temperature: Some(ChangedColorTemperature { mirek: Some(300), mirek_valid: true }),
+            color: Some(ChangedColor { xy: Xy { x: 0.0, y: 0.0 }, gamut: None }),
+        };
+
+        let events = map_light_changed_property(light_changed, InitiatedBy::External);
+
+        assert_eq!(events.len(), 4);
+        for event in events {
+            let initiated_by = match event {
+                BooleanPropertyChanged { initiated_by, .. } | NumberPropertyChanged { initiated_by, .. } | ColorPropertyChanged { initiated_by, .. } => initiated_by,
+                other => panic!("unexpected event: {other:?}"),
+            };
+            assert_eq!(initiated_by, InitiatedBy::External);
+        }
     }
 }

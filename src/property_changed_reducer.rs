@@ -1,3 +1,4 @@
+use crate::domain::events::InitiatedBy;
 use crate::domain::property::{Property, PropertyError};
 use crate::store::DeviceMap;
 use std::any::type_name;
@@ -6,7 +7,7 @@ use thiserror::Error;
 use tracing::{info, warn};
 
 #[inline(always)]
-pub(crate) fn reduce_property_changed_event<F, T>(devices: &mut DeviceMap, device_id: &str, property_id: &str, set_value: F) -> Result<bool, ReducerError>
+pub(crate) fn reduce_property_changed_event<F, T>(devices: &mut DeviceMap, device_id: &str, property_id: &str, initiated_by: InitiatedBy, set_value: F) -> Result<bool, ReducerError>
 where
     F: FnOnce(&mut T) -> Result<(), PropertyError>,
     T: Property + 'static,
@@ -46,6 +47,7 @@ where
     if changed {
         info!(
             device_id,
+            ?initiated_by,
             "🟢 Updated device '{}', set '{}' to '{}', was '{}'",
             &new_device.name,
             property.name(),
@@ -92,7 +94,7 @@ mod tests {
     #[test]
     fn reduce_returns_error_if_the_device_is_unknown() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, "unknown", "on", |_: &mut BooleanProperty| Ok(()));
+        let result = reduce_property_changed_event(&mut devices, "unknown", "on", InitiatedBy::Hearth, |_: &mut BooleanProperty| Ok(()));
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ReducerError::UnknownDevice { device_id: "unknown".to_string() });
@@ -101,7 +103,7 @@ mod tests {
     #[test]
     fn reduce_returns_error_if_the_property_is_unknown() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "unknown", |_: &mut BooleanProperty| Ok(()));
+        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "unknown", InitiatedBy::Hearth, |_: &mut BooleanProperty| Ok(()));
 
         assert!(result.is_err());
         assert_eq!(
@@ -116,7 +118,7 @@ mod tests {
     #[test]
     fn reduce_returns_error_if_the_property_type_is_incorrect() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |_: &mut NumberProperty| Ok(()));
+        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", InitiatedBy::Hearth, |_: &mut NumberProperty| Ok(()));
 
         assert!(result.is_err());
         assert_eq!(
@@ -132,7 +134,7 @@ mod tests {
     #[test]
     fn reduce_returns_error_if_the_lambda_returns_an_error() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |_: &mut BooleanProperty| Err(PropertyError::ReadOnly));
+        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", InitiatedBy::Hearth, |_: &mut BooleanProperty| Err(PropertyError::ReadOnly));
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ReducerError::PropertyChangedError(PropertyError::ReadOnly));
@@ -142,10 +144,10 @@ mod tests {
     fn reduce_returns_false_for_a_duplicate_value() {
         let mut devices = create_devices(); // property "on" starts at false
 
-        let first = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |p: &mut BooleanProperty| p.set_value(true));
+        let first = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", InitiatedBy::Hearth, |p: &mut BooleanProperty| p.set_value(true));
         assert_eq!(first, Ok(true), "the first update to a new value must report a change");
 
-        let duplicate = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", |p: &mut BooleanProperty| p.set_value(true));
+        let duplicate = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", InitiatedBy::Hearth, |p: &mut BooleanProperty| p.set_value(true));
         assert_eq!(duplicate, Ok(false), "re-applying the same value must not report a change");
     }
 }
