@@ -37,11 +37,16 @@ fn update_claim(snapshot: &StoreSnapshot, change: &PropertyChange) {
         return;
     }
 
+    if change.initiated_by == InitiatedBy::Hearth {
+        // Hearth's writes carry their own claim, it's applied before they are sent
+        return;
+    }
+
     // The claim and release can't fail, claimability is checked above
     let on_value = device.get_property_of_type::<BooleanProperty>(PropertyType::On).map(|on| on.value());
     if on_value == Some(false) {
         let _ = claim_registry::release(device);
-    } else if change.initiated_by == InitiatedBy::External {
+    } else {
         let _ = claim_registry::claim(device, ClaimOrigin::External);
     }
 }
@@ -87,7 +92,18 @@ mod tests {
     }
 
     #[test]
-    fn update_claim_releases_a_light_that_is_turned_off() {
+    fn update_claim_keeps_the_claim_when_hearth_turns_a_light_off() {
+        let device = DeviceBuilder::new("keeps_hearth_off").with_boolean_property("on", true).build();
+        claim_registry::claim(&device, ClaimOrigin::Flows(vec!["flow".to_string()])).unwrap();
+
+        let off = DeviceBuilder::new("keeps_hearth_off").with_boolean_property("on", false).build();
+        update_claim(&snapshot(off), &change("keeps_hearth_off", InitiatedBy::Hearth));
+
+        assert_eq!(claimed_by(&device), Some(ClaimOrigin::Flows(vec!["flow".to_string()])));
+    }
+
+    #[test]
+    fn update_claim_releases_a_light_that_is_turned_off_externally() {
         let device = DeviceBuilder::new("releases_off").with_boolean_property("on", true).build();
         update_claim(&snapshot(device.clone()), &change(&device.id, InitiatedBy::External));
 
