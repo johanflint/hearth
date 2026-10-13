@@ -1,8 +1,10 @@
 use crate::domain::ClaimMode;
+use crate::domain::device::Device;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
 use std::sync::{LazyLock, RwLock};
+use thiserror::Error;
 
 static CLAIM_REGISTRY: LazyLock<ClaimRegistry> = LazyLock::new(ClaimRegistry::default);
 
@@ -17,9 +19,20 @@ pub enum ClaimOrigin {
     // Sorted ids of the flows that agreed on the claim
     Flows(Vec<String>),
     // A change made outside Hearth
-    #[allow(dead_code)]
     External,
 }
+
+#[derive(Debug, PartialEq, Error)]
+pub enum AuthorizeError {
+    #[error("claimed by {0}")]
+    Claimed(ClaimOrigin),
+    #[error(transparent)]
+    NotClaimable(#[from] NotClaimable),
+}
+
+#[derive(Debug, PartialEq, Error)]
+#[error("device is not claimable")]
+pub struct NotClaimable;
 
 #[derive(Default, Debug)]
 struct ClaimRegistry {
@@ -27,28 +40,49 @@ struct ClaimRegistry {
 }
 
 impl ClaimRegistry {
-    /// Applies the claim intent and returns whether any writes may be sent.
-    fn authorize(&self, device_id: &str, claim: Option<Claim>) -> Result<(), ClaimOrigin> {
-        let mut claims = self.claims.write().unwrap();
+    fn claim(&self, device: &Device, origin: ClaimOrigin) -> Result<(), NotClaimable> {
+        ensure_claimable(device)?;
+        self.claims.write().unwrap().insert(device.id.clone(), origin);
+        Ok(())
+    }
+
+    fn release(&self, device: &Device) -> Result<(), NotClaimable> {
+        ensure_claimable(device)?;
+        self.claims.write().unwrap().remove(&device.id);
+        Ok(())
+    }
+
+    fn claimed_by(&self, device_id: &str) -> Option<ClaimOrigin> {
+        self.claims.read().unwrap().get(device_id).cloned()
+    }
+
+    /// Applies the claim intent. Ok means writes may be sent, Err means they may not.
+    fn authorize(&self, device: &Device, claim: Option<Claim>) -> Result<(), AuthorizeError> {
         match claim {
-            Some(Claim { mode: ClaimMode::Claim, origin }) => {
-                claims.insert(device_id.to_string(), origin);
-                Ok(())
-            }
-            Some(Claim { mode: ClaimMode::Release, .. }) => {
-                claims.remove(device_id);
-                Ok(())
-            }
-            None => match claims.get(device_id) {
-                Some(origin) => Err(origin.clone()),
+            Some(Claim { mode: ClaimMode::Claim, origin }) => Ok(self.claim(device, origin)?),
+            Some(Claim { mode: ClaimMode::Release, .. }) => Ok(self.release(device)?),
+            None => match self.claimed_by(&device.id) {
+                Some(origin) => Err(AuthorizeError::Claimed(origin)),
                 None => Ok(())
             },
         }
     }
 }
 
-pub fn authorize(device_id: &str, claim: Option<Claim>) -> Result<(), ClaimOrigin> {
-    CLAIM_REGISTRY.authorize(device_id, claim)
+fn ensure_claimable(device: &Device) -> Result<(), NotClaimable> {
+    device.claimable.then_some(()).ok_or(NotClaimable)
+}
+
+pub fn claim(device: &Device, origin: ClaimOrigin) -> Result<(), NotClaimable> {
+    CLAIM_REGISTRY.claim(device, origin)
+}
+
+pub fn release(device: &Device) -> Result<(), NotClaimable> {
+    CLAIM_REGISTRY.release(device)
+}
+
+pub fn authorize(device: &Device, claim: Option<Claim>) -> Result<(), AuthorizeError> {
+    CLAIM_REGISTRY.authorize(device, claim)
 }
 
 impl fmt::Display for ClaimOrigin {
@@ -67,21 +101,26 @@ impl fmt::Display for ClaimOrigin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::DeviceBuilder;
     use rstest::rstest;
 
     const DEVICE_ID: &str = "device_id";
     const DEVICE2_ID: &str = "device2_id";
 
+    fn device(device_id: &str) -> Device {
+        DeviceBuilder::new(device_id).build()
+    }
+
+    fn unclaimable_device(device_id: &str) -> Device {
+        Device { claimable: false, ..device(device_id) }
+    }
+
     fn flows(flow_ids: &[&str]) -> ClaimOrigin {
         ClaimOrigin::Flows(flow_ids.iter().map(|id| id.to_string()).collect())
     }
 
-    fn claim(mode: ClaimMode, flow_ids: &[&str]) -> Claim {
+    fn claim_intent(mode: ClaimMode, flow_ids: &[&str]) -> Claim {
         Claim { mode, origin: flows(flow_ids) }
-    }
-
-    fn is_claimed(registry: &ClaimRegistry, device_id: &str) -> bool {
-        registry.claims.read().unwrap().contains_key(device_id)
     }
 
     #[rstest]
@@ -93,37 +132,78 @@ mod tests {
     #[case::claimed_release(true, Some(ClaimMode::Release), true, false)]
     fn authorize(#[case] claimed: bool, #[case] mode: Option<ClaimMode>, #[case] expected_authorized: bool, #[case] expected_claimed: bool) {
         let registry = ClaimRegistry::default();
+        let device = device(DEVICE_ID);
         if claimed {
-            registry.authorize(DEVICE_ID, Some(claim(ClaimMode::Claim, &["flow"]))).unwrap();
+            registry.claim(&device, flows(&["flow"])).unwrap();
         }
-        assert_eq!(registry.authorize(DEVICE_ID, mode.map(|mode| claim(mode, &["flow"]))).is_ok(), expected_authorized);
-        assert_eq!(is_claimed(&registry, DEVICE_ID), expected_claimed);
+        assert_eq!(registry.authorize(&device, mode.map(|mode| claim_intent(mode, &["flow"]))).is_ok(), expected_authorized);
+        assert_eq!(registry.claimed_by(DEVICE_ID).is_some(), expected_claimed);
     }
 
     #[test]
     fn authorize_claims_per_device() {
         let registry = ClaimRegistry::default();
-        registry.authorize(DEVICE_ID, Some(claim(ClaimMode::Claim, &["flow"]))).unwrap();
+        registry.claim(&device(DEVICE_ID), flows(&["flow"])).unwrap();
 
-        assert_eq!(registry.authorize(DEVICE2_ID, None), Ok(()));
-        assert_eq!(registry.authorize(DEVICE_ID, None), Err(flows(&["flow"])));
+        assert_eq!(registry.authorize(&device(DEVICE2_ID), None), Ok(()));
+        assert_eq!(registry.authorize(&device(DEVICE_ID), None), Err(AuthorizeError::Claimed(flows(&["flow"]))));
     }
 
     #[test]
     fn authorize_returns_the_origin_of_the_blocking_claim() {
         let registry = ClaimRegistry::default();
-        registry.authorize(DEVICE_ID, Some(claim(ClaimMode::Claim, &["dinner", "movie"]))).unwrap();
+        registry.claim(&device(DEVICE_ID), flows(&["dinner", "movie"])).unwrap();
 
-        assert_eq!(registry.authorize(DEVICE_ID, None), Err(flows(&["dinner", "movie"])));
+        assert_eq!(registry.authorize(&device(DEVICE_ID), None), Err(AuthorizeError::Claimed(flows(&["dinner", "movie"]))));
     }
 
     #[test]
     fn authorize_a_new_claim_replaces_the_origin() {
         let registry = ClaimRegistry::default();
-        registry.authorize(DEVICE_ID, Some(claim(ClaimMode::Claim, &["dinner"]))).unwrap();
-        registry.authorize(DEVICE_ID, Some(claim(ClaimMode::Claim, &["movie"]))).unwrap();
+        let device = device(DEVICE_ID);
+        registry.authorize(&device, Some(claim_intent(ClaimMode::Claim, &["dinner"]))).unwrap();
+        registry.authorize(&device, Some(claim_intent(ClaimMode::Claim, &["movie"]))).unwrap();
 
-        assert_eq!(registry.authorize(DEVICE_ID, None), Err(flows(&["movie"])));
+        assert_eq!(registry.claimed_by(DEVICE_ID), Some(flows(&["movie"])));
+    }
+
+    #[rstest]
+    #[case::claim(ClaimMode::Claim)]
+    #[case::release(ClaimMode::Release)]
+    fn authorize_rejects_a_claim_intent_for_a_device_that_is_not_claimable(#[case] mode: ClaimMode) {
+        let registry = ClaimRegistry::default();
+
+        assert_eq!(registry.authorize(&unclaimable_device(DEVICE_ID), Some(claim_intent(mode, &["flow"]))), Err(AuthorizeError::NotClaimable(NotClaimable)));
+        assert_eq!(registry.claimed_by(DEVICE_ID), None);
+    }
+
+    #[test]
+    fn authorize_without_claim_allows_writes_to_a_device_that_is_not_claimable() {
+        let registry = ClaimRegistry::default();
+
+        assert_eq!(registry.authorize(&unclaimable_device(DEVICE_ID), None), Ok(()));
+    }
+
+    #[test]
+    fn claim_registers_the_origin_and_release_removes_it() {
+        let registry = ClaimRegistry::default();
+        let device = device(DEVICE_ID);
+
+        registry.claim(&device, ClaimOrigin::External).unwrap();
+        assert_eq!(registry.claimed_by(DEVICE_ID), Some(ClaimOrigin::External));
+
+        registry.release(&device).unwrap();
+        assert_eq!(registry.claimed_by(DEVICE_ID), None);
+    }
+
+    #[test]
+    fn claim_and_release_reject_a_device_that_is_not_claimable() {
+        let registry = ClaimRegistry::default();
+        let device = unclaimable_device(DEVICE_ID);
+
+        assert_eq!(registry.claim(&device, ClaimOrigin::External), Err(NotClaimable));
+        assert_eq!(registry.release(&device), Err(NotClaimable));
+        assert_eq!(registry.claimed_by(DEVICE_ID), None);
     }
 
     #[rstest]

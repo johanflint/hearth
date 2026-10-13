@@ -74,6 +74,7 @@ pub fn map_motion_sensors(sensors: Vec<MotionGet>, light_levels: Vec<LightLevelG
                 model_id: device_get.product_data.model_id,
                 product_name: device_get.product_data.product_name,
                 name: device_get.metadata.name,
+                claimable: false,
                 properties,
                 external_id: None,
                 address: None,

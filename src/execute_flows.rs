@@ -1,4 +1,4 @@
-use crate::claim_registry::{Claim, ClaimOrigin};
+use crate::claim_registry::{AuthorizeError, Claim, ClaimOrigin};
 use crate::domain::commands::Command;
 use crate::domain::device::Device;
 use crate::domain::{ClaimMode, GeoLocation, controller_registry};
@@ -133,9 +133,16 @@ fn flow_ids<T>(proposals: &[Proposal<T>]) -> Vec<String> {
 async fn dispatch_commands(snapshot: &StoreSnapshot, dispatch_map: DispatchMap) {
     for (device_id, device_command) in dispatch_map {
         if let Some(device) = snapshot.devices.get(&device_id) {
-            if let Err(origin) = claim_registry::authorize(&device_id, device_command.claim) {
-                info!(device_id, claimed_by = %origin, "Device '{}' is claimed by {}, skipping writes without a claim", device.name, origin);
-                continue;
+            match claim_registry::authorize(device, device_command.claim) {
+                Ok(()) => {},
+                Err(AuthorizeError::Claimed(origin)) => {
+                    info!(device_id, claimed_by = %origin, "Device '{}' is claimed by {}, skipping writes without a claim", device.name, origin);
+                    continue;
+                }
+                Err(AuthorizeError::NotClaimable(_)) => {
+                    warn!(device_id, "⚠️ Device '{}' is not claimable, skipping writes", device.name);
+                    continue;
+                }
             }
 
             let properties = filter_flow_editable_properties(device, device_command.properties);

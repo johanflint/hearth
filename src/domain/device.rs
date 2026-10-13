@@ -9,6 +9,7 @@ pub struct Device {
     pub model_id: String,
     pub product_name: String,
     pub name: String,
+    pub claimable: bool,
     pub properties: HashMap<String, Box<dyn Property>>,
     pub external_id: Option<String>,
     pub address: Option<String>,
