@@ -1,5 +1,6 @@
 use crate::app_config::AppConfig;
-use crate::domain::events::Event;
+use crate::domain::events::{Event, InitiatedBy};
+use crate::hue::PendingWrites;
 use crate::hue::domain::{ChangedProperty, ServerSentEventPayload, UnknownProperty};
 use crate::hue::map_connectivity_changed::map_connectivity_changed;
 use crate::hue::map_device_power_changed::map_device_power_changed;
@@ -10,7 +11,8 @@ use crate::sse;
 use crate::sse::{Config, ServerSentEvent};
 use reqwest::Client;
 use std::error::Error;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task;
@@ -20,7 +22,7 @@ use tracing::{debug, info, instrument, trace, warn};
 type HueEvent = ServerSentEvent<Vec<ServerSentEventPayload>>;
 
 #[instrument(skip_all)]
-pub async fn observe(tx: Sender<Event>, client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>> {
+pub async fn observe(tx: Sender<Event>, pending_writes: Arc<PendingWrites>, client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>> {
     let sse_config = Config {
         url: config.hue().url().to_owned(),
         retry_ms: config.hue().retry_ms(),
@@ -30,7 +32,7 @@ pub async fn observe(tx: Sender<Event>, client: &Client, config: &AppConfig) -> 
     };
     let buffer_size = config.core().store_buffer_size();
     let client = client.clone();
-    task::spawn(supervise_hue_pipeline(tx, client, sse_config, buffer_size));
+    task::spawn(supervise_hue_pipeline(tx, client, pending_writes, sse_config, buffer_size));
 
     Ok(())
 }
@@ -38,11 +40,11 @@ pub async fn observe(tx: Sender<Event>, client: &Client, config: &AppConfig) -> 
 /// Owns the Hue SSE listener and event processor pair for the app's lifetime.
 /// If either task ends - gracefully, with an error, or by panicking - the other
 /// task is aborted and a fresh chanel and task pair is rebuilt.
-async fn supervise_hue_pipeline(tx: Sender<Event>, client: Client, sse_config: Config, buffer_size: usize) {
+async fn supervise_hue_pipeline(tx: Sender<Event>, client: Client, pending_writes: Arc<PendingWrites>, sse_config: Config, buffer_size: usize) {
     loop {
         let (sse_tx, sse_rx) = mpsc::channel::<HueEvent>(buffer_size);
 
-        let mut processor = task::spawn(run_processor(sse_rx, tx.clone()));
+        let mut processor = task::spawn(run_processor(sse_rx, tx.clone(), pending_writes.clone()));
         let mut listener = {
             let cloned_client = client.clone();
             let cloned_sse_config = sse_config.clone();
@@ -68,7 +70,7 @@ async fn supervise_hue_pipeline(tx: Sender<Event>, client: Client, sse_config: C
     }
 }
 
-async fn run_processor(mut sse_rx: Receiver<HueEvent>, tx: Sender<Event>) {
+async fn run_processor(mut sse_rx: Receiver<HueEvent>, tx: Sender<Event>, pending_writes: Arc<PendingWrites>) {
     while let Some(hue_event) = sse_rx.recv().await {
         if let Some(comment) = &hue_event.comment {
             info!("🔹 {}", comment);
@@ -76,16 +78,19 @@ async fn run_processor(mut sse_rx: Receiver<HueEvent>, tx: Sender<Event>) {
         if let Some(data) = hue_event.data {
             for payload in data {
                 for property in payload.data {
-                    handle_changed_property(tx.clone(), property).await;
+                    handle_changed_property(tx.clone(), property, pending_writes.clone()).await;
                 }
             }
         }
     }
 }
 
-async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty) {
+async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, pending_writes: Arc<PendingWrites>) {
     match property {
         ChangedProperty::Light(property) => {
+            let is_echo = pending_writes.confirm(&property, Instant::now());
+            let initiated_by = if is_echo { InitiatedBy::Hearth } else { InitiatedBy::External };
+            info!(light_id = property.id, "*** Light changed, initiated by: {initiated_by:?}");
             for event in map_light_changed_property(property) {
                 tx.send(event).await.unwrap_or_else(|e| {
                     warn!("⚠️ Unable to send changed light event: {}", e);
