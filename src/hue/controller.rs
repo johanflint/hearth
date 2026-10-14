@@ -79,7 +79,7 @@ impl HueController {
         if let Some(value) = &on {
             let on_text = if value.on { "on" } else { "off" };
             let transition_text = transition.map_or("".to_string(), |t| format!(" over {}", format_duration(t)));
-            info!(device_id = device.id, ?on_property, "🟢 Turn {} light '{}'{}", on_text, device.name, transition_text);
+            info!(device_id = device.id, "🟢 Turn {} light '{}'{}", on_text, device.name, transition_text);
         }
 
         let brightness = device.get_property_of_type::<NumberProperty>(PropertyType::Brightness).and_then(|brightness_property| {
