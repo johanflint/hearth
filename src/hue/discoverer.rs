@@ -1,6 +1,6 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
-use crate::hue::domain::{ButtonGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, ZigbeeConnectivityGet};
+use crate::hue::domain::{ButtonGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, TemperatureGet, ZigbeeConnectivityGet};
 use crate::hue::enrich_devices::enrich_devices;
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
@@ -56,6 +56,16 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     debug!("Retrieving lights levels... OK, {} found", light_levels_response.data.len()); // Using debug as these aren't devices but services
 
     let response = client
+        .get(format!("{}/clip/v2/resource/temperature", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(to_discover_error)?;
+
+    let temperature_response = response.json::<HueResponse<TemperatureGet>>().await?;
+    debug!("Retrieving temperature sensors... OK, {} found", temperature_response.data.len()); // Using debug as these aren't devices but services
+
+    let response = client
         .get(format!("{}/clip/v2/resource/button", hue_url))
         .send()
         .await?
@@ -91,7 +101,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
 
     let mut devices = vec![];
     let lights = map_lights(light_response.data, &mut device_map)?;
-    let motion_sensors = map_motion_sensors(motion_response.data, light_levels_response.data, &mut device_map)?;
+    let motion_sensors = map_motion_sensors(motion_response.data, light_levels_response.data, temperature_response.data, &mut device_map)?;
     let buttons = map_remotes(button_response.data, &mut device_map)?;
 
     devices.extend(lights);
@@ -208,6 +218,14 @@ mod tests {
             .await;
 
         server
+            .mock("GET", "/clip/v2/resource/temperature")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_temperature_simplified_response.json"))
+            .create_async()
+            .await;
+
+        server
             .mock("GET", "/clip/v2/resource/button")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -291,6 +309,21 @@ mod tests {
             Some("2026-09-23T15:37:20.001Z".parse().unwrap()),
         ));
 
+        let temperature_property: Box<dyn Property> = Box::new(
+            NumberProperty::builder("temperature".to_string(), PropertyType::Temperature, true)
+                .unit(Unit::DegreesCelsius)
+                .float(Some(21.34), None, None)
+                .build(),
+        );
+
+        let temperature_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "temperatureLastChanged".to_string(),
+            PropertyType::TemperatureLastChanged,
+            true,
+            None,
+            Some("2026-09-23T15:37:21.003Z".parse().unwrap()),
+        ));
+
         let button_property: Box<dyn Property> = Box::new(
             EnumProperty::new(
                 "button1".to_string(),
@@ -356,6 +389,8 @@ mod tests {
                     (sensitivity_property.name().to_string(), sensitivity_property),
                     (illuminance_property.name().to_string(), illuminance_property),
                     (illuminance_last_changed_property.name().to_string(), illuminance_last_changed_property),
+                    (temperature_property.name().to_string(), temperature_property),
+                    (temperature_last_changed_property.name().to_string(), temperature_last_changed_property),
                     ("connectivity".to_string(), connectivity_property("issues")),
                     ("batteryLevel".to_string(), battery_level_property(Some(30))),
                     ("batteryState".to_string(), battery_state_property(Some("normal"))),

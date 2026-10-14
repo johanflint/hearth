@@ -208,7 +208,6 @@ impl NumberPropertyBuilder {
 pub enum Unit {
     Percentage,
     Lux,
-    #[allow(dead_code)]
     DegreesCelsius,
     Kelvin,
     None,

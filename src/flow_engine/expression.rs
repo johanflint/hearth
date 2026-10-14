@@ -429,6 +429,14 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                     let illuminance_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
                     Ok(illuminance_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
                 }
+                PropertyType::Temperature => {
+                    let temperature_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
+                    Ok(temperature_property.value().map(Value::Number).unwrap_or(Value::None))
+                }
+                PropertyType::TemperatureLastChanged => {
+                    let temperature_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
+                    Ok(temperature_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
+                }
             }
         }
 
@@ -613,6 +621,17 @@ mod tests {
             DateTimeProperty::new("illuminanceLastChanged".to_string(), PropertyType::IlluminanceLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
         );
 
+        let temperature_property: Box<dyn Property> = Box::new(
+            NumberProperty::builder("temperature".to_string(), PropertyType::Temperature, true)
+                .unit(Unit::DegreesCelsius)
+                .float(Some(21.5), None, None)
+                .build(),
+        );
+
+        let temperature_last_changed_property: Box<dyn Property> = Box::new(
+            DateTimeProperty::new("temperatureLastChanged".to_string(), PropertyType::TemperatureLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
+        );
+
         let battery_level_property: Box<dyn Property> = Box::new(
             NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
                 .unit(Unit::Percentage)
@@ -641,6 +660,8 @@ mod tests {
                 motion_last_changed_property,
                 illuminance_property,
                 illuminance_last_changed_property,
+                temperature_property,
+                temperature_last_changed_property,
                 battery_level_property,
                 battery_state_property
             ])
@@ -1479,6 +1500,8 @@ mod tests {
     )]
     #[case::illuminance("ab917a9a-a7d5-4853-9518-75909236a182", "illuminance", Ok(Value::Number(Number::Float(316.23))))]
     #[case::illuminance_last_changed("ab917a9a-a7d5-4853-9518-75909236a182", "illuminanceLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
+    #[case::temperature("ab917a9a-a7d5-4853-9518-75909236a182", "temperature", Ok(Value::Number(Number::Float(21.5))))]
+    #[case::temperature_last_changed("ab917a9a-a7d5-4853-9518-75909236a182", "temperatureLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
     #[case::battery_level("ab917a9a-a7d5-4853-9518-75909236a182", "batteryLevel", Ok(Value::Number(Number::PositiveInt(42))))]
     #[case::battery_state("ab917a9a-a7d5-4853-9518-75909236a182", "batteryState", Ok(Value::String("normal".to_string())))]
     fn property_value(#[case] device_id: &str, #[case] property_id: &str, #[case] expected: Result<Value, ExpressionError>) {
