@@ -37,6 +37,10 @@ impl ColorProperty {
         Ok(())
     }
 
+    pub fn xy(&self) -> &CartesianCoordinate {
+        &self.xy
+    }
+
     pub fn gamut(&self) -> Option<&Gamut> {
         self.gamut.as_ref()
     }

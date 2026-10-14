@@ -21,6 +21,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 mod api;
 mod app_config;
+mod claim_registry;
 mod domain;
 mod execute_flows;
 mod extensions;
@@ -91,7 +92,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Scheduled flows");
 
     let hue_client = hue::new_client(&config)?;
-    let hue_controller = hue::Controller::new(hue_client.clone(), config.clone());
+    let pending_writes = Arc::new(hue::PendingWrites::default());
+    let hue_controller = hue::Controller::new(hue_client.clone(), pending_writes.clone(), config.clone());
     controller_registry::register(Arc::new(hue_controller));
     info!("✅  Initialized controllers");
 
@@ -104,6 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Initialized store listener");
 
     let store_rx_clone = store.notifier();
+    let hue_store_rx = store.notifier();
     task::spawn(async move {
         store.listen().await;
     });
@@ -121,7 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Discovered all devices");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
 
-    hue::observe(tx, &hue_client, &config).await?;
+    hue::observe(tx, pending_writes, hue_store_rx, &hue_client, &config).await?;
 
     match signal::ctrl_c().await {
         Ok(()) => {}

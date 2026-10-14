@@ -1,5 +1,5 @@
 use crate::domain::Number;
-use crate::domain::events::Event;
+use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::PropertyLocator;
 use crate::hue::domain::{MotionChanged, SensitivityChanged, SensitivityStatus};
 
@@ -10,6 +10,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::Name("enabled".to_string()),
             value: enabled,
+            initiated_by: InitiatedBy::External,
         });
     }
 
@@ -18,11 +19,13 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::Name("motion".to_string()),
             value: report.motion,
+            initiated_by: InitiatedBy::External,
         });
         events.push(Event::DateTimePropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::Name("motionLastChanged".to_string()),
             value: Some(report.changed),
+            initiated_by: InitiatedBy::External,
         })
     }
 
@@ -34,6 +37,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
                 device_id: property.owner.rid.to_string(),
                 property_id: PropertyLocator::Name("sensitivity".to_string()),
                 value: Some(Number::PositiveInt(sensitivity)),
+                initiated_by: InitiatedBy::External,
             });
         }
     }
@@ -45,6 +49,7 @@ pub fn map_motion_sensors_changed(property: MotionChanged) -> Vec<Event> {
 mod tests {
     use crate::domain::Number::PositiveInt;
     use crate::domain::events::Event::{BooleanPropertyChanged, DateTimePropertyChanged, NumberPropertyChanged};
+    use crate::domain::events::InitiatedBy;
     use crate::domain::property::PropertyLocator;
     use crate::hue::domain::{Motion, MotionChanged, MotionReport, MotionType, Owner, SensitivityChanged, SensitivityStatus};
     use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
@@ -86,6 +91,7 @@ mod tests {
                 device_id: owner().rid,
                 property_id: PropertyLocator::Name("enabled".to_string()),
                 value: true,
+                initiated_by: InitiatedBy::External,
             }
         );
     }
@@ -108,6 +114,7 @@ mod tests {
                 device_id: owner().rid,
                 property_id: PropertyLocator::Name("motion".to_string()),
                 value: true,
+                initiated_by: InitiatedBy::External,
             }
         );
         assert_eq!(
@@ -116,6 +123,7 @@ mod tests {
                 device_id: owner().rid,
                 property_id: PropertyLocator::Name("motionLastChanged".to_string()),
                 value: Some(changed),
+                initiated_by: InitiatedBy::External,
             }
         );
     }
@@ -138,6 +146,7 @@ mod tests {
                 device_id: owner().rid,
                 property_id: PropertyLocator::Name("sensitivity".to_string()),
                 value: Some(PositiveInt(3)),
+                initiated_by: InitiatedBy::External,
             }
         );
     }

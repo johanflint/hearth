@@ -144,9 +144,9 @@ pub enum DiscoverError {
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
-    use crate::domain::{BatteryState, Connectivity};
     use crate::domain::device::DeviceType;
     use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit};
+    use crate::domain::{BatteryState, Connectivity};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;
@@ -327,6 +327,7 @@ mod tests {
                 model_id: "LWA004".to_string(),
                 product_name: "Hue filament bulb".to_string(),
                 name: "Woonkamer".to_string(),
+                claimable: true,
                 properties: HashMap::from([
                     (on_property.name().to_string(), on_property),
                     ("connectivity".to_string(), connectivity_property("connected")),
@@ -347,6 +348,7 @@ mod tests {
                 model_id: "SML004".to_string(),
                 product_name: "Hue outdoor motion sensor".to_string(),
                 name: "Schuur sensor".to_string(),
+                claimable: false,
                 properties: HashMap::from([
                     (enabled_property.name().to_string(), enabled_property),
                     (motion_property.name().to_string(), motion_property),
@@ -372,6 +374,7 @@ mod tests {
                 model_id: "RWL021".to_string(),
                 product_name: "Hue dimmer switch".to_string(),
                 name: "Dimmer".to_string(),
+                claimable: false,
                 properties: HashMap::from([
                     (button_property.name().to_string(), button_property),
                     (button_last_changed_property.name().to_string(), button_last_changed_property),

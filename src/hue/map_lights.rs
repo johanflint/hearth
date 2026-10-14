@@ -67,6 +67,7 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
                 model_id: device_get.product_data.model_id,
                 product_name: device_get.product_data.product_name,
                 name: device_get.metadata.name,
+                claimable: true,
                 properties,
                 external_id: None,
                 address: None,
@@ -161,6 +162,7 @@ mod tests {
                 model_id: "LCT007".to_string(),
                 product_name: "Hue color lamp".to_string(),
                 name: "Lamp".to_string(),
+                claimable: true,
                 properties: HashMap::from([
                     (on_property.name().to_string(), on_property),
                     (brightness_property.name().to_string(), brightness_property),

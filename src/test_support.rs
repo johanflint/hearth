@@ -40,6 +40,7 @@ impl DeviceBuilder {
             model_id: "Test Model".to_string(),
             product_name: "Hue color lamp".to_string(),
             name: "Test Device".to_string(),
+            claimable: true,
             properties: self.properties,
             external_id: None,
             address: None,

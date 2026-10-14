@@ -1,5 +1,5 @@
 use crate::domain::property::{NumberProperty, Property, PropertyError, ValidatedValue};
-use crate::domain::{Problem, find_device, find_property};
+use crate::domain::{ClaimMode, Problem, find_device, find_property};
 use crate::flow_engine::Value;
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
@@ -83,13 +83,14 @@ impl Action for LogAction {
 #[register_action]
 pub struct ControlDeviceAction {
     device_id: String,
+    claim: Option<ClaimMode>,
     property: HashMap<String, PropertyCommand>,
 }
 
 impl ControlDeviceAction {
     #[cfg(test)]
-    pub fn new(device_id: String, property: HashMap<String, PropertyCommand>) -> ControlDeviceAction {
-        ControlDeviceAction { device_id, property }
+    pub fn new(device_id: String, claim: Option<ClaimMode>, property: HashMap<String, PropertyCommand>) -> ControlDeviceAction {
+        ControlDeviceAction { device_id, claim, property }
     }
 
     fn validate_command(&self, snapshot: &StoreSnapshot, property_id: &str, property: &dyn Property, command: &PropertyCommand) -> Result<(), Problem> {
@@ -122,7 +123,13 @@ impl ControlDeviceAction {
     }
 }
 
-pub type CommandMap = HashMap<String, HashMap<String, ResolvedPropertyCommand>>;
+#[derive(PartialEq, Default, Debug)]
+pub struct DeviceCommand {
+    pub claim: Option<ClaimMode>,
+    pub properties: HashMap<String, ResolvedPropertyCommand>,
+}
+
+pub type CommandMap = HashMap<String, DeviceCommand>;
 
 fn clamp_to_range(device_id: &str, property_id: &str, property: &dyn Property, value: Value) -> Value {
     let (Value::Number(number), Some(number_property)) = (&value, property.as_any().downcast_ref::<NumberProperty>()) else {
@@ -160,7 +167,12 @@ impl Action for ControlDeviceAction {
             return;
         };
 
-        let device_command_map = command_map.entry(self.device_id.clone()).or_insert_with(HashMap::new);
+        let device_command = command_map.entry(self.device_id.clone()).or_insert_with(DeviceCommand::default);
+        // A later action without a claim doesn't undo the claim of an earlier action
+        if let Some(claim) = self.claim {
+            device_command.claim = Some(claim);
+        }
+
         for (property_id, property_command) in self.property.iter() {
             let Some(property) = device.properties.get(property_id) else {
                 warn!(device_id = self.device_id, property_id, "Unable to control device '{}'... unknown property '{}'", self.device_id, property_id);
@@ -178,7 +190,7 @@ impl Action for ControlDeviceAction {
             let value = clamp_to_range(&self.device_id, property_id, property.as_ref(), value);
 
             let resolved_command = ResolvedPropertyCommand { value, transition: property_command.transition };
-            let result = device_command_map.insert(property_id.clone(), resolved_command);
+            let result = device_command.properties.insert(property_id.clone(), resolved_command);
             if let Some(previous_value) = result {
                 warn!(
                     device_id = self.device_id,
@@ -238,11 +250,11 @@ mod tests {
 
     fn control_device(device_id: &str, property_ids: &[&str]) -> ControlDeviceAction {
         let property = property_ids.iter().map(|id| (id.to_string(), property_command(Value::Boolean(true)))).collect();
-        ControlDeviceAction::new(device_id.to_string(), property)
+        ControlDeviceAction::new(device_id.to_string(), None, property)
     }
 
     fn control_device_with(device_id: &str, property_id: &str, command: PropertyCommand) -> ControlDeviceAction {
-        ControlDeviceAction::new(device_id.to_string(), HashMap::from([(property_id.to_string(), command)]))
+        ControlDeviceAction::new(device_id.to_string(), None, HashMap::from([(property_id.to_string(), command)]))
     }
 
     fn number(value: u64) -> Number {
@@ -289,6 +301,37 @@ mod tests {
 
         let expected = ControlDeviceAction {
             device_id: "42".to_string(),
+            claim: None,
+            property: HashMap::from([("fan".to_string(), property_command(Value::Boolean(true)))]),
+        };
+
+        let action = node.as_any().downcast_ref::<ControlDeviceAction>().unwrap();
+        assert_eq!(&expected, action);
+
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_control_device_action_with_claim() -> io::Result<()> {
+        let json = r#"{
+            "type": "controlDevice",
+            "deviceId": "42",
+            "claim": "claim",
+            "property": {
+                "fan": {
+                    "value": {
+                      "type": "literal",
+                      "value": true
+                    }
+                }
+            }
+        }"#;
+
+        let node = serde_json::from_str::<Box<dyn Action>>(json)?;
+
+        let expected = ControlDeviceAction {
+            device_id: "42".to_string(),
+            claim: Some(ClaimMode::Claim),
             property: HashMap::from([("fan".to_string(), property_command(Value::Boolean(true)))]),
         };
 
@@ -418,6 +461,7 @@ mod tests {
     fn control_device_validate_reports_a_range_problem_for_each_property() {
         let action = ControlDeviceAction::new(
             "lamp".to_string(),
+            None,
             HashMap::from([
                 ("brightness".to_string(), property_command(Value::Number(number(101)))),
                 ("on".to_string(), property_command(Value::Boolean(true))),
@@ -441,7 +485,23 @@ mod tests {
         let context = Context::builder().snapshot(snapshot()).build();
         let mut scope = Scope::new();
         action.execute(&context, &mut scope).await;
-        scope.get::<CommandMap>("command_map").cloned()
+        scope.take().remove("command_map").and_then(|v| v.downcast::<CommandMap>().ok()).map(|boxed| *boxed)
+    }
+
+    #[rstest]
+    #[case::claim_then_none(Some(ClaimMode::Claim), None, Some(ClaimMode::Claim))]
+    #[case::none_then_release(None, Some(ClaimMode::Release), Some(ClaimMode::Release))]
+    #[case::claim_then_release(Some(ClaimMode::Claim), Some(ClaimMode::Release), Some(ClaimMode::Release))]
+    #[case::release_then_claim(Some(ClaimMode::Release), Some(ClaimMode::Claim), Some(ClaimMode::Claim))]
+    #[tokio::test]
+    async fn execute_keeps_the_last_claim_of_a_device(#[case] first: Option<ClaimMode>, #[case] second: Option<ClaimMode>, #[case] expected: Option<ClaimMode>) {
+        let context = Context::builder().snapshot(snapshot()).build();
+        let mut scope = Scope::new();
+
+        ControlDeviceAction::new("lamp".to_string(), first, HashMap::new()).execute(&context, &mut scope).await;
+        ControlDeviceAction::new("lamp".to_string(), second, HashMap::new()).execute(&context, &mut scope).await;
+
+        assert_eq!(scope.get::<CommandMap>("command_map").unwrap()["lamp"].claim, expected);
     }
 
     #[tokio::test]
@@ -456,7 +516,9 @@ mod tests {
         let command_map = execute(&action).await;
 
         let expected = ResolvedPropertyCommand { value: Value::Number(number(60)), transition };
-        assert_eq!(command_map, Some(HashMap::from([("lamp".to_string(), HashMap::from([("brightness".to_string(), expected)]))])));
+        assert_eq!(command_map, Some(HashMap::from([
+            ("lamp".to_string(), DeviceCommand { claim: None, properties: HashMap::from([("brightness".to_string(), expected)]) })
+        ])));
     }
 
     #[rstest]
@@ -469,7 +531,9 @@ mod tests {
         let command_map = execute(&action).await;
 
         let expected = ResolvedPropertyCommand { value: Value::Number(expected), transition: None };
-        assert_eq!(command_map, Some(HashMap::from([("lamp".to_string(), HashMap::from([("brightness".to_string(), expected)]))])));
+        assert_eq!(command_map, Some(HashMap::from([
+            ("lamp".to_string(), DeviceCommand { claim: None, properties: HashMap::from([("brightness".to_string(), expected)]) })
+        ])));
     }
 
     fn brightness() -> Box<Expression> {
@@ -486,14 +550,18 @@ mod tests {
 
         let command_map = execute(&action).await;
 
-        assert_eq!(command_map, Some(HashMap::from([("lamp".to_string(), HashMap::new())])));
+        assert_eq!(command_map, Some(HashMap::from([
+            ("lamp".to_string(), DeviceCommand { claim: None, properties: HashMap::new() })
+        ])));
     }
 
     #[tokio::test]
     async fn execute_skips_an_unknown_property() {
         let command_map = execute(&control_device("lamp", &["unknown"])).await;
 
-        assert_eq!(command_map, Some(HashMap::from([("lamp".to_string(), HashMap::new())])));
+        assert_eq!(command_map, Some(HashMap::from([
+            ("lamp".to_string(), DeviceCommand { claim: None, properties: HashMap::new() })
+        ])));
     }
 
     #[tokio::test]
