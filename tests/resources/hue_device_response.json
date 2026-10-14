@@ -111,6 +111,31 @@
         }
       ],
       "type": "device"
+    },
+    {
+      "id": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77",
+      "id_v1": "/sensors/131",
+      "product_data": {
+        "model_id": "SOC001",
+        "manufacturer_name": "Signify Netherlands B.V.",
+        "product_name": "Hue secure contact sensor",
+        "product_archetype": "unknown_archetype",
+        "certified": true,
+        "software_version": "2.67.9",
+        "hardware_platform_type": "100b-122"
+      },
+      "metadata": {
+        "name": "Voordeur",
+        "archetype": "unknown_archetype"
+      },
+      "identify": {},
+      "services": [
+        {
+          "rid": "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21",
+          "rtype": "contact"
+        }
+      ],
+      "type": "device"
     }
   ]
 }

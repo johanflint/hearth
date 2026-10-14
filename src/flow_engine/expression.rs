@@ -401,6 +401,14 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 PropertyType::Color => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::Connectivity => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
+                PropertyType::ContactSensor => {
+                    let enum_property = property.as_any().downcast_ref::<EnumProperty>().unwrap();
+                    Ok(enum_property.value().map(|v| Value::String(v.to_string())).unwrap_or(Value::None))
+                }
+                PropertyType::ContactSensorLastChanged => {
+                    let contact_last_changed = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
+                    Ok(contact_last_changed.value().map(Value::DateTime).unwrap_or(Value::None))
+                }
                 PropertyType::MotionLastChanged => {
                     let motion_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
                     Ok(motion_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
@@ -632,6 +640,12 @@ mod tests {
             DateTimeProperty::new("temperatureLastChanged".to_string(), PropertyType::TemperatureLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
         );
 
+        let contact_property: Box<dyn Property> = Box::new(BooleanProperty::new("open".to_string(), PropertyType::ContactSensor, true, None, true));
+
+        let contact_last_changed_property: Box<dyn Property> = Box::new(
+            DateTimeProperty::new("openLastChanged".to_string(), PropertyType::ContactSensorLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
+        );
+
         let battery_level_property: Box<dyn Property> = Box::new(
             NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
                 .unit(Unit::Percentage)
@@ -662,6 +676,8 @@ mod tests {
                 illuminance_last_changed_property,
                 temperature_property,
                 temperature_last_changed_property,
+                contact_property,
+                contact_last_changed_property,
                 battery_level_property,
                 battery_state_property
             ])

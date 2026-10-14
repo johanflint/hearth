@@ -1,0 +1,19 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21",
+      "id_v1": "/sensors/131",
+      "owner": {
+        "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77",
+        "rtype": "device"
+      },
+      "enabled": true,
+      "contact_report": {
+        "changed": "2026-09-23T15:37:22.004Z",
+        "state": "no_contact"
+      },
+      "type": "contact"
+    }
+  ]
+}

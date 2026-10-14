@@ -1,4 +1,5 @@
 mod button_get;
+mod contact_get;
 mod device_get;
 mod device_power_get;
 mod hue_response;
@@ -10,6 +11,7 @@ mod temperature_get;
 mod zigbee_connectivity_get;
 
 pub(super) use button_get::*;
+pub(super) use contact_get::*;
 pub(super) use device_get::*;
 pub(super) use device_power_get::*;
 pub(super) use hue_response::*;
