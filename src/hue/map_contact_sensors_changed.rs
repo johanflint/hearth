@@ -1,7 +1,7 @@
+use crate::domain::ContactState;
 use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::PropertyLocator;
 use crate::hue::domain::ContactChanged;
-use crate::hue::map_contact_sensors::contact_value;
 
 pub fn map_contact_sensors_changed(property: ContactChanged) -> Vec<Event> {
     let Some(report) = property.contact_report else {
@@ -12,7 +12,7 @@ pub fn map_contact_sensors_changed(property: ContactChanged) -> Vec<Event> {
         Event::EnumPropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::Name("contact".to_string()),
-            value: Some(contact_value(&report.state).to_string()),
+            value: Some(ContactState::from(&report.state).as_str().to_string()),
             initiated_by: InitiatedBy::External,
         },
         Event::DateTimePropertyChanged {
@@ -27,7 +27,7 @@ pub fn map_contact_sensors_changed(property: ContactChanged) -> Vec<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::{ContactReport, ContactState, Owner};
+    use crate::hue::domain::{ContactReport, ContactState as HueContactState, Owner};
     use chrono::{TimeZone, Utc};
     use rstest::rstest;
 
@@ -50,9 +50,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::closed(ContactState::Contact, "closed")]
-    #[case::open(ContactState::NoContact, "open")]
-    fn returns_the_contact_state_and_the_time_it_changed(#[case] state: ContactState, #[case] expected: &str) {
+    #[case::closed(HueContactState::Contact, "closed")]
+    #[case::open(HueContactState::NoContact, "open")]
+    fn returns_the_contact_state_and_the_time_it_changed(#[case] state: HueContactState, #[case] expected: &str) {
         let changed = Utc.with_ymd_and_hms(2026, 9, 23, 15, 37, 22).unwrap();
         let property = ContactChanged {
             id: "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21".to_string(),

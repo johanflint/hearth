@@ -14,10 +14,12 @@ mod weekday_condition;
 mod connectivity;
 mod battery_state;
 mod validator;
+pub mod contact_state;
 
 pub use battery_state::BatteryState;
 pub use claim_mode::ClaimMode;
 pub use connectivity::Connectivity;
+pub use contact_state::ContactState;
 pub use geo_location::GeoLocation;
 pub use number::Number;
 pub use time::Time;

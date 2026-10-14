@@ -1,12 +1,11 @@
+use crate::domain::ContactState;
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{DateTimeProperty, EnumProperty, Property, PropertyType};
 use crate::hue::controller::CONTROLLER_ID;
-use crate::hue::domain::{ContactGet, ContactState, DeviceGet};
+use crate::hue::domain::{ContactGet, ContactState as HueContactState, DeviceGet};
 use std::collections::HashMap;
+use strum::IntoEnumIterator;
 use thiserror::Error;
-
-const OPEN: &str = "open";
-const CLOSED: &str = "closed";
 
 pub fn map_contact_sensors(sensors: Vec<ContactGet>, device_map: &mut HashMap<String, DeviceGet>) -> Result<Vec<Device>, MapContactSensorsError> {
     sensors
@@ -19,7 +18,8 @@ pub fn map_contact_sensors(sensors: Vec<ContactGet>, device_map: &mut HashMap<St
 
             let mut properties = HashMap::with_capacity(2);
 
-            let value = sensor.contact_report.as_ref().map(|report| contact_value(&report.state).to_string());
+            let value = sensor.contact_report.as_ref().map(|report| ContactState::from(&report.state).as_str().to_string());
+            let allowed_values = ContactState::iter().map(|s| s.as_str().to_string()).collect();
             let contact_property: Box<dyn Property> = Box::new(
                 EnumProperty::new(
                     "contact".to_string(),
@@ -27,7 +27,7 @@ pub fn map_contact_sensors(sensors: Vec<ContactGet>, device_map: &mut HashMap<St
                     true,
                     Some(sensor.id.clone()),
                     value,
-                    vec![OPEN.to_string(), CLOSED.to_string()],
+                    allowed_values,
                 ).expect("contact value is always one of the allowed values")
             );
             properties.insert(contact_property.name().to_owned(), contact_property);
@@ -58,10 +58,12 @@ pub fn map_contact_sensors(sensors: Vec<ContactGet>, device_map: &mut HashMap<St
         .collect()
 }
 
-pub(super) fn contact_value(state: &ContactState) -> &'static str {
-    match state {
-        ContactState::Contact => CLOSED,
-        ContactState::NoContact => OPEN,
+impl From<&HueContactState> for ContactState {
+    fn from(state: &HueContactState) -> Self {
+        match state {
+            HueContactState::Contact => ContactState::Closed,
+            HueContactState::NoContact => ContactState::Open,
+        }
     }
 }
 
@@ -125,7 +127,7 @@ mod tests {
                 true,
                 Some(CONTACT_ID.to_string()),
                 value.map(str::to_string),
-                vec!["open".to_string(), "closed".to_string()],
+                ContactState::iter().map(|s| s.as_str().to_string()).collect(),
             ).unwrap(),
         )
     }

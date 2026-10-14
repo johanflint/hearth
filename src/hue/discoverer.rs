@@ -171,7 +171,7 @@ mod tests {
     use crate::app_config::AppConfigBuilder;
     use crate::domain::device::DeviceType;
     use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit};
-    use crate::domain::{BatteryState, Connectivity};
+    use crate::domain::{BatteryState, Connectivity, ContactState};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;
@@ -378,7 +378,7 @@ mod tests {
             true,
             Some("6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21".to_string()),
             Some("open".to_string()),
-            vec!["open".to_string(), "closed".to_string()],
+            ContactState::iter().map(|s| s.as_str().to_string()).collect(),
         ).unwrap());
 
         let contact_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
