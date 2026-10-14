@@ -2,7 +2,8 @@ use crate::domain::Number;
 use crate::domain::property::property::ValueKind;
 use crate::domain::property::{Property, PropertyError, PropertyType};
 use std::any::Any;
-use std::fmt::Debug;
+use std::fmt;
+use std::fmt::{Debug, Formatter};
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct NumberProperty {
@@ -44,6 +45,7 @@ impl NumberProperty {
         }
     }
 
+    #[allow(dead_code)]
     pub fn as_f64(&self) -> Option<f64> {
         match self.value? {
             Number::PositiveInt(n) => Some(n as f64),
@@ -113,7 +115,8 @@ impl Property for NumberProperty {
     }
 
     fn value_string(&self) -> String {
-        self.value.map(|v| v.to_string()).unwrap_or(String::new())
+        let value = self.value.map(|v| v.to_string()).unwrap_or(String::new());
+        format!("{}{}", value, self.unit)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -213,16 +216,16 @@ pub enum Unit {
     None,
 }
 
-impl Unit {
-    #[allow(dead_code)]
-    pub fn symbol(&self) -> &str {
-        match self {
+impl fmt::Display for Unit {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let symbol = match self {
             Unit::Percentage => "%",
             Unit::Lux => "lx",
             Unit::DegreesCelsius => "°C",
             Unit::Kelvin => "k",
             Unit::None => "",
-        }
+        };
+        f.write_str(symbol)
     }
 }
 
@@ -344,5 +347,25 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ());
         assert_eq!(property.value, Some(Number::PositiveInt(42)));
+    }
+
+    #[rstest]
+    #[case::percentage(Unit::Percentage, "%")]
+    #[case::lux(Unit::Lux, "lx")]
+    #[case::degrees_celsius(Unit::DegreesCelsius, "°C")]
+    #[case::kelvin(Unit::Kelvin, "k")]
+    #[case::none(Unit::None, "")]
+    fn unit_displays_its_symbol(#[case] unit: Unit, #[case] expected: &str) {
+        assert_eq!(unit.to_string(), expected);
+    }
+
+    #[test]
+    fn value_string_appends_the_unit() {
+        let property = NumberProperty::builder("temperature".to_string(), PropertyType::Temperature, true)
+            .unit(Unit::DegreesCelsius)
+            .float(Some(21.5), None, None)
+            .build();
+
+        assert_eq!(property.value_string(), "21.5°C");
     }
 }
