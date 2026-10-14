@@ -25,6 +25,14 @@ pub struct TemperatureReport {
     pub temperature: f64, // degrees Celsius
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TemperatureChanged {
+    #[allow(dead_code)]
+    pub id: String,
+    pub owner: Owner,
+    pub temperature: Option<Temperature>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

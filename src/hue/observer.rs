@@ -8,6 +8,7 @@ use crate::hue::map_device_power_changed::map_device_power_changed;
 use crate::hue::map_light_changed::map_light_changed_property;
 use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
 use crate::hue::map_remotes_changed::map_remote_changed;
+use crate::hue::map_temperature_changed::map_temperature_changed;
 use crate::sse;
 use crate::sse::{Config, ServerSentEvent};
 use crate::store::StoreSnapshot;
@@ -135,6 +136,13 @@ async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, p
         }
         ChangedProperty::DevicePower(property) => {
             for event in map_device_power_changed(property) {
+                tx.send(event).await.unwrap_or_else(|e| {
+                    warn!("⚠️ Unable to send changed device power event: {}", e);
+                });
+            }
+        }
+        ChangedProperty::Temperature(property) => {
+            for event in map_temperature_changed(property) {
                 tx.send(event).await.unwrap_or_else(|e| {
                     warn!("⚠️ Unable to send changed device power event: {}", e);
                 });
