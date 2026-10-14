@@ -2,6 +2,7 @@ mod client;
 mod clip_to_gamut;
 mod connectivity;
 mod controller;
+mod corrections;
 mod discoverer;
 mod domain;
 mod enrich_devices;

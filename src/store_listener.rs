@@ -37,9 +37,10 @@ fn update_claim(snapshot: &StoreSnapshot, change: &PropertyChange) {
         return;
     }
 
-    if change.initiated_by == InitiatedBy::Hearth {
-        // Hearth's writes carry their own claim, it's applied before they are sent
-        return;
+    match change.initiated_by {
+        InitiatedBy::Hearth => return, // Hearth's writes carry their own claim, it's applied before they are sent
+        InitiatedBy::Device => return, // Nobody changed the device
+        InitiatedBy::External => {},
     }
 
     // The claim and release can't fail, claimability is checked above
@@ -87,6 +88,14 @@ mod tests {
     fn update_claim_ignores_a_change_made_by_hearth() {
         let device = DeviceBuilder::new("ignores_hearth").with_boolean_property("on", true).build();
         update_claim(&snapshot(device.clone()), &change(&device.id, InitiatedBy::Hearth));
+
+        assert_eq!(claimed_by(&device), None);
+    }
+
+    #[test]
+    fn update_claim_ignores_a_correction_by_the_device() {
+        let device = DeviceBuilder::new("ignores_device").with_boolean_property("on", true).build();
+        update_claim(&snapshot(device.clone()), &change(&device.id, InitiatedBy::Device));
 
         assert_eq!(claimed_by(&device), None);
     }

@@ -1,7 +1,8 @@
 use crate::app_config::AppConfig;
 use crate::domain::events::{Event, InitiatedBy};
 use crate::hue::PendingWrites;
-use crate::hue::domain::{ChangedProperty, ServerSentEventPayload, UnknownProperty};
+use crate::hue::corrections::is_unnoticeable_correction;
+use crate::hue::domain::{ChangedProperty, LightChanged, ServerSentEventPayload, UnknownProperty};
 use crate::hue::map_connectivity_changed::map_connectivity_changed;
 use crate::hue::map_device_power_changed::map_device_power_changed;
 use crate::hue::map_light_changed::map_light_changed_property;
@@ -9,12 +10,14 @@ use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
 use crate::hue::map_remotes_changed::map_remote_changed;
 use crate::sse;
 use crate::sse::{Config, ServerSentEvent};
+use crate::store::StoreSnapshot;
 use reqwest::Client;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::watch::Receiver as WatchReceiver;
 use tokio::task;
 use tokio::task::JoinError;
 use tracing::{debug, info, instrument, trace, warn};
@@ -22,7 +25,13 @@ use tracing::{debug, info, instrument, trace, warn};
 type HueEvent = ServerSentEvent<Vec<ServerSentEventPayload>>;
 
 #[instrument(skip_all)]
-pub async fn observe(tx: Sender<Event>, pending_writes: Arc<PendingWrites>, client: &Client, config: &AppConfig) -> Result<(), Box<dyn Error>> {
+pub async fn observe(
+    tx: Sender<Event>,
+    pending_writes: Arc<PendingWrites>,
+    store_rx: WatchReceiver<StoreSnapshot>,
+    client: &Client,
+    config: &AppConfig,
+) -> Result<(), Box<dyn Error>> {
     let sse_config = Config {
         url: config.hue().url().to_owned(),
         retry_ms: config.hue().retry_ms(),
@@ -32,7 +41,7 @@ pub async fn observe(tx: Sender<Event>, pending_writes: Arc<PendingWrites>, clie
     };
     let buffer_size = config.core().store_buffer_size();
     let client = client.clone();
-    task::spawn(supervise_hue_pipeline(tx, client, pending_writes, sse_config, buffer_size));
+    task::spawn(supervise_hue_pipeline(tx, client, pending_writes, store_rx, sse_config, buffer_size));
 
     Ok(())
 }
@@ -40,11 +49,18 @@ pub async fn observe(tx: Sender<Event>, pending_writes: Arc<PendingWrites>, clie
 /// Owns the Hue SSE listener and event processor pair for the app's lifetime.
 /// If either task ends - gracefully, with an error, or by panicking - the other
 /// task is aborted and a fresh chanel and task pair is rebuilt.
-async fn supervise_hue_pipeline(tx: Sender<Event>, client: Client, pending_writes: Arc<PendingWrites>, sse_config: Config, buffer_size: usize) {
+async fn supervise_hue_pipeline(
+    tx: Sender<Event>,
+    client: Client,
+    pending_writes: Arc<PendingWrites>,
+    store_rx: WatchReceiver<StoreSnapshot>,
+    sse_config: Config,
+    buffer_size: usize,
+) {
     loop {
         let (sse_tx, sse_rx) = mpsc::channel::<HueEvent>(buffer_size);
 
-        let mut processor = task::spawn(run_processor(sse_rx, tx.clone(), pending_writes.clone()));
+        let mut processor = task::spawn(run_processor(sse_rx, tx.clone(), pending_writes.clone(), store_rx.clone()));
         let mut listener = {
             let cloned_client = client.clone();
             let cloned_sse_config = sse_config.clone();
@@ -70,7 +86,7 @@ async fn supervise_hue_pipeline(tx: Sender<Event>, client: Client, pending_write
     }
 }
 
-async fn run_processor(mut sse_rx: Receiver<HueEvent>, tx: Sender<Event>, pending_writes: Arc<PendingWrites>) {
+async fn run_processor(mut sse_rx: Receiver<HueEvent>, tx: Sender<Event>, pending_writes: Arc<PendingWrites>, store_rx: WatchReceiver<StoreSnapshot>) {
     while let Some(hue_event) = sse_rx.recv().await {
         if let Some(comment) = &hue_event.comment {
             info!("🔹 {}", comment);
@@ -78,18 +94,17 @@ async fn run_processor(mut sse_rx: Receiver<HueEvent>, tx: Sender<Event>, pendin
         if let Some(data) = hue_event.data {
             for payload in data {
                 for property in payload.data {
-                    handle_changed_property(tx.clone(), property, pending_writes.clone()).await;
+                    handle_changed_property(tx.clone(), property, pending_writes.clone(), &store_rx).await;
                 }
             }
         }
     }
 }
 
-async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, pending_writes: Arc<PendingWrites>) {
+async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, pending_writes: Arc<PendingWrites>, store_rx: &WatchReceiver<StoreSnapshot>) {
     match property {
         ChangedProperty::Light(property) => {
-            let is_echo = pending_writes.confirm(&property, Instant::now());
-            let initiated_by = if is_echo { InitiatedBy::Hearth } else { InitiatedBy::External };
+            let initiated_by = light_initiated_by(&property, &pending_writes, store_rx);
             debug!(light_id = property.id, ?initiated_by, "Light changed");
             for event in map_light_changed_property(property, initiated_by) {
                 tx.send(event).await.unwrap_or_else(|e| {
@@ -132,10 +147,78 @@ async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, p
     }
 }
 
+fn light_initiated_by(change: &LightChanged, pending_writes: &PendingWrites, store_rx: &WatchReceiver<StoreSnapshot>) -> InitiatedBy {
+    if pending_writes.confirm(change, Instant::now()) {
+        return InitiatedBy::Hearth;
+    }
+
+    let snapshot = store_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
+    let device = snapshot.devices.get(&change.owner.rid);
+    if device.is_some_and(|device| is_unnoticeable_correction(change, &device)) {
+        return InitiatedBy::Device
+    }
+
+    InitiatedBy::External
+}
+
 fn describe(result: Result<(), JoinError>) -> &'static str {
     match result {
         Ok(()) => "ended gracefully",
         Err(e) if e.is_panic() => "panicked",
         Err(_) => "was cancelled",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::device::Device;
+    use crate::domain::property::CartesianCoordinate;
+    use crate::hue::domain::LightRequest;
+    use crate::test_support::DeviceBuilder;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use tokio::sync::watch;
+
+    const LIGHT_ID: &str = "light_id";
+    const DEVICE_ID: &str = "device_id";
+
+    fn store_rx(device: Device) -> WatchReceiver<StoreSnapshot> {
+        let snapshot = StoreSnapshot { devices: Arc::new(HashMap::from([(device.id.clone(), Arc::new(device))])) };
+        watch::channel(snapshot).1
+    }
+
+    fn device() -> Device {
+        DeviceBuilder::new(DEVICE_ID).with_color_property("color", CartesianCoordinate::new(0.3691, 0.3719), None).build()
+    }
+
+    fn color_changed(x: f64, y: f64) -> LightChanged {
+        serde_json::from_value(json!({ "id": LIGHT_ID, "owner": { "rid": DEVICE_ID, "rtype": "device" }, "color": { "xy": { "x": x, "y": y } } })).unwrap()
+    }
+
+    #[test]
+    fn light_initiated_by_recognizes_an_echo_of_a_hearth_write() {
+        let pending_writes = PendingWrites::default();
+        let request = LightRequest::new(None, None, None, Some(CartesianCoordinate::new(0.5, 0.4)), None);
+        pending_writes.record(LIGHT_ID, &request, Instant::now());
+
+        assert_eq!(light_initiated_by(&color_changed(0.5, 0.4), &pending_writes, &store_rx(device())), InitiatedBy::Hearth);
+    }
+
+    #[test]
+    fn light_initiated_by_recognizes_an_unnoticeable_correction_by_the_device() {
+        assert_eq!(light_initiated_by(&color_changed(0.3669, 0.3706), &PendingWrites::default(), &store_rx(device())), InitiatedBy::Device);
+    }
+
+    #[test]
+    fn light_initiated_by_treats_a_noticeable_change_as_external() {
+        assert_eq!(light_initiated_by(&color_changed(0.5, 0.4), &PendingWrites::default(), &store_rx(device())), InitiatedBy::External);
+    }
+
+    #[test]
+    fn light_initiated_by_treats_a_change_to_an_unknown_device_as_external() {
+        let empty_store_rx = watch::channel(StoreSnapshot::default()).1;
+
+        assert_eq!(light_initiated_by(&color_changed(0.3669, 0.3706), &PendingWrites::default(), &empty_store_rx), InitiatedBy::External);
     }
 }

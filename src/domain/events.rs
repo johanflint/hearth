@@ -42,5 +42,8 @@ pub enum Event {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum InitiatedBy {
     Hearth,
+    /// User initiated outside of Hearth
     External,
+    /// The device corrected its own reported state, nobody changed it
+    Device,
 }

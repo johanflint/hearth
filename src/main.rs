@@ -106,6 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Initialized store listener");
 
     let store_rx_clone = store.notifier();
+    let hue_store_rx = store.notifier();
     task::spawn(async move {
         store.listen().await;
     });
@@ -123,7 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Discovered all devices");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
 
-    hue::observe(tx, pending_writes, &hue_client, &config).await?;
+    hue::observe(tx, pending_writes, hue_store_rx, &hue_client, &config).await?;
 
     match signal::ctrl_c().await {
         Ok(()) => {}
