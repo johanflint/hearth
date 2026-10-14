@@ -21,6 +21,7 @@ impl NumberProperty {
         NumberPropertyBuilder::new(name, property_type, readonly)
     }
 
+    #[allow(dead_code)]
     pub fn as_u64(&self) -> Option<u64> {
         match self.value? {
             Number::PositiveInt(value) => Some(value),
@@ -28,6 +29,7 @@ impl NumberProperty {
         }
     }
 
+    #[allow(dead_code)]
     pub fn as_i64(&self) -> Option<i64> {
         match self.value? {
             Number::PositiveInt(n) => {
@@ -173,6 +175,7 @@ impl NumberPropertyBuilder {
         self
     }
 
+    #[allow(dead_code)]
     pub fn negative_int(mut self, value: Option<i64>, minimum: Option<i64>, maximum: Option<i64>) -> Self {
         self.value = value.map(Number::NegativeInt);
         self.minimum = minimum.map(|v| Number::NegativeInt(v));
