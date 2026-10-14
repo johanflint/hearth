@@ -58,7 +58,7 @@ pub fn map_contact_sensors(sensors: Vec<ContactGet>, device_map: &mut HashMap<St
         .collect()
 }
 
-fn contact_value(state: &ContactState) -> &'static str {
+pub(super) fn contact_value(state: &ContactState) -> &'static str {
     match state {
         ContactState::Contact => CLOSED,
         ContactState::NoContact => OPEN,

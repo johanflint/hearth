@@ -25,6 +25,14 @@ pub enum ContactState {
     NoContact,  // The magnets are apart, the door is open
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ContactChanged {
+    #[allow(dead_code)]
+    pub id: String,
+    pub owner: Owner,
+    pub contact_report: Option<ContactReport>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

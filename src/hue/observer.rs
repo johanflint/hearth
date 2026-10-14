@@ -4,6 +4,7 @@ use crate::hue::PendingWrites;
 use crate::hue::corrections::is_unnoticeable_correction;
 use crate::hue::domain::{ChangedProperty, LightChanged, ServerSentEventPayload, UnknownProperty};
 use crate::hue::map_connectivity_changed::map_connectivity_changed;
+use crate::hue::map_contact_sensors_changed::map_contact_sensors_changed;
 use crate::hue::map_device_power_changed::map_device_power_changed;
 use crate::hue::map_light_changed::map_light_changed_property;
 use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
@@ -144,7 +145,14 @@ async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, p
         ChangedProperty::Temperature(property) => {
             for event in map_temperature_changed(property) {
                 tx.send(event).await.unwrap_or_else(|e| {
-                    warn!("⚠️ Unable to send changed device power event: {}", e);
+                    warn!("⚠️ Unable to send changed temperature event: {}", e);
+                });
+            }
+        }
+        ChangedProperty::Contact(property) => {
+            for event in map_contact_sensors_changed(property) {
+                tx.send(event).await.unwrap_or_else(|e| {
+                    warn!("⚠️ Unable to send change contact sensor event: {}", e);
                 });
             }
         }
