@@ -1,4 +1,4 @@
-use crate::hue::domain::{ButtonChanged, DevicePowerChanged, LightChanged, MotionChanged, ZigbeeConnectivityChanged};
+use crate::hue::domain::{ButtonChanged, DevicePowerChanged, LightChanged, MotionChanged, TemperatureChanged, ZigbeeConnectivityChanged};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, to_string_pretty};
 
@@ -29,6 +29,7 @@ pub enum ChangedProperty {
     Button(ButtonChanged),
     ZigbeeConnectivity(ZigbeeConnectivityChanged),
     DevicePower(DevicePowerChanged),
+    Temperature(TemperatureChanged),
     #[serde(untagged)]
     Unknown(UnknownProperty),
 }
@@ -174,6 +175,48 @@ mod tests {
         let first_result = &result[0];
         assert_eq!(first_result.data.len(), 1);
         assert!(matches!(&first_result.data[0], ChangedProperty::Unknown(UnknownProperty { property_type, .. }) if property_type == "unknown"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_a_temperature_property() -> Result<(), serde_json::Error> {
+        let json = r#"
+        [
+          {
+            "creationtime": "2026-09-23T15:37:21Z",
+            "data": [
+              {
+                "id": "197f1e17-f04f-471d-b410-77b9267826e9",
+                "owner": {
+                  "rid": "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3",
+                  "rtype": "device"
+                },
+                "temperature": {
+                  "temperature": 21.34,
+                  "temperature_valid": true,
+                  "temperature_report": {
+                    "changed": "2026-09-23T15:37:21.003Z",
+                    "temperature": 21.34
+                  }
+                },
+                "type": "temperature"
+              }
+            ],
+            "id": "11c2f169-9c29-444b-9ef6-4868f6d2daf6",
+            "type": "update"
+          }
+        ]
+        "#;
+
+        let result = serde_json::from_str::<Vec<ServerSentEventPayload>>(json)?;
+        let ChangedProperty::Temperature(TemperatureChanged { id, owner, temperature }) = &result[0].data[0] else {
+            panic!("expected a Temperature variant");
+        };
+        assert_eq!(id, "197f1e17-f04f-471d-b410-77b9267826e9");
+        assert_eq!(owner.rid, "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3");
+        let report = temperature.as_ref().and_then(|t| t.temperature_report.as_ref()).expect("temperature_report should be present");
+        assert_eq!(report.temperature, 21.34);
 
         Ok(())
     }

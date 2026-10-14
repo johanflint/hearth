@@ -75,6 +75,8 @@ pub enum PropertyType {
     MotionLastChanged,
     MotionSensitivity,
     On,
+    Temperature,
+    TemperatureLastChanged,
 }
 
 // Identifies aproperty either by its well-known name or by the controller-owned

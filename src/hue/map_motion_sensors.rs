@@ -1,12 +1,18 @@
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, DateTimeProperty, NumberProperty, Property, PropertyType, Unit};
 use crate::hue::controller::CONTROLLER_ID;
-use crate::hue::domain::{DeviceGet, LightLevelGet, MotionGet};
+use crate::hue::domain::{DeviceGet, LightLevelGet, MotionGet, TemperatureGet};
 use std::collections::HashMap;
 use thiserror::Error;
 
-pub fn map_motion_sensors(sensors: Vec<MotionGet>, light_levels: Vec<LightLevelGet>, device_map: &mut HashMap<String, DeviceGet>) -> Result<Vec<Device>, MapMotionSensorsError> {
+pub fn map_motion_sensors(
+    sensors: Vec<MotionGet>,
+    light_levels: Vec<LightLevelGet>,
+    temperatures: Vec<TemperatureGet>,
+    device_map: &mut HashMap<String, DeviceGet>,
+) -> Result<Vec<Device>, MapMotionSensorsError> {
     let mut light_level_map: HashMap<String, LightLevelGet> = light_levels.into_iter().map(|light_level| (light_level.owner.rid.clone(), light_level)).collect();
+    let mut temperature_map: HashMap<String, TemperatureGet> = temperatures.into_iter().map(|temperature| (temperature.owner.rid.clone(), temperature)).collect();
     sensors
         .into_iter()
         .map(|sensor| {
@@ -17,7 +23,7 @@ pub fn map_motion_sensors(sensors: Vec<MotionGet>, light_levels: Vec<LightLevelG
                 .remove(&sensor.owner.rid)
                 .ok_or_else(|| MapMotionSensorsError::MissingLightLevel { device_id: sensor.owner.rid.clone() })?;
 
-            let mut properties: HashMap<String, Box<dyn Property>> = HashMap::with_capacity(6);
+            let mut properties: HashMap<String, Box<dyn Property>> = HashMap::with_capacity(8);
 
             let enabled_property = Box::new(BooleanProperty::new("enabled".to_string(), PropertyType::Enabled, false, Some(sensor.id.clone()), sensor.enabled));
             properties.insert(enabled_property.name().to_owned(), enabled_property);
@@ -58,14 +64,36 @@ pub fn map_motion_sensors(sensors: Vec<MotionGet>, light_levels: Vec<LightLevelG
             );
             properties.insert(light_level_property.name().to_owned(), light_level_property);
 
-            let light_level_changed_property = Box::new(DateTimeProperty::new(
+            let light_level_last_changed_property = Box::new(DateTimeProperty::new(
                 "illuminanceLastChanged".to_string(),
                 PropertyType::IlluminanceLastChanged,
                 true,
                 None,
                 light_level_changed,
             ));
-            properties.insert(light_level_changed_property.name().to_owned(), light_level_changed_property);
+            properties.insert(light_level_last_changed_property.name().to_owned(), light_level_last_changed_property);
+
+            // Not every motion sensor has a temperature service, so unlike the light level it's optional
+            if let Some(temperature) = temperature_map.remove(&sensor.owner.rid) {
+                let report = temperature.temperature.temperature_report;
+
+                let temperature_property = Box::new(
+                    NumberProperty::builder("temperature".to_string(), PropertyType::Temperature, true)
+                        .unit(Unit::DegreesCelsius)
+                        .float(report.as_ref().map(|r| r.temperature), None, None)
+                        .build(),
+                );
+                properties.insert(temperature_property.name().to_owned(), temperature_property);
+
+                let temperature_last_changed_property = Box::new(DateTimeProperty::new(
+                    "temperatureLastChanged".to_string(),
+                    PropertyType::TemperatureLastChanged,
+                    true,
+                    None,
+                    report.map(|r| r.changed),
+                ));
+                properties.insert(temperature_last_changed_property.name().to_owned(), temperature_last_changed_property);
+            }
 
             Ok(Device {
                 id: device_get.id,
