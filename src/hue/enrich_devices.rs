@@ -23,11 +23,11 @@ pub fn enrich_devices(connectivity_list: Vec<ZigbeeConnectivityGet>, device_powe
 
 fn enrich_connectivity(device: &mut Device, connectivity_map: &HashMap<String, Connectivity>) {
     let status = connectivity_map.get(&device.id).unwrap_or_else(|| &Connectivity::Unknown);
-    let allowed_values: Vec<String> = Connectivity::iter().map(|c| c.as_str().to_string()).collect();
+    let allowed_values: Vec<String> = Connectivity::iter().map(|c| c.to_string()).collect();
 
     let connectivity_property = Box::new(
         // The allowed values always contains every `Connectivity` variant and `status` is always one of these, so it can never fail
-        EnumProperty::new("connectivity".to_string(), PropertyType::Connectivity, true, None, Some(status.as_str().to_string()), allowed_values)
+        EnumProperty::new("connectivity".to_string(), PropertyType::Connectivity, true, None, Some(status.to_string()), allowed_values)
             .expect("connectivity status is always one of the declared allowed values")
     );
     device.properties.insert(connectivity_property.name().to_string(), connectivity_property);
@@ -47,8 +47,8 @@ fn enrich_device_power(device: &mut Device, device_power_map: &HashMap<String, D
     );
     device.properties.insert(battery_level_property.name().to_string(), battery_level_property);
 
-    let battery_state = battery_level.map(|b| BatteryState::from_percent(b).as_str().to_string());
-    let allowed_values: Vec<String> = BatteryState::iter().map(|c| c.as_str().to_string()).collect();
+    let battery_state = battery_level.map(|b| BatteryState::from_percent(b).to_string());
+    let allowed_values: Vec<String> = BatteryState::iter().map(|c| c.to_string()).collect();
     let battery_state_property = Box::new(
         EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, battery_state, allowed_values)
             .expect("battery state is always one of the declared allowed values")

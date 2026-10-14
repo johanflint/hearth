@@ -12,7 +12,7 @@ pub fn map_contact_sensors_changed(property: ContactChanged) -> Vec<Event> {
         Event::EnumPropertyChanged {
             device_id: property.owner.rid.to_string(),
             property_id: PropertyLocator::Name("contact".to_string()),
-            value: Some(ContactState::from(&report.state).as_str().to_string()),
+            value: Some(ContactState::from(&report.state).to_string()),
             initiated_by: InitiatedBy::External,
         },
         Event::DateTimePropertyChanged {

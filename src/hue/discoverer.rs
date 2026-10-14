@@ -179,7 +179,7 @@ mod tests {
     use strum::IntoEnumIterator;
 
     fn connectivity_property(status: &str) -> Box<dyn Property> {
-        let allowed_connectivity_values: Vec<String> = Connectivity::iter().map(|c| c.as_str().to_string()).collect();
+        let allowed_connectivity_values: Vec<String> = Connectivity::iter().map(|c| c.to_string()).collect();
         Box::new(EnumProperty::new("connectivity".to_string(), PropertyType::Connectivity, true, None, Some(status.to_string()), allowed_connectivity_values.clone()).unwrap())
     }
 
@@ -191,7 +191,7 @@ mod tests {
     }
 
     fn battery_state_property(state: Option<&str>) -> Box<dyn Property> {
-        let allowed_battery_state_values: Vec<String> = BatteryState::iter().map(|s| s.as_str().to_string()).collect();
+        let allowed_battery_state_values: Vec<String> = BatteryState::iter().map(|s| s.to_string()).collect();
         Box::new(EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, state.map(str::to_string), allowed_battery_state_values).unwrap())
     }
 
@@ -378,7 +378,7 @@ mod tests {
             true,
             Some("6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21".to_string()),
             Some("open".to_string()),
-            ContactState::iter().map(|s| s.as_str().to_string()).collect(),
+            ContactState::iter().map(|s| s.to_string()).collect(),
         ).unwrap());
 
         let contact_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(

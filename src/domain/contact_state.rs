@@ -1,3 +1,4 @@
+use std::fmt;
 use strum::EnumIter;
 
 #[derive(EnumIter, Debug, PartialEq)]
@@ -15,6 +16,12 @@ impl ContactState {
     }
 }
 
+impl fmt::Display for ContactState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -25,5 +32,12 @@ mod tests {
     #[case::closed(ContactState::Closed, "closed")]
     fn as_str(#[case] state: ContactState, #[case] expected: &str) {
         assert_eq!(state.as_str(), expected);
+    }
+
+    #[rstest]
+    #[case::open(ContactState::Open, "open")]
+    #[case::closed(ContactState::Closed, "closed")]
+    fn display(#[case] state: ContactState, #[case] expected: &str) {
+        assert_eq!(state.to_string(), expected);
     }
 }

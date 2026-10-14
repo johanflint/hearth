@@ -18,8 +18,8 @@ pub fn map_contact_sensors(sensors: Vec<ContactGet>, device_map: &mut HashMap<St
 
             let mut properties = HashMap::with_capacity(2);
 
-            let value = sensor.contact_report.as_ref().map(|report| ContactState::from(&report.state).as_str().to_string());
-            let allowed_values = ContactState::iter().map(|s| s.as_str().to_string()).collect();
+            let value = sensor.contact_report.as_ref().map(|report| ContactState::from(&report.state).to_string());
+            let allowed_values = ContactState::iter().map(|s| s.to_string()).collect();
             let contact_property: Box<dyn Property> = Box::new(
                 EnumProperty::new(
                     "contact".to_string(),
@@ -127,7 +127,7 @@ mod tests {
                 true,
                 Some(CONTACT_ID.to_string()),
                 value.map(str::to_string),
-                ContactState::iter().map(|s| s.as_str().to_string()).collect(),
+                ContactState::iter().map(|s| s.to_string()).collect(),
             ).unwrap(),
         )
     }

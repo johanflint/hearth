@@ -11,7 +11,7 @@ pub fn map_connectivity_changed(property: ZigbeeConnectivityChanged) -> Vec<Even
     vec![Event::EnumPropertyChanged {
         device_id: property.owner.rid,
         property_id: PropertyLocator::Name("connectivity".to_string()),
-        value: Some(map_connectivity_status(&status).as_str().to_string()),
+        value: Some(map_connectivity_status(&status).to_string()),
         initiated_by: InitiatedBy::External,
     }]
 }
