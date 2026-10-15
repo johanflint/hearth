@@ -1,5 +1,5 @@
 use crate::app_config::AppConfig;
-use crate::domain::device::Device;
+use crate::domain::Device;
 use crate::hue::domain::{ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, TemperatureGet, ZigbeeConnectivityGet};
 use crate::hue::enrich_devices::enrich_devices;
 use crate::hue::map_contact_sensors::{MapContactSensorsError, map_contact_sensors};
@@ -169,9 +169,8 @@ pub enum DiscoverError {
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
-    use crate::domain::device::DeviceType;
     use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit};
-    use crate::domain::{BatteryState, Connectivity, ContactState};
+    use crate::domain::{BatteryState, Connectivity, ContactState, DeviceType};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;

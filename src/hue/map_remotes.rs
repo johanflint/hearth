@@ -1,5 +1,5 @@
-use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{DateTimeProperty, EnumProperty, Property, PropertyError, PropertyType};
+use crate::domain::{Device, DeviceType};
 use crate::hue::controller::CONTROLLER_ID;
 use crate::hue::domain::{ButtonGet, DeviceGet};
 use std::collections::HashMap;

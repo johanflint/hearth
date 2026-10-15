@@ -196,7 +196,7 @@ fn describe(result: Result<(), JoinError>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::device::Device;
+    use crate::domain::Device;
     use crate::domain::property::CartesianCoordinate;
     use crate::hue::domain::LightRequest;
     use crate::test_support::DeviceBuilder;

@@ -1,7 +1,5 @@
-use crate::domain::BatteryState;
-use crate::domain::Connectivity;
-use crate::domain::device::Device;
 use crate::domain::property::{EnumProperty, NumberProperty, Property, PropertyType, Unit};
+use crate::domain::{BatteryState, Connectivity, Device};
 use crate::hue::connectivity::map_connectivity_status;
 use crate::hue::domain::{DevicePowerGet, ZigbeeConnectivityGet};
 use std::collections::HashMap;

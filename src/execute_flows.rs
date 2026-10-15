@@ -1,7 +1,5 @@
 use crate::claim_registry::{AuthorizeError, Claim, ClaimOrigin};
-use crate::domain::Command;
-use crate::domain::device::Device;
-use crate::domain::{ClaimMode, GeoLocation, controller_registry};
+use crate::domain::{ClaimMode, Command, Device, GeoLocation, controller_registry};
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::flow_engine::{CommandMap, Context, FlowEngineError, FlowExecutionReport};

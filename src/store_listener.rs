@@ -56,7 +56,7 @@ fn update_claim(snapshot: &StoreSnapshot, change: &PropertyChange) {
 mod tests {
     use super::*;
     use crate::claim_registry::AuthorizeError;
-    use crate::domain::device::Device;
+    use crate::domain::Device;
     use crate::test_support::DeviceBuilder;
     use std::collections::HashMap;
 

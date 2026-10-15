@@ -1,4 +1,4 @@
-use crate::domain::device::Device;
+use crate::domain::Device;
 use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::{BooleanProperty, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyLocator};
 use crate::metrics::{Metric, ResultOutcomeLabel};
