@@ -7,6 +7,7 @@ use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
 use crate::metrics_layer::MetricsLayer;
+use crate::preset_registry::PresetRegistry;
 use crate::preset_store::PresetStore;
 use crate::store::Store;
 use crate::store_listener::store_listener;
@@ -37,6 +38,7 @@ mod hue;
 mod metrics;
 mod metrics_layer;
 mod preset_loader;
+mod preset_registry;
 mod preset_store;
 mod property_changed_reducer;
 mod server;
@@ -70,7 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Loaded flows");
 
     let preset_store = Arc::new(PresetStore::new(database));
-    let _ = preset_loader::load_presets_from_store(&preset_store).await?;
+    let presets = preset_loader::load_presets_from_store(&preset_store).await?;
+    let _ = Arc::new(PresetRegistry::new(presets));
     info!("✅  Loaded presets");
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
