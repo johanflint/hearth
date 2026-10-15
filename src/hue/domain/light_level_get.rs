@@ -23,3 +23,11 @@ pub struct LightLevelReport {
     pub changed: DateTime<Utc>,
     pub light_level: u64,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct LightLevelChanged {
+    #[allow(dead_code)]
+    pub id: String,
+    pub owner: Owner,
+    pub light: Option<Light>,
+}

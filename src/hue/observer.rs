@@ -7,6 +7,7 @@ use crate::hue::map_connectivity_changed::map_connectivity_changed;
 use crate::hue::map_contact_sensors_changed::map_contact_sensors_changed;
 use crate::hue::map_device_power_changed::map_device_power_changed;
 use crate::hue::map_light_changed::map_light_changed_property;
+use crate::hue::map_light_level_changed::map_light_level_changed;
 use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
 use crate::hue::map_remotes_changed::map_remote_changed;
 use crate::hue::map_temperature_changed::map_temperature_changed;
@@ -118,6 +119,13 @@ async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, p
             for event in map_motion_sensors_changed(property) {
                 tx.send(event).await.unwrap_or_else(|e| {
                     warn!("⚠️ Unable to send changed motion sensor event: {}", e);
+                });
+            }
+        }
+        ChangedProperty::LightLevel(property) => {
+            for event in map_light_level_changed(property) {
+                tx.send(event).await.unwrap_or_else(|e| {
+                    warn!("⚠️ Unable to send changed light level event: {}", e);
                 });
             }
         }

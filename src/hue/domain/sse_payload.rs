@@ -1,4 +1,4 @@
-use crate::hue::domain::{ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, MotionChanged, TemperatureChanged, ZigbeeConnectivityChanged};
+use crate::hue::domain::{ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, LightLevelChanged, MotionChanged, TemperatureChanged, ZigbeeConnectivityChanged};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, to_string_pretty};
 
@@ -26,6 +26,7 @@ pub enum DataType {
 pub enum ChangedProperty {
     Light(LightChanged),
     Motion(MotionChanged),
+    LightLevel(LightLevelChanged),
     Button(ButtonChanged),
     ZigbeeConnectivity(ZigbeeConnectivityChanged),
     DevicePower(DevicePowerChanged),
@@ -98,6 +99,48 @@ mod tests {
         let first_result = &result[0];
         assert_eq!(first_result.data.len(), 1);
         assert!(matches!(&first_result.data[0], ChangedProperty::Light(LightChanged { .. })));
+
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_a_light_level_property() -> Result<(), serde_json::Error> {
+        let json = r#"
+        [
+          {
+            "creationtime": "2026-09-23T15:37:21Z",
+            "data": [
+              {
+                "id": "a3f1c2d4-6b7e-4c1a-9d2e-5f8b0c3a7e11",
+                "owner": {
+                  "rid": "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3",
+                  "rtype": "device"
+                },
+                "light": {
+                  "light_level": 12000,
+                  "light_level_valid": true,
+                  "light_level_report": {
+                    "changed": "2026-09-23T15:37:21.003Z",
+                    "light_level": 12000
+                  }
+                },
+                "type": "light_level"
+              }
+            ],
+            "id": "11c2f169-9c29-444b-9ef6-4868f6d2daf6",
+            "type": "update"
+          }
+        ]
+        "#;
+
+        let result = serde_json::from_str::<Vec<ServerSentEventPayload>>(json)?;
+        let ChangedProperty::LightLevel(LightLevelChanged { id, owner, light }) = &result[0].data[0] else {
+            panic!("expected a LightLevel variant");
+        };
+        assert_eq!(id, "a3f1c2d4-6b7e-4c1a-9d2e-5f8b0c3a7e11");
+        assert_eq!(owner.rid, "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3");
+        let report = light.as_ref().and_then(|l| l.light_level_report.as_ref()).expect("light_level_report should be present");
+        assert_eq!(report.light_level, 12000);
 
         Ok(())
     }
