@@ -66,6 +66,14 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL,
         updated_at TEXT
     )",
+    // v2: presets
+    "CREATE TABLE presets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        value TEXT NOT NULL, -- domain::Value as JSON, same format as flow literals
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+    )",
 ];
 
 #[derive(Error, Debug)]

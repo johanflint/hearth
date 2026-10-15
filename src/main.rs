@@ -7,6 +7,7 @@ use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
 use crate::metrics_layer::MetricsLayer;
+use crate::preset_store::PresetStore;
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -35,6 +36,7 @@ mod geo_location_deserializer;
 mod hue;
 mod metrics;
 mod metrics_layer;
+mod preset_loader;
 mod preset_store;
 mod property_changed_reducer;
 mod server;
@@ -62,10 +64,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database = Database::open(Path::new(config.db().file_name()))?;
     info!("✅  Started database");
 
-    let flow_store = Arc::new(FlowStore::new(database));
+    let flow_store = Arc::new(FlowStore::new(database.clone()));
     let flows = flow_loader::load_flows_from_store(&flow_store).await?;
     let flow_registry = Arc::new(FlowRegistry::new(flows));
     info!("✅  Loaded flows");
+
+    let preset_store = Arc::new(PresetStore::new(database));
+    let _ = preset_loader::load_presets_from_store(&preset_store).await?;
+    info!("✅  Loaded presets");
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
     let (mut store, store_reactive_rx) = Store::new(rx);
