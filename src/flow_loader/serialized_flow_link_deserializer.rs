@@ -1,4 +1,4 @@
-use crate::flow_engine;
+use crate::domain;
 use crate::flow_loader::serialized_flow::SerializedFlowLink;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
@@ -13,7 +13,7 @@ impl<'de> Deserialize<'de> for SerializedFlowLink {
         match value {
             Value::String(node_id) => Ok(SerializedFlowLink {
                 node_id,
-                value: flow_engine::Value::None,
+                value: domain::Value::None,
             }),
             Value::Object(map) => {
                 let node = map
@@ -23,8 +23,8 @@ impl<'de> Deserialize<'de> for SerializedFlowLink {
                     .to_owned();
                 let value_value = map.get("value");
                 let value = match value_value {
-                    Some(v) => flow_engine::Value::deserialize(v).map_err(Error::custom)?,
-                    None => flow_engine::Value::None,
+                    Some(v) => domain::Value::deserialize(v).map_err(Error::custom)?,
+                    None => domain::Value::None,
                 };
 
                 Ok(SerializedFlowLink { node_id: node, value })
@@ -49,7 +49,7 @@ mod tests {
             parsed,
             SerializedFlowLink {
                 node_id: "node_id".to_string(),
-                value: flow_engine::Value::None
+                value: domain::Value::None
             }
         );
     }
@@ -61,15 +61,15 @@ mod tests {
             parsed,
             SerializedFlowLink {
                 node_id: "node_id".to_string(),
-                value: flow_engine::Value::None
+                value: domain::Value::None
             }
         );
     }
 
     #[rstest]
-    #[case::with_boolean(json!(true), flow_engine::Value::Boolean(true))]
-    #[case::with_number(json!(0.2), flow_engine::Value::Number(Number::Float(0.2)))]
-    fn deserializes_a_link_with_value(#[case] value: Value, #[case] expected: flow_engine::Value) {
+    #[case::with_boolean(json!(true), domain::Value::Boolean(true))]
+    #[case::with_number(json!(0.2), domain::Value::Number(Number::Float(0.2)))]
+    fn deserializes_a_link_with_value(#[case] value: Value, #[case] expected: domain::Value) {
         let parsed = serde_json::from_value::<SerializedFlowLink>(json!({ "node": "node_id", "value": value })).unwrap();
         assert_eq!(
             parsed,

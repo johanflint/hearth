@@ -1,6 +1,5 @@
-use crate::domain::device::Device;
-use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::{BooleanProperty, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyLocator};
+use crate::domain::{Device, Event, InitiatedBy};
 use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::property_changed_reducer::reduce_property_changed_event;
 use metrics::{counter, gauge};
@@ -178,7 +177,7 @@ fn resolve_property_id<T: 'static + Property>(devices: &DeviceMap, device_id: &s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::events::InitiatedBy;
+    use crate::domain::InitiatedBy;
     use crate::test_support::DeviceBuilder;
     use tokio::sync::mpsc::channel;
 

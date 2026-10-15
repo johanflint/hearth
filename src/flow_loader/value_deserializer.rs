@@ -1,6 +1,5 @@
-use crate::domain::Number;
-use crate::domain::color::Color;
-use crate::flow_engine::Value;
+use crate::domain::Color;
+use crate::domain::{Number, Value};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use serde_json::Number as JsonNumber;

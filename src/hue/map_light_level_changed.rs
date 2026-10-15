@@ -1,6 +1,5 @@
-use crate::domain::Number;
-use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::PropertyLocator;
+use crate::domain::{Event, InitiatedBy, Number};
 use crate::hue::domain::LightLevelChanged;
 use crate::hue::illuminance::light_level_to_lux;
 

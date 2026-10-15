@@ -1,6 +1,5 @@
 use crate::domain::property::{NumberProperty, Property, PropertyError, ValidatedValue};
-use crate::domain::{ClaimMode, Problem, find_device, find_property};
-use crate::flow_engine::Value;
+use crate::domain::{ClaimMode, Problem, Value, find_device, find_property};
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::expression::evaluate;
@@ -222,8 +221,8 @@ impl Action for ControlDeviceAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Color;
     use crate::domain::Number;
-    use crate::domain::color::Color;
     use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind};
     use crate::flow_engine::Expression;
     use crate::store::DeviceMap;

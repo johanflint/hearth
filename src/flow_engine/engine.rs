@@ -1,8 +1,9 @@
+use crate::domain::Value;
+use crate::flow_engine::SchedulerCommand;
 use crate::flow_engine::context::Context;
 use crate::flow_engine::expression::{ExpressionError, evaluate};
 use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
 use crate::flow_engine::scope::Scope;
-use crate::flow_engine::{SchedulerCommand, Value};
 use crate::metrics::{Metric, MetricReason};
 use ExecuteNodeResult::*;
 use action_macros::track_failures;
@@ -204,8 +205,7 @@ impl FlowExecutionReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::Number;
-    use crate::domain::events::InitiatedBy;
+    use crate::domain::{InitiatedBy, Number};
     use crate::flow_engine::Expression::Literal;
     use crate::flow_engine::action::LogAction;
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNodeKind};

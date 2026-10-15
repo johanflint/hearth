@@ -1,5 +1,4 @@
-use crate::domain::ClaimMode;
-use crate::domain::device::Device;
+use crate::domain::{ClaimMode, Device};
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;

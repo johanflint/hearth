@@ -1,5 +1,5 @@
-use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, Property, PropertyType, Unit};
+use crate::domain::{Device, DeviceType};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::controller::CONTROLLER_ID;
 use crate::hue::domain::{DeviceGet, LightGet};

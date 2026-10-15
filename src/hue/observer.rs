@@ -1,5 +1,5 @@
 use crate::app_config::AppConfig;
-use crate::domain::events::{Event, InitiatedBy};
+use crate::domain::{Event, InitiatedBy};
 use crate::hue::PendingWrites;
 use crate::hue::corrections::is_unnoticeable_correction;
 use crate::hue::domain::{ChangedProperty, LightChanged, ServerSentEventPayload, UnknownProperty};
@@ -196,7 +196,7 @@ fn describe(result: Result<(), JoinError>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::device::Device;
+    use crate::domain::Device;
     use crate::domain::property::CartesianCoordinate;
     use crate::hue::domain::LightRequest;
     use crate::test_support::DeviceBuilder;

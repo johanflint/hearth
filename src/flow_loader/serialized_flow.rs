@@ -1,5 +1,6 @@
+use crate::domain::Value;
 use crate::flow_engine::action::Action;
-use crate::flow_engine::{Expression, Schedule, Value};
+use crate::flow_engine::{Expression, Schedule};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use std::time::Duration;
@@ -111,7 +112,6 @@ mod tests {
     use super::*;
     use crate::domain::Number;
     use crate::flow_engine::Expression::{EqualTo, Literal};
-    use crate::flow_engine::Value;
     use crate::flow_engine::action::LogAction;
     use serde_json::json;
 

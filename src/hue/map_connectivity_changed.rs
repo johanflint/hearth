@@ -1,5 +1,5 @@
-use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::PropertyLocator;
+use crate::domain::{Event, InitiatedBy};
 use crate::hue::connectivity::map_connectivity_status;
 use crate::hue::domain::ZigbeeConnectivityChanged;
 

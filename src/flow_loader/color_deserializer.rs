@@ -1,4 +1,4 @@
-use crate::domain::color::Color;
+use crate::domain::Color;
 use crate::domain::property::CartesianCoordinate;
 use serde::de::{Error, Unexpected};
 use serde::{Deserialize, Deserializer};

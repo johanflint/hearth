@@ -1,6 +1,5 @@
-use crate::domain::ContactState;
-use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{DateTimeProperty, EnumProperty, Property, PropertyType};
+use crate::domain::{ContactState, Device, DeviceType};
 use crate::hue::controller::CONTROLLER_ID;
 use crate::hue::domain::{ContactGet, ContactState as HueContactState, DeviceGet};
 use std::collections::HashMap;

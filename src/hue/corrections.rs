@@ -1,4 +1,4 @@
-use crate::domain::device::Device;
+use crate::domain::Device;
 use crate::domain::property::{ColorProperty, NumberProperty, PropertyType};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::LightChanged;

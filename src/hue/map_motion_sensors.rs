@@ -1,5 +1,5 @@
-use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, DateTimeProperty, NumberProperty, Property, PropertyType, Unit};
+use crate::domain::{Device, DeviceType};
 use crate::hue::controller::CONTROLLER_ID;
 use crate::hue::domain::{DeviceGet, LightLevelGet, MotionGet, TemperatureGet};
 use crate::hue::illuminance::light_level_to_lux;
