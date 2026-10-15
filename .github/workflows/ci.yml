@@ -14,6 +14,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  format:
+    name: Hearth - format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rustup
+        run: rustup show # picks up the pinned version in rust-toolchain.toml automatically
+      - name: Check formatting
+        run: cargo fmt --check
+
   build_and_test:
     name: Hearth - ${{ matrix.toolchain }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
@@ -35,7 +45,7 @@ jobs:
       - name: Rustup
         run: |
           if [ "${{ matrix.toolchain }}" = "stable" ]; then
-            rustup show # picks up the pinnen version in rust-toolchain.toml automatically
+            rustup show # picks up the pinned version in rust-toolchain.toml automatically
           else
             rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
           fi
