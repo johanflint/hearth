@@ -1,5 +1,5 @@
 mod claim_mode;
-pub mod color;
+mod color;
 pub mod commands;
 pub mod controller;
 pub mod controller_registry;
@@ -19,6 +19,7 @@ mod value;
 
 pub use battery_state::BatteryState;
 pub use claim_mode::ClaimMode;
+pub use color::Color;
 pub use connectivity::Connectivity;
 pub use contact_state::ContactState;
 pub use geo_location::GeoLocation;

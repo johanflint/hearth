@@ -221,8 +221,8 @@ impl Action for ControlDeviceAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Color;
     use crate::domain::Number;
-    use crate::domain::color::Color;
     use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind};
     use crate::flow_engine::Expression;
     use crate::store::DeviceMap;

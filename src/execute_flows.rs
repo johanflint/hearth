@@ -184,7 +184,7 @@ fn filter_flow_editable_properties(device: &Device, properties: HashMap<Property
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::color::Color;
+    use crate::domain::Color;
     use crate::domain::property::{BooleanProperty, PropertyType};
     use crate::domain::{Number, Value};
     use crate::flow_engine::action::DeviceCommand;

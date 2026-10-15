@@ -1,5 +1,5 @@
 use crate::app_config::AppConfig;
-use crate::domain::color::Color;
+use crate::domain::Color;
 use crate::domain::commands::Command;
 use crate::domain::controller::Controller;
 use crate::domain::device::{Device, DeviceType};

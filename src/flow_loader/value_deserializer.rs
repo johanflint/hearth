@@ -1,4 +1,4 @@
-use crate::domain::color::Color;
+use crate::domain::Color;
 use crate::domain::{Number, Value};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};

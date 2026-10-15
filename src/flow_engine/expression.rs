@@ -524,9 +524,9 @@ fn join_kinds(kinds: &[ValueKind]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Color;
     use crate::domain::Number;
     use crate::domain::Weekday::*;
-    use crate::domain::color::Color;
     use crate::domain::device::Device;
     use crate::domain::events::InitiatedBy;
     use crate::domain::property::{CartesianCoordinate, Gamut, Property, Unit};
