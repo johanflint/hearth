@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Rustup
-        run: rustup show # picks up the pinned version in rust-toolchain.toml automatically
+        run: rustup toolchain install
       - name: Check formatting
         run: cargo fmt --check
 
@@ -45,7 +45,7 @@ jobs:
       - name: Rustup
         run: |
           if [ "${{ matrix.toolchain }}" = "stable" ]; then
-            rustup show # picks up the pinned version in rust-toolchain.toml automatically
+            rustup toolchain install
           else
             rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
           fi
