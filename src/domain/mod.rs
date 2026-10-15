@@ -1,6 +1,9 @@
+mod battery_state;
 mod claim_mode;
 mod color;
 mod commands;
+mod connectivity;
+mod contact_state;
 mod controller;
 pub mod controller_registry;
 mod device;
@@ -9,13 +12,10 @@ mod geo_location;
 mod number;
 pub mod property;
 mod time;
+mod validator;
+mod value;
 mod weekday;
 mod weekday_condition;
-mod connectivity;
-mod battery_state;
-mod validator;
-mod contact_state;
-mod value;
 
 pub use battery_state::BatteryState;
 pub use claim_mode::ClaimMode;
