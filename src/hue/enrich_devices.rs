@@ -5,13 +5,15 @@ use crate::hue::domain::{DevicePowerGet, ZigbeeConnectivityGet};
 use std::collections::HashMap;
 use strum::IntoEnumIterator;
 
-pub fn enrich_devices(connectivity_list: Vec<ZigbeeConnectivityGet>, device_power_list: Vec<DevicePowerGet>, devices: &mut Vec<Device>) {
-    let connectivity_map: HashMap<String, Connectivity> = connectivity_list.into_iter()
-        .map(|c| (c.owner.rid, map_connectivity_status(&c.status)))
-        .collect();
-    let device_power_map: HashMap<String, DevicePowerGet> = device_power_list.into_iter()
-        .map(|p| (p.owner.rid.clone(), p))
-        .collect();
+pub fn enrich_devices(
+    connectivity_list: Vec<ZigbeeConnectivityGet>,
+    device_power_list: Vec<DevicePowerGet>,
+    devices: &mut Vec<Device>,
+) {
+    let connectivity_map: HashMap<String, Connectivity> =
+        connectivity_list.into_iter().map(|c| (c.owner.rid, map_connectivity_status(&c.status))).collect();
+    let device_power_map: HashMap<String, DevicePowerGet> =
+        device_power_list.into_iter().map(|p| (p.owner.rid.clone(), p)).collect();
 
     for device in devices {
         enrich_connectivity(device, &connectivity_map);
@@ -25,8 +27,15 @@ fn enrich_connectivity(device: &mut Device, connectivity_map: &HashMap<String, C
 
     let connectivity_property = Box::new(
         // The allowed values always contains every `Connectivity` variant and `status` is always one of these, so it can never fail
-        EnumProperty::new("connectivity".to_string(), PropertyType::Connectivity, true, None, Some(status.to_string()), allowed_values)
-            .expect("connectivity status is always one of the declared allowed values")
+        EnumProperty::new(
+            "connectivity".to_string(),
+            PropertyType::Connectivity,
+            true,
+            None,
+            Some(status.to_string()),
+            allowed_values,
+        )
+        .expect("connectivity status is always one of the declared allowed values"),
     );
     device.properties.insert(connectivity_property.name().to_string(), connectivity_property);
 }
@@ -41,15 +50,22 @@ fn enrich_device_power(device: &mut Device, device_power_map: &HashMap<String, D
         NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
             .unit(Unit::Percentage)
             .positive_int(battery_level, Some(0), Some(100))
-            .build()
+            .build(),
     );
     device.properties.insert(battery_level_property.name().to_string(), battery_level_property);
 
     let battery_state = battery_level.map(|b| BatteryState::from_percent(b).to_string());
     let allowed_values: Vec<String> = BatteryState::iter().map(|c| c.to_string()).collect();
     let battery_state_property = Box::new(
-        EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, battery_state, allowed_values)
-            .expect("battery state is always one of the declared allowed values")
+        EnumProperty::new(
+            "batteryState".to_string(),
+            PropertyType::BatteryState,
+            true,
+            None,
+            battery_state,
+            allowed_values,
+        )
+        .expect("battery state is always one of the declared allowed values"),
     );
     device.properties.insert(battery_state_property.name().to_string(), battery_state_property);
 }
@@ -67,12 +83,13 @@ mod tests {
         let connectivity_list = vec![ZigbeeConnectivityGet {
             id: "connectivity".to_string(),
             owner: Owner { rid: "device".to_string(), rtype: "device".to_string() },
-            status: "connected".to_string()
+            status: "connected".to_string(),
         }];
 
         enrich_devices(connectivity_list, vec![], &mut devices);
 
-        let property = devices[0].properties.get("connectivity").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
+        let property =
+            devices[0].properties.get("connectivity").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
         assert_eq!(property.name(), "connectivity");
         assert_eq!(property.property_type(), PropertyType::Connectivity);
         assert!(property.readonly());
@@ -87,7 +104,8 @@ mod tests {
 
         enrich_devices(vec![], vec![], &mut devices);
 
-        let property = devices[0].properties.get("connectivity").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
+        let property =
+            devices[0].properties.get("connectivity").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
         assert_eq!(property.value(), Some("unknown"));
     }
 
@@ -103,12 +121,14 @@ mod tests {
 
         enrich_devices(vec![], device_power_list, &mut devices);
 
-        let battery_level = devices[0].properties.get("batteryLevel").unwrap().as_any().downcast_ref::<NumberProperty>().unwrap();
+        let battery_level =
+            devices[0].properties.get("batteryLevel").unwrap().as_any().downcast_ref::<NumberProperty>().unwrap();
         assert_eq!(battery_level.property_type(), PropertyType::BatteryLevel);
         assert!(battery_level.readonly());
         assert_eq!(battery_level.as_u64(), Some(76));
 
-        let battery_state = devices[0].properties.get("batteryState").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
+        let battery_state =
+            devices[0].properties.get("batteryState").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
         assert_eq!(battery_state.property_type(), PropertyType::BatteryState);
         assert!(battery_state.readonly());
         assert_eq!(battery_state.value(), Some("normal"));
@@ -126,10 +146,12 @@ mod tests {
 
         enrich_devices(vec![], device_power_list, &mut devices);
 
-        let battery_level = devices[0].properties.get("batteryLevel").unwrap().as_any().downcast_ref::<NumberProperty>().unwrap();
+        let battery_level =
+            devices[0].properties.get("batteryLevel").unwrap().as_any().downcast_ref::<NumberProperty>().unwrap();
         assert_eq!(battery_level.as_u64(), None);
 
-        let battery_state = devices[0].properties.get("batteryState").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
+        let battery_state =
+            devices[0].properties.get("batteryState").unwrap().as_any().downcast_ref::<EnumProperty>().unwrap();
         assert_eq!(battery_state.value(), None);
     }
 

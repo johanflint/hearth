@@ -21,7 +21,10 @@ impl<'de> Deserialize<'de> for Schedule {
                 }
             }
             Value::Object(map) => {
-                let event = map.get("event").and_then(|v| v.as_str()).ok_or_else(|| Error::custom("missing or invalid field 'event'"))?;
+                let event = map
+                    .get("event")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| Error::custom("missing or invalid field 'event'"))?;
                 let when_value = map.get("when");
                 let when = match when_value {
                     Some(v) => WeekdayCondition::deserialize(v).map_err(Error::custom)?,
@@ -35,7 +38,9 @@ impl<'de> Deserialize<'de> for Schedule {
                     _ => Err(Error::custom(format!("unknown schedule event '{}'", event))),
                 }
             }
-            _ => Err(Error::custom("a string containing a cron expression or an object with 'event', 'when' and 'offset'")),
+            _ => Err(Error::custom(
+                "a string containing a cron expression or an object with 'event', 'when' and 'offset'",
+            )),
         }
     }
 }
@@ -61,7 +66,10 @@ mod tests {
         let err = parsed.expect_err("expected an error but got Ok");
         let msg = err.to_string();
         let expected_message = "expected a valid cron expression";
-        assert!(msg.contains(expected_message), "Expected error message to contain '{expected_message}', but got '{msg}'");
+        assert!(
+            msg.contains(expected_message),
+            "Expected error message to contain '{expected_message}', but got '{msg}'"
+        );
     }
 
     #[rstest]
@@ -133,6 +141,9 @@ mod tests {
         let parsed: Result<Schedule, _> = serde_json::from_value(json);
         let err = parsed.expect_err("expected an error but got Ok");
         let msg = err.to_string();
-        assert!(msg.contains(expected_message), "Expected error message to contain '{expected_message}', but got '{msg}'");
+        assert!(
+            msg.contains(expected_message),
+            "Expected error message to contain '{expected_message}', but got '{msg}'"
+        );
     }
 }

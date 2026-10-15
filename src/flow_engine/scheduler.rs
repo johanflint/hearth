@@ -72,7 +72,10 @@ pub async fn scheduler(
                 let entry = match reconcile_action(entry.clone(), revision) {
                     ReconcileAction::SkipStaleRevision => {
                         let current = entry.expect("stale revision implies an entry exists").revision;
-                        debug!("🕗 Reconciling flow '{}'... skipped, stale revision {} (current {})", flow_id, revision, current);
+                        debug!(
+                            "🕗 Reconciling flow '{}'... skipped, stale revision {} (current {})",
+                            flow_id, revision, current
+                        );
                         continue;
                     }
                     ReconcileAction::CancelBecauseFlowRemoved => {
@@ -115,7 +118,8 @@ pub async fn scheduler(
                             continue; // Already passed
                         }
 
-                        let scheduled_instant = Instant::now() + Duration::from_millis(duration.num_milliseconds() as u64);
+                        let scheduled_instant =
+                            Instant::now() + Duration::from_millis(duration.num_milliseconds() as u64);
 
                         if !scheduled_deadline_won(&cancellation, scheduled_instant).await {
                             info!("🕗 Scheduling flow '{}'... cancelled while waiting", flow_id_clone);
@@ -126,7 +130,14 @@ pub async fn scheduler(
                         let snapshot = notifier_rx_clone.borrow().clone();
 
                         // During execution cancellation is deliberately ignored so a flow in progress always runs to completion
-                        execute_flows(vec![entry.flow.clone()], snapshot, None, tx_clone.clone(), geo_location_clone.clone()).await;
+                        execute_flows(
+                            vec![entry.flow.clone()],
+                            snapshot,
+                            None,
+                            tx_clone.clone(),
+                            geo_location_clone.clone(),
+                        )
+                        .await;
 
                         if cancellation.is_cancelled() {
                             info!("🕗 Scheduling flow '{}'... cancelled after execution, stopping", flow_id_clone);
@@ -142,10 +153,13 @@ pub async fn scheduler(
                 tokio::spawn(async move {
                     match join_handle.await {
                         Ok(()) => debug!("🕗 Scheduling flow '{}'... finished", flow_id_for_supervisor),
-                        Err(e) if e.is_panic() => error!("🕗🕗 Scheduling flow '{}'... panicked", flow_id_for_supervisor),
+                        Err(e) if e.is_panic() => {
+                            error!("🕗🕗 Scheduling flow '{}'... panicked", flow_id_for_supervisor)
+                        }
                         Err(e) => warn!("🕗 Scheduling flow '{}'... failed: {}", flow_id_for_supervisor, e),
                     }
-                    let _ = job_finished_tx.send(JobFinished { flow_id: flow_id_for_supervisor.to_string(), generation });
+                    let _ =
+                        job_finished_tx.send(JobFinished { flow_id: flow_id_for_supervisor.to_string(), generation });
                 });
 
                 scheduled_flows.insert(flow_id.clone(), ScheduledJob { generation, cancellation: cancellation_clone });
@@ -227,7 +241,9 @@ mod tests {
 
     fn versioned_flow(schedule: Option<Schedule>, revision: u64) -> VersionedFlow {
         let start_node = FlowNode::new("start".to_string(), vec![], FlowNodeKind::Start);
-        let flow = Flow::new("flow".to_string(), "flow".to_string(), schedule, None, Arc::new(start_node), HashMap::new()).unwrap();
+        let flow =
+            Flow::new("flow".to_string(), "flow".to_string(), schedule, None, Arc::new(start_node), HashMap::new())
+                .unwrap();
         VersionedFlow { flow: Arc::new(flow), revision }
     }
 

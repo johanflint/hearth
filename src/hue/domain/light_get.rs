@@ -29,7 +29,13 @@ pub struct LightRequest {
 }
 
 impl LightRequest {
-    pub fn new(on: Option<On>, dimming: Option<f64>, color_temperature: Option<u64>, color: Option<CartesianCoordinate>, transition: Option<Duration>) -> Self {
+    pub fn new(
+        on: Option<On>,
+        dimming: Option<f64>,
+        color_temperature: Option<u64>,
+        color: Option<CartesianCoordinate>,
+        transition: Option<Duration>,
+    ) -> Self {
         LightRequest {
             on,
             dimming: dimming.map(|brightness| SetDimming { brightness }),
@@ -146,7 +152,6 @@ pub struct ChangedColor {
     pub gamut: Option<ColorGamut>,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,7 +161,10 @@ mod tests {
     fn light_request_serializes_the_transition_as_dynamics_duration_in_milliseconds() {
         let request = LightRequest::new(Some(On { on: false }), None, None, None, Some(Duration::from_secs(600)));
 
-        assert_eq!(serde_json::to_value(request).unwrap(), json!({ "on": { "on": false }, "dynamics": { "duration": 600000 } }));
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            json!({ "on": { "on": false }, "dynamics": { "duration": 600000 } })
+        );
     }
 
     #[test]

@@ -3,20 +3,18 @@ use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
-pub(in crate::flow_engine) static ACTION_REGISTRY: LazyLock<RwLock<HashMap<String, fn(&serde_json::Value) -> Result<Box<dyn Action>, serde_json::Error>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+pub(in crate::flow_engine) static ACTION_REGISTRY: LazyLock<
+    RwLock<HashMap<String, fn(&serde_json::Value) -> Result<Box<dyn Action>, serde_json::Error>>>,
+> = LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub(in crate::flow_engine) fn register_action<T: Action + Send + Sync + Default + DeserializeOwned + 'static>() {
     let kind = T::default().kind().to_owned();
-    ACTION_REGISTRY
-        .write()
-        .unwrap()
-        .insert(kind, |json| {
-            // Tracks the path inside the action, like 'property.on', as it is lost when the action is buffered
-            serde_path_to_error::deserialize::<_, T>(json)
-                .map(|a| Box::new(a) as Box<dyn Action>)
-                .map_err(serde::de::Error::custom)
-        });
+    ACTION_REGISTRY.write().unwrap().insert(kind, |json| {
+        // Tracks the path inside the action, like 'property.on', as it is lost when the action is buffered
+        serde_path_to_error::deserialize::<_, T>(json)
+            .map(|a| Box::new(a) as Box<dyn Action>)
+            .map_err(serde::de::Error::custom)
+    });
 }
 
 pub(in crate::flow_engine) fn known_actions() -> Vec<String> {

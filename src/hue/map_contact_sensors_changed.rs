@@ -31,10 +31,7 @@ mod tests {
     use rstest::rstest;
 
     fn owner() -> Owner {
-        Owner {
-            rid: "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77".to_string(),
-            rtype: "device".to_string(),
-        }
+        Owner { rid: "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77".to_string(), rtype: "device".to_string() }
     }
 
     #[test]

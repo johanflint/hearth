@@ -5,8 +5,5 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub enum Command {
-    ControlDevice {
-        device: Arc<Device>,
-        property: Arc<HashMap<String, ResolvedPropertyCommand>>,
-    },
+    ControlDevice { device: Arc<Device>, property: Arc<HashMap<String, ResolvedPropertyCommand>> },
 }

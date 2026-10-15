@@ -103,7 +103,6 @@ mod tests {
     use rstest::rstest;
     use serde_json::json;
 
-
     #[rstest]
     #[case::unknown_device(Problem::UnknownDevice{ device_id: "lamp".to_string() }, "unknownDevice")]
     #[case::unknown_property(Problem::UnknownProperty{ device_id: "lamp".to_string(), property_id: "on".to_string() }, "unknownProperty")]
@@ -123,13 +122,13 @@ mod tests {
     fn problem_code_maps_each_problem(#[case] problem: Problem, #[case] expected: &str) {
         assert_eq!(problem_code(&problem), expected);
     }
-    
 
     #[tokio::test]
     async fn validation_error_response_lists_all_issues() {
         let issues = vec![
             Problem::UnknownDevice { device_id: "lamp".to_string() }.at(Location::Trigger),
-            Problem::UnknownProperty { device_id: "sensor".to_string(), property_id: "on".to_string() }.at(Location::Node { node_id: "turn_on".to_string() }),
+            Problem::UnknownProperty { device_id: "sensor".to_string(), property_id: "on".to_string() }
+                .at(Location::Node { node_id: "turn_on".to_string() }),
         ];
         let err = FlowValidationError::from_issues(issues).unwrap_err();
 

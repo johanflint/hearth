@@ -13,7 +13,8 @@ use tokio::sync::{mpsc, watch};
 
 pub(super) const VALID_FLOW_ID: &str = "01K7KK6H5R7Y72QJEJSJQCKMRQ";
 pub(super) const VALID_FLOW_JSON: &str = include_str!("../../../tests/resources/flows/logFlow.json");
-pub(super) const INVALID_FLOW_JSON: &str = include_str!("../../../tests/resources/flows/invalid/missingEndNodeFlow.json");
+pub(super) const INVALID_FLOW_JSON: &str =
+    include_str!("../../../tests/resources/flows/invalid/missingEndNodeFlow.json");
 
 pub(super) fn valid_flow_document() -> serde_json::Value {
     serde_json::from_str(VALID_FLOW_JSON).expect("valid flow JSON")
@@ -35,7 +36,8 @@ pub(super) fn create_state(flow_registry: FlowRegistry) -> Fixture {
     let flow_store = Arc::new(FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store"));
     let flow_registry = Arc::new(flow_registry);
     let (_, snapshot_rx) = watch::channel(StoreSnapshot::default());
-    let flow_service = Arc::new(FlowService::new(Arc::clone(&flow_store), Arc::clone(&flow_registry), scheduler_tx, snapshot_rx));
+    let flow_service =
+        Arc::new(FlowService::new(Arc::clone(&flow_store), Arc::clone(&flow_registry), scheduler_tx, snapshot_rx));
     Fixture { state: ApiState::new(handle, flow_service), flow_store, flow_registry, scheduler_rx }
 }
 

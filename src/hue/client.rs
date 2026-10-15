@@ -37,12 +37,8 @@ mod tests {
     async fn new_client_sets_the_hue_application_key_header() -> Result<(), HueClientError> {
         let mut server = mockito::Server::new_async().await;
 
-        let mock = server
-            .mock("GET", "/")
-            .with_status(200)
-            .match_header("hue-application-key", "key")
-            .create_async()
-            .await;
+        let mock =
+            server.mock("GET", "/").with_status(200).match_header("hue-application-key", "key").create_async().await;
 
         let config = AppConfigBuilder::new().hue_url(server.url()).build();
         let client = new_client(&config)?;
@@ -67,7 +63,11 @@ mod tests {
 
         assert!(result.is_err(), "expected the request to time out, got {:?}", result);
         assert!(result.unwrap_err().is_timeout(), "expected a timeout error");
-        assert!(start.elapsed() < Duration::from_secs(1), "expected request to fail fast, not hang; took {:?}", start.elapsed());
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "expected request to fail fast, not hang; took {:?}",
+            start.elapsed()
+        );
 
         Ok(())
     }

@@ -9,13 +9,7 @@ pub struct ApiState {
 }
 
 impl ApiState {
-    pub fn new(
-        prometheus_handle: PrometheusHandle,
-        flow_service: Arc<FlowService>,
-    ) -> Self {
-        ApiState {
-            prometheus_handle: Arc::new(prometheus_handle),
-            flow_service,
-        }
+    pub fn new(prometheus_handle: PrometheusHandle, flow_service: Arc<FlowService>) -> Self {
+        ApiState { prometheus_handle: Arc::new(prometheus_handle), flow_service }
     }
 }

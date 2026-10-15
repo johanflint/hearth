@@ -25,7 +25,9 @@ pub fn map_light_changed_property(property: LightChanged, initiated_by: Initiate
     }
 
     if let Some(color_temperature) = property.color_temperature {
-        if color_temperature.mirek_valid && let Some(mirek) = color_temperature.mirek {
+        if color_temperature.mirek_valid
+            && let Some(mirek) = color_temperature.mirek
+        {
             let clamped = mirek.clamp(153, 500);
             if clamped != mirek {
                 warn!("⚠️ Mirek value of '{mirek}' is out of range [153, 500], clamping to '{clamped}'")
@@ -66,10 +68,7 @@ mod tests {
     fn maps_no_changes() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner {
-                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                rtype: "device".to_string(),
-            },
+            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: None,
@@ -84,10 +83,7 @@ mod tests {
     fn maps_on_property() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner {
-                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                rtype: "device".to_string(),
-            },
+            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: Some(On { on: true }),
             dimming: None,
             color_temperature: None,
@@ -111,15 +107,9 @@ mod tests {
     fn maps_dimming_property() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner {
-                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                rtype: "device".to_string(),
-            },
+            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
-            dimming: Some(Dimming {
-                brightness: 20.8,
-                min_dim_level: None,
-            }),
+            dimming: Some(Dimming { brightness: 20.8, min_dim_level: None }),
             color_temperature: None,
             color: None,
         };
@@ -141,10 +131,7 @@ mod tests {
     fn maps_color_temperature_property() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner {
-                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                rtype: "device".to_string(),
-            },
+            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: Some(ChangedColorTemperature { mirek: Some(153), mirek_valid: true }),
@@ -168,10 +155,7 @@ mod tests {
     fn ignores_color_temperature_if_mirek_is_invalid() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner {
-                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                rtype: "device".to_string(),
-            },
+            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: Some(ChangedColorTemperature { mirek: Some(100), mirek_valid: false }),
@@ -188,10 +172,7 @@ mod tests {
     fn ignores_color_temperature_if_mirek_is_out_of_bounds(#[case] mirek: u64, #[case] expected_kelvin: u64) {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner {
-                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                rtype: "device".to_string(),
-            },
+            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: Some(ChangedColorTemperature { mirek: Some(mirek), mirek_valid: true }),
@@ -215,10 +196,7 @@ mod tests {
     fn maps_color_property() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner {
-                rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(),
-                rtype: "device".to_string(),
-            },
+            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: None,
@@ -266,7 +244,9 @@ mod tests {
         assert_eq!(events.len(), 4);
         for event in events {
             let initiated_by = match event {
-                BooleanPropertyChanged { initiated_by, .. } | NumberPropertyChanged { initiated_by, .. } | ColorPropertyChanged { initiated_by, .. } => initiated_by,
+                BooleanPropertyChanged { initiated_by, .. }
+                | NumberPropertyChanged { initiated_by, .. }
+                | ColorPropertyChanged { initiated_by, .. } => initiated_by,
                 other => panic!("unexpected event: {other:?}"),
             };
             assert_eq!(initiated_by, InitiatedBy::External);

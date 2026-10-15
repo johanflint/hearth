@@ -7,7 +7,8 @@ use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
 
 pub(super) fn parse_request<T: DeserializeOwned>(body: &Bytes) -> Result<T, Response> {
-    let body = str::from_utf8(body).map_err(|_| (StatusCode::BAD_REQUEST, Json(ErrorResponse::new_code_only("invalidUtf8"))).into_response())?;
+    let body = str::from_utf8(body)
+        .map_err(|_| (StatusCode::BAD_REQUEST, Json(ErrorResponse::new_code_only("invalidUtf8"))).into_response())?;
     serde_json::from_str(body).map_err(invalid_json)
 }
 
@@ -27,7 +28,9 @@ pub(super) fn flow_factory_error_response(err: FlowFactoryError) -> Response {
         FlowFactoryError::TooManyParentNodes { .. } => ErrorResponse::new("tooManyParentNodes", message),
         FlowFactoryError::UnusedNodes { .. } => ErrorResponse::new("unusedNodes", message),
         FlowFactoryError::DuplicateLinkValues { .. } => ErrorResponse::new("duplicateLinkValues", message),
-        FlowFactoryError::PropertyChangedInScheduledFlow => ErrorResponse::new("propertyChangedInScheduledFlow", message),
+        FlowFactoryError::PropertyChangedInScheduledFlow => {
+            ErrorResponse::new("propertyChangedInScheduledFlow", message)
+        }
     };
 
     (StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response()

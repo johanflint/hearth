@@ -15,13 +15,15 @@ impl DeviceBuilder {
     }
 
     pub(crate) fn with_boolean_property(mut self, name: &str, value: bool) -> Self {
-        let property: Box<dyn Property> = Box::new(BooleanProperty::new(name.to_string(), PropertyType::On, false, None, value));
+        let property: Box<dyn Property> =
+            Box::new(BooleanProperty::new(name.to_string(), PropertyType::On, false, None, value));
         self.properties.insert(name.to_string(), property);
         self
     }
 
     pub(crate) fn with_color_property(mut self, name: &str, xy: CartesianCoordinate, gamut: Option<Gamut>) -> Self {
-        let property: Box<dyn Property> = Box::new(ColorProperty::new(name.to_string(), PropertyType::Color,false, None, xy, gamut));
+        let property: Box<dyn Property> =
+            Box::new(ColorProperty::new(name.to_string(), PropertyType::Color, false, None, xy, gamut));
         self.properties.insert(name.to_string(), property);
         self
     }

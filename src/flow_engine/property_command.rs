@@ -52,7 +52,13 @@ mod tests {
         "#;
 
         let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap(), PropertyCommand { value: Literal { value: Value::Boolean(true) }, transition: Some(Duration::from_secs(600)) });
+        assert_eq!(
+            response.unwrap(),
+            PropertyCommand {
+                value: Literal { value: Value::Boolean(true) },
+                transition: Some(Duration::from_secs(600))
+            }
+        );
     }
 
     #[test]
@@ -68,7 +74,10 @@ mod tests {
         "#;
 
         let response = serde_json::from_str::<PropertyCommand>(json);
-        assert_eq!(response.unwrap_err().to_string(), "invalid value: string \"soon\", expected a duration at line 7 column 32");
+        assert_eq!(
+            response.unwrap_err().to_string(),
+            "invalid value: string \"soon\", expected a duration at line 7 column 32"
+        );
     }
 
     #[test]
@@ -92,7 +101,12 @@ mod tests {
         "#;
 
         let response = serde_json::from_str::<PropertyCommand>(json);
-        assert!(response.unwrap_err().to_string().starts_with("invalid type: boolean `true`, expected internally tagged enum Expression"));
+        assert!(
+            response
+                .unwrap_err()
+                .to_string()
+                .starts_with("invalid type: boolean `true`, expected internally tagged enum Expression")
+        );
     }
 
     #[test]

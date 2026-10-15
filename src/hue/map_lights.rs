@@ -1,4 +1,6 @@
-use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, Property, PropertyType, Unit};
+use crate::domain::property::{
+    BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, Property, PropertyType, Unit,
+};
 use crate::domain::{Device, DeviceType};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::controller::CONTROLLER_ID;
@@ -6,7 +8,10 @@ use crate::hue::domain::{DeviceGet, LightGet};
 use std::collections::HashMap;
 use thiserror::Error;
 
-pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, DeviceGet>) -> Result<Vec<Device>, MapLightsError> {
+pub fn map_lights(
+    lights: Vec<LightGet>,
+    device_map: &mut HashMap<String, DeviceGet>,
+) -> Result<Vec<Device>, MapLightsError> {
     lights
         .into_iter()
         .map(|light| {
@@ -16,7 +21,13 @@ pub fn map_lights(lights: Vec<LightGet>, device_map: &mut HashMap<String, Device
 
             let mut properties = HashMap::with_capacity(4);
 
-            let on_property: Box<dyn Property> = Box::new(BooleanProperty::new("on".to_string(), PropertyType::On, false, Some(light.id.clone()), light.on.on));
+            let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
+                "on".to_string(),
+                PropertyType::On,
+                false,
+                Some(light.id.clone()),
+                light.on.on,
+            ));
             properties.insert(on_property.name().to_owned(), on_property);
 
             light.dimming.map(|dimming| {
@@ -107,10 +118,7 @@ mod tests {
                 software_version: "67.116.3".to_string(),
                 hardware_platform_type: Some("100b-104".to_string()),
             },
-            metadata: Metadata {
-                name: "Lamp".to_string(),
-                archetype: "sultan_bulb".to_string(),
-            },
+            metadata: Metadata { name: "Lamp".to_string(), archetype: "sultan_bulb".to_string() },
         };
 
         let mut device_map = HashMap::from([(device_get.id.clone(), device_get)]);

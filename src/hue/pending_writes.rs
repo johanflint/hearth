@@ -71,16 +71,25 @@ impl PendingWrite {
     }
 
     fn confirm(&mut self, change: &LightChanged) -> bool {
-        let on = take_if_matches(&mut self.on, change.on.as_ref().map(|on| on.on), |expected, actual| expected == actual);
-        let brightness = take_if_matches(&mut self.brightness, change.dimming.as_ref().map(|dimming| dimming.brightness), |expected, actual| {
-            (expected - actual).abs() <= BRIGHTNESS_TOLERANCE
-        });
-        let mirek = take_if_matches(&mut self.mirek, change.color_temperature.as_ref().and_then(|color_temperature| color_temperature.mirek), |expected, actual| {
-            expected.abs_diff(actual) <= MIREK_TOLERANCE
-        });
-        let xy = take_if_matches(&mut self.xy, change.color.as_ref().map(|color| (color.xy.x, color.xy.y)), |expected, actual| {
-            (expected.0 - actual.0).abs() <= XY_TOLERANCE && (expected.1 - actual.1).abs() <= XY_TOLERANCE
-        });
+        let on =
+            take_if_matches(&mut self.on, change.on.as_ref().map(|on| on.on), |expected, actual| expected == actual);
+        let brightness = take_if_matches(
+            &mut self.brightness,
+            change.dimming.as_ref().map(|dimming| dimming.brightness),
+            |expected, actual| (expected - actual).abs() <= BRIGHTNESS_TOLERANCE,
+        );
+        let mirek = take_if_matches(
+            &mut self.mirek,
+            change.color_temperature.as_ref().and_then(|color_temperature| color_temperature.mirek),
+            |expected, actual| expected.abs_diff(actual) <= MIREK_TOLERANCE,
+        );
+        let xy = take_if_matches(
+            &mut self.xy,
+            change.color.as_ref().map(|color| (color.xy.x, color.xy.y)),
+            |expected, actual| {
+                (expected.0 - actual.0).abs() <= XY_TOLERANCE && (expected.1 - actual.1).abs() <= XY_TOLERANCE
+            },
+        );
 
         on || brightness || mirek || xy
     }
@@ -154,7 +163,9 @@ mod tests {
         let now = Instant::now();
         pending_writes.record(LIGHT_ID, &request(None, None, Some(366)), now);
 
-        let change = change(json!({ "color": { "xy": { "x": 0.4584, "y": 0.41 } }, "color_temperature": { "mirek": 367, "mirek_valid": true } }));
+        let change = change(
+            json!({ "color": { "xy": { "x": 0.4584, "y": 0.41 } }, "color_temperature": { "mirek": 367, "mirek_valid": true } }),
+        );
         assert!(pending_writes.confirm(&change, now));
     }
 

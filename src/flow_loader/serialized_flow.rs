@@ -53,12 +53,15 @@ where
     D: Deserializer<'de>,
 {
     let nodes = Vec::<serde_json::Value>::deserialize(deserializer)?;
-    nodes.iter()
+    nodes
+        .iter()
         .enumerate()
         .map(|(index, node)| {
-            SerializedFlowNode::deserialize(node).map_err(|e| match node.get("id").and_then(serde_json::Value::as_str) {
-                Some(id) => Error::custom(format!("node '{id}': {e}")),
-                None => Error::custom(format!("node at index {index}: {e}")),
+            SerializedFlowNode::deserialize(node).map_err(|e| {
+                match node.get("id").and_then(serde_json::Value::as_str) {
+                    Some(id) => Error::custom(format!("node '{id}': {e}")),
+                    None => Error::custom(format!("node at index {index}: {e}")),
+                }
             })
         })
         .collect()
@@ -128,18 +131,12 @@ mod tests {
             nodes: vec![
                 SerializedFlowNode::StartNode(SerializedStartFlowNode {
                     id: "startNode".to_string(),
-                    outgoing_node: SerializedFlowLink {
-                        node_id: "logNode".to_string(),
-                        value: Value::None,
-                    },
+                    outgoing_node: SerializedFlowLink { node_id: "logNode".to_string(), value: Value::None },
                 }),
                 SerializedFlowNode::ActionNode(SerializedActionFlowNode {
                     id: "logNode".to_string(),
                     action: Box::new(LogAction::new("Action is triggered".to_string())),
-                    outgoing_node: SerializedFlowLink {
-                        node_id: "endNode".to_string(),
-                        value: Value::None,
-                    },
+                    outgoing_node: SerializedFlowLink { node_id: "endNode".to_string(), value: Value::None },
                 }),
                 SerializedFlowNode::EndNode(SerializedEndFlowNode { id: "endNode".to_string() }),
             ],
@@ -155,12 +152,8 @@ mod tests {
 
         let flow = serde_json::from_str::<SerializedFlow>(json).unwrap();
         let expected = EqualTo {
-            lhs: Box::new(Literal {
-                value: Value::Number(Number::PositiveInt(1337)),
-            }),
-            rhs: Box::new(Literal {
-                value: Value::Number(Number::Float(42.0)),
-            }),
+            lhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1337)) }),
+            rhs: Box::new(Literal { value: Value::Number(Number::Float(42.0)) }),
         };
 
         assert_eq!(flow.trigger, Some(expected));
@@ -180,17 +173,11 @@ mod tests {
             nodes: vec![
                 SerializedFlowNode::StartNode(SerializedStartFlowNode {
                     id: "startNode".to_string(),
-                    outgoing_node: SerializedFlowLink {
-                        node_id: "sleepNode".to_string(),
-                        value: Value::None,
-                    },
+                    outgoing_node: SerializedFlowLink { node_id: "sleepNode".to_string(), value: Value::None },
                 }),
                 SerializedFlowNode::SleepNode(SerializedSleepFlowNode {
                     id: "sleepNode".to_string(),
-                    outgoing_node: SerializedFlowLink {
-                        node_id: "endNode".to_string(),
-                        value: Value::None,
-                    },
+                    outgoing_node: SerializedFlowLink { node_id: "endNode".to_string(), value: Value::None },
                     duration: Duration::from_secs(3907),
                 }),
                 SerializedFlowNode::EndNode(SerializedEndFlowNode { id: "endNode".to_string() }),

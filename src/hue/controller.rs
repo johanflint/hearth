@@ -1,5 +1,7 @@
 use crate::app_config::AppConfig;
-use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
+use crate::domain::property::{
+    BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue,
+};
 use crate::domain::{Color, Command, Controller, Device, DeviceType};
 use crate::domain::{Number, Value};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
@@ -38,14 +40,12 @@ impl Controller for HueController {
     #[instrument(skip_all)]
     async fn execute(&self, command: Command) {
         match command {
-            Command::ControlDevice { device, property } => {
-                match device.r#type {
-                    DeviceType::Light => self.control_device_light(device, property).await,
-                    DeviceType::MotionSensor => self.control_device_motion_sensor(device, property).await,
-                    DeviceType::Remote => {},
-                    DeviceType::ContactSensor => {},
-                }
-            }
+            Command::ControlDevice { device, property } => match device.r#type {
+                DeviceType::Light => self.control_device_light(device, property).await,
+                DeviceType::MotionSensor => self.control_device_motion_sensor(device, property).await,
+                DeviceType::Remote => {}
+                DeviceType::ContactSensor => {}
+            },
         }
     }
 }
@@ -66,7 +66,11 @@ impl HueController {
             return;
         };
 
-        let transition = property.values().filter_map(|pc| pc.transition).max().map(|transition| clamp_transition(&device.id, transition));
+        let transition = property
+            .values()
+            .filter_map(|pc| pc.transition)
+            .max()
+            .map(|transition| clamp_transition(&device.id, transition));
 
         let on = property.get(on_property.name()).and_then(|pc| match pc.value {
             Value::Boolean(value) => Some(On { on: value }),
@@ -145,7 +149,9 @@ impl HueController {
         let color = device.get_property_of_type::<ColorProperty>(PropertyType::Color).and_then(|color_property| {
             property.get(color_property.name()).and_then(|pc| match &pc.value {
                 Value::Color(color) => match color.clone().to_cie_xyY() {
-                    Ok(Color::CIE_xyY { xy, brightness: _ }) => color_property.gamut().map(|gamut| clip_to_gamut(xy.clone(), gamut)).or(Some(xy)),
+                    Ok(Color::CIE_xyY { xy, brightness: _ }) => {
+                        color_property.gamut().map(|gamut| clip_to_gamut(xy.clone(), gamut)).or(Some(xy))
+                    }
                     Err(error) => {
                         warn!("🌈 Color value is invalid: {}", error);
                         None
@@ -163,7 +169,11 @@ impl HueController {
         self.send_request(&request, &url, &device, "light").await;
     }
 
-    async fn control_device_motion_sensor(&self, device: Arc<Device>, property: Arc<HashMap<String, ResolvedPropertyCommand>>) {
+    async fn control_device_motion_sensor(
+        &self,
+        device: Arc<Device>,
+        property: Arc<HashMap<String, ResolvedPropertyCommand>>,
+    ) {
         let Some(motion_property) = device.get_property_of_type::<BooleanProperty>(PropertyType::Motion) else {
             warn!(device_id = device.id, "⚠️ Motion sensor has no motion property");
             return;
@@ -174,13 +184,13 @@ impl HueController {
             return;
         };
 
-        let enabled_property = device.get_property_of_type::<BooleanProperty>(PropertyType::Enabled).and_then(|enabled_property| {
-            property.get(enabled_property.name())
-                .and_then(|pc| match pc.value {
+        let enabled_property =
+            device.get_property_of_type::<BooleanProperty>(PropertyType::Enabled).and_then(|enabled_property| {
+                property.get(enabled_property.name()).and_then(|pc| match pc.value {
                     Value::Boolean(value) => Some(value),
                     _ => None,
                 })
-        });
+            });
 
         let sensitivity = device.get_property_of_type::<NumberProperty>(PropertyType::MotionSensitivity).and_then(|sensitivity_property| {
             property
@@ -220,19 +230,15 @@ impl HueController {
     }
 
     async fn send_request<T: Serialize + ?Sized>(&self, request: &T, url: &str, device: &Device, device_kind: &str) {
-        let request_result = self
-            .client
-            .put(url)
-            .json(request)
-            .send()
-            .await;
+        let request_result = self.client.put(url).json(request).send().await;
 
         let (result, status) = match &request_result {
             Err(_) => ("failure", "n/a".to_string()),
             Ok(response) if response.status().is_success() => ("success", "n/a".to_string()),
             Ok(response) => ("failure", response.status().as_u16().to_string()),
         };
-        counter!(Metric::DeviceCommandDispatches.name(), "system" => "hue", "result" => result, "status" => status).increment(1);
+        counter!(Metric::DeviceCommandDispatches.name(), "system" => "hue", "result" => result, "status" => status)
+            .increment(1);
 
         match request_result {
             Err(e) => {
@@ -250,7 +256,12 @@ impl HueController {
 
 fn clamp_transition(device_id: &str, transition: Duration) -> Duration {
     if transition > MAX_TRANSITION {
-        warn!("⚠️ Transition of '{}' is too long for device '{}', clamped to the maximum value of '{}'", format_duration(transition), device_id, format_duration(MAX_TRANSITION));
+        warn!(
+            "⚠️ Transition of '{}' is too long for device '{}', clamped to the maximum value of '{}'",
+            format_duration(transition),
+            device_id,
+            format_duration(MAX_TRANSITION)
+        );
         return MAX_TRANSITION;
     }
 

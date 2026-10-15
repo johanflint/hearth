@@ -7,7 +7,13 @@ use thiserror::Error;
 use tracing::{info, warn};
 
 #[inline(always)]
-pub(crate) fn reduce_property_changed_event<F, T>(devices: &mut DeviceMap, device_id: &str, property_id: &str, initiated_by: InitiatedBy, set_value: F) -> Result<bool, ReducerError>
+pub(crate) fn reduce_property_changed_event<F, T>(
+    devices: &mut DeviceMap,
+    device_id: &str,
+    property_id: &str,
+    initiated_by: InitiatedBy,
+    set_value: F,
+) -> Result<bool, ReducerError>
 where
     F: FnOnce(&mut T) -> Result<(), PropertyError>,
     T: Property + 'static,
@@ -84,9 +90,7 @@ mod tests {
     const DEVICE_ID: &str = "079e0321-7e18-46bc-bc16-fcbc3dd09e30";
 
     fn create_devices() -> DeviceMap {
-        let device = DeviceBuilder::new(DEVICE_ID)
-            .with_boolean_property("on", false)
-            .build();
+        let device = DeviceBuilder::new(DEVICE_ID).with_boolean_property("on", false).build();
 
         HashMap::from([(DEVICE_ID.to_string(), Arc::new(device))])
     }
@@ -94,7 +98,13 @@ mod tests {
     #[test]
     fn reduce_returns_error_if_the_device_is_unknown() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, "unknown", "on", InitiatedBy::Hearth, |_: &mut BooleanProperty| Ok(()));
+        let result = reduce_property_changed_event(
+            &mut devices,
+            "unknown",
+            "on",
+            InitiatedBy::Hearth,
+            |_: &mut BooleanProperty| Ok(()),
+        );
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ReducerError::UnknownDevice { device_id: "unknown".to_string() });
@@ -103,22 +113,31 @@ mod tests {
     #[test]
     fn reduce_returns_error_if_the_property_is_unknown() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "unknown", InitiatedBy::Hearth, |_: &mut BooleanProperty| Ok(()));
+        let result = reduce_property_changed_event(
+            &mut devices,
+            DEVICE_ID,
+            "unknown",
+            InitiatedBy::Hearth,
+            |_: &mut BooleanProperty| Ok(()),
+        );
 
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
-            ReducerError::UnknownProperty {
-                device_id: DEVICE_ID.to_string(),
-                property_id: "unknown".to_string(),
-            }
+            ReducerError::UnknownProperty { device_id: DEVICE_ID.to_string(), property_id: "unknown".to_string() }
         );
     }
 
     #[test]
     fn reduce_returns_error_if_the_property_type_is_incorrect() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", InitiatedBy::Hearth, |_: &mut NumberProperty| Ok(()));
+        let result = reduce_property_changed_event(
+            &mut devices,
+            DEVICE_ID,
+            "on",
+            InitiatedBy::Hearth,
+            |_: &mut NumberProperty| Ok(()),
+        );
 
         assert!(result.is_err());
         assert_eq!(
@@ -134,7 +153,13 @@ mod tests {
     #[test]
     fn reduce_returns_error_if_the_lambda_returns_an_error() {
         let mut devices = create_devices();
-        let result = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", InitiatedBy::Hearth, |_: &mut BooleanProperty| Err(PropertyError::ReadOnly));
+        let result = reduce_property_changed_event(
+            &mut devices,
+            DEVICE_ID,
+            "on",
+            InitiatedBy::Hearth,
+            |_: &mut BooleanProperty| Err(PropertyError::ReadOnly),
+        );
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ReducerError::PropertyChangedError(PropertyError::ReadOnly));
@@ -144,10 +169,22 @@ mod tests {
     fn reduce_returns_false_for_a_duplicate_value() {
         let mut devices = create_devices(); // property "on" starts at false
 
-        let first = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", InitiatedBy::Hearth, |p: &mut BooleanProperty| p.set_value(true));
+        let first = reduce_property_changed_event(
+            &mut devices,
+            DEVICE_ID,
+            "on",
+            InitiatedBy::Hearth,
+            |p: &mut BooleanProperty| p.set_value(true),
+        );
         assert_eq!(first, Ok(true), "the first update to a new value must report a change");
 
-        let duplicate = reduce_property_changed_event(&mut devices, DEVICE_ID, "on", InitiatedBy::Hearth, |p: &mut BooleanProperty| p.set_value(true));
+        let duplicate = reduce_property_changed_event(
+            &mut devices,
+            DEVICE_ID,
+            "on",
+            InitiatedBy::Hearth,
+            |p: &mut BooleanProperty| p.set_value(true),
+        );
         assert_eq!(duplicate, Ok(false), "re-applying the same value must not report a change");
     }
 }

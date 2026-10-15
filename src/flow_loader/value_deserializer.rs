@@ -14,17 +14,15 @@ impl<'de> Deserialize<'de> for Value {
             serde_json::Value::Bool(value) => Ok(Value::Boolean(value)),
             serde_json::Value::Number(value) => Ok(Value::Number((&value).into())),
             serde_json::Value::String(value) => Ok(Value::String(value)),
-            serde_json::Value::Object(object) => {
-                match object.get("type").and_then(|kind| kind.as_str()) {
-                    Some("color") => {
-                        let value = object.get("value").ok_or_else(|| Error::missing_field("value"))?;
-                        let color = Color::deserialize(value).map_err(|e| Error::custom(e.to_string()))?;
-                        Ok(Value::Color(color))
-                    },
-                    Some(kind) => Err(Error::unknown_variant(kind, &["color"])),
-                    None => Err(Error::missing_field("type")),
+            serde_json::Value::Object(object) => match object.get("type").and_then(|kind| kind.as_str()) {
+                Some("color") => {
+                    let value = object.get("value").ok_or_else(|| Error::missing_field("value"))?;
+                    let color = Color::deserialize(value).map_err(|e| Error::custom(e.to_string()))?;
+                    Ok(Value::Color(color))
                 }
-            }
+                Some(kind) => Err(Error::unknown_variant(kind, &["color"])),
+                None => Err(Error::missing_field("type")),
+            },
             _ => Err(Error::custom("expected the value to be a boolean, a color, a number or a string")),
         }
     }
@@ -70,12 +68,8 @@ mod tests {
 
         let expression = serde_json::from_value::<Expression>(json).unwrap();
         let expected = EqualTo {
-            lhs: Box::new(Literal {
-                value: Value::Color(Color::Hex("#ff0000".to_string())),
-            }),
-            rhs: Box::new(Literal {
-                value: Value::Color(Color::Hex("#ff0000".to_string())),
-            }),
+            lhs: Box::new(Literal { value: Value::Color(Color::Hex("#ff0000".to_string())) }),
+            rhs: Box::new(Literal { value: Value::Color(Color::Hex("#ff0000".to_string())) }),
         };
         assert_eq!(expression, expected);
     }
@@ -127,12 +121,8 @@ mod tests {
 
         let expression = serde_json::from_value::<Expression>(json).unwrap();
         let expected = EqualTo {
-            lhs: Box::new(Literal {
-                value: Value::String("short_release".to_string()),
-            }),
-            rhs: Box::new(Literal {
-                value: Value::String("short_release".to_string()),
-            }),
+            lhs: Box::new(Literal { value: Value::String("short_release".to_string()) }),
+            rhs: Box::new(Literal { value: Value::String("short_release".to_string()) }),
         };
         assert_eq!(expression, expected);
     }

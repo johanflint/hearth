@@ -68,7 +68,9 @@ async fn supervise_hue_pipeline(
             let cloned_client = client.clone();
             let cloned_sse_config = sse_config.clone();
             task::spawn(async move {
-                if let Err(e) = sse::listen::<Vec<ServerSentEventPayload>>(sse_tx, &cloned_client, &cloned_sse_config).await {
+                if let Err(e) =
+                    sse::listen::<Vec<ServerSentEventPayload>>(sse_tx, &cloned_client, &cloned_sse_config).await
+                {
                     warn!("⚠️ SSE listener exited with error: {}", e);
                 }
             })
@@ -89,7 +91,12 @@ async fn supervise_hue_pipeline(
     }
 }
 
-async fn run_processor(mut sse_rx: Receiver<HueEvent>, tx: Sender<Event>, pending_writes: Arc<PendingWrites>, store_rx: WatchReceiver<StoreSnapshot>) {
+async fn run_processor(
+    mut sse_rx: Receiver<HueEvent>,
+    tx: Sender<Event>,
+    pending_writes: Arc<PendingWrites>,
+    store_rx: WatchReceiver<StoreSnapshot>,
+) {
     while let Some(hue_event) = sse_rx.recv().await {
         if let Some(comment) = &hue_event.comment {
             info!("🔹 {}", comment);
@@ -104,7 +111,12 @@ async fn run_processor(mut sse_rx: Receiver<HueEvent>, tx: Sender<Event>, pendin
     }
 }
 
-async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, pending_writes: Arc<PendingWrites>, store_rx: &WatchReceiver<StoreSnapshot>) {
+async fn handle_changed_property(
+    tx: Sender<Event>,
+    property: ChangedProperty,
+    pending_writes: Arc<PendingWrites>,
+    store_rx: &WatchReceiver<StoreSnapshot>,
+) {
     match property {
         ChangedProperty::Light(property) => {
             let initiated_by = light_initiated_by(&property, &pending_writes, store_rx);
@@ -171,7 +183,11 @@ async fn handle_changed_property(tx: Sender<Event>, property: ChangedProperty, p
     }
 }
 
-fn light_initiated_by(change: &LightChanged, pending_writes: &PendingWrites, store_rx: &WatchReceiver<StoreSnapshot>) -> InitiatedBy {
+fn light_initiated_by(
+    change: &LightChanged,
+    pending_writes: &PendingWrites,
+    store_rx: &WatchReceiver<StoreSnapshot>,
+) -> InitiatedBy {
     if pending_writes.confirm(change, Instant::now()) {
         return InitiatedBy::Hearth;
     }
@@ -179,7 +195,7 @@ fn light_initiated_by(change: &LightChanged, pending_writes: &PendingWrites, sto
     let snapshot = store_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
     let device = snapshot.devices.get(&change.owner.rid);
     if device.is_some_and(|device| is_unnoticeable_correction(change, &device)) {
-        return InitiatedBy::Device
+        return InitiatedBy::Device;
     }
 
     InitiatedBy::External
@@ -213,7 +229,9 @@ mod tests {
     }
 
     fn device() -> Device {
-        DeviceBuilder::new(DEVICE_ID).with_color_property("color", CartesianCoordinate::new(0.3691, 0.3719), None).build()
+        DeviceBuilder::new(DEVICE_ID)
+            .with_color_property("color", CartesianCoordinate::new(0.3691, 0.3719), None)
+            .build()
     }
 
     fn color_changed(x: f64, y: f64) -> LightChanged {
@@ -226,23 +244,35 @@ mod tests {
         let request = LightRequest::new(None, None, None, Some(CartesianCoordinate::new(0.5, 0.4)), None);
         pending_writes.record(LIGHT_ID, &request, Instant::now());
 
-        assert_eq!(light_initiated_by(&color_changed(0.5, 0.4), &pending_writes, &store_rx(device())), InitiatedBy::Hearth);
+        assert_eq!(
+            light_initiated_by(&color_changed(0.5, 0.4), &pending_writes, &store_rx(device())),
+            InitiatedBy::Hearth
+        );
     }
 
     #[test]
     fn light_initiated_by_recognizes_an_unnoticeable_correction_by_the_device() {
-        assert_eq!(light_initiated_by(&color_changed(0.3669, 0.3706), &PendingWrites::default(), &store_rx(device())), InitiatedBy::Device);
+        assert_eq!(
+            light_initiated_by(&color_changed(0.3669, 0.3706), &PendingWrites::default(), &store_rx(device())),
+            InitiatedBy::Device
+        );
     }
 
     #[test]
     fn light_initiated_by_treats_a_noticeable_change_as_external() {
-        assert_eq!(light_initiated_by(&color_changed(0.5, 0.4), &PendingWrites::default(), &store_rx(device())), InitiatedBy::External);
+        assert_eq!(
+            light_initiated_by(&color_changed(0.5, 0.4), &PendingWrites::default(), &store_rx(device())),
+            InitiatedBy::External
+        );
     }
 
     #[test]
     fn light_initiated_by_treats_a_change_to_an_unknown_device_as_external() {
         let empty_store_rx = watch::channel(StoreSnapshot::default()).1;
 
-        assert_eq!(light_initiated_by(&color_changed(0.3669, 0.3706), &PendingWrites::default(), &empty_store_rx), InitiatedBy::External);
+        assert_eq!(
+            light_initiated_by(&color_changed(0.3669, 0.3706), &PendingWrites::default(), &empty_store_rx),
+            InitiatedBy::External
+        );
     }
 }

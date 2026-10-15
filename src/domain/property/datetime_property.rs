@@ -13,14 +13,14 @@ pub struct DateTimeProperty {
 }
 
 impl DateTimeProperty {
-    pub fn new(name: String, property_type: PropertyType, readonly: bool, external_id: Option<String>, value: Option<DateTime<Utc>>) -> Self {
-        DateTimeProperty {
-            name,
-            property_type,
-            readonly,
-            external_id,
-            value,
-        }
+    pub fn new(
+        name: String,
+        property_type: PropertyType,
+        readonly: bool,
+        external_id: Option<String>,
+        value: Option<DateTime<Utc>>,
+    ) -> Self {
+        DateTimeProperty { name, property_type, readonly, external_id, value }
     }
 
     pub fn value(&self) -> Option<DateTime<Utc>> {

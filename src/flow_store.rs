@@ -27,10 +27,12 @@ impl FlowStore {
         let conn = Arc::clone(&self.conn);
         task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
-            let mut statement = conn.prepare("SELECT id, revision, document, created_at, updated_at FROM flows ORDER BY id")?;
+            let mut statement =
+                conn.prepare("SELECT id, revision, document, created_at, updated_at FROM flows ORDER BY id")?;
             let rows = statement.query_map([], row_to_stored_flow)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(FlowStoreError::from)
-        }).await?
+        })
+        .await?
     }
 
     pub async fn by_id(&self, id: &str) -> Result<Option<StoredFlow>, FlowStoreError> {
@@ -38,10 +40,15 @@ impl FlowStore {
         let id = id.to_string();
         task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
-            conn.query_row("SELECT id, revision, document, created_at, updated_at FROM flows WHERE id = ?1", [id], row_to_stored_flow)
-                .optional()
-                .map_err(FlowStoreError::from)
-        }).await?
+            conn.query_row(
+                "SELECT id, revision, document, created_at, updated_at FROM flows WHERE id = ?1",
+                [id],
+                row_to_stored_flow,
+            )
+            .optional()
+            .map_err(FlowStoreError::from)
+        })
+        .await?
     }
 
     pub async fn insert(&self, id: &str, document: serde_json::Value) -> Result<u64, InsertError> {
@@ -57,10 +64,16 @@ impl FlowStore {
 
             match result {
                 Ok(_) => Ok(0),
-                Err(rusqlite::Error::SqliteFailure(err, _)) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY => Err(InsertError::AlreadyExists),
+                Err(rusqlite::Error::SqliteFailure(err, _))
+                    if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY =>
+                {
+                    Err(InsertError::AlreadyExists)
+                }
                 Err(err) => Err(err.into()),
             }
-        }).await.map_err(FlowStoreError::from)? // Handle the join JoinError
+        })
+        .await
+        .map_err(FlowStoreError::from)? // Handle the join JoinError
     }
 
     pub async fn update(&self, id: &str, base_revision: u64, document: serde_json::Value) -> Result<u64, UpdateError> {
@@ -69,25 +82,32 @@ impl FlowStore {
         task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
             let now = Utc::now().to_rfc3339();
-            let updated: Option<i64> = conn.query_row(
-                "UPDATE flows SET document = ?3, revision = revision + 1, updated_at = ?4
+            let updated: Option<i64> = conn
+                .query_row(
+                    "UPDATE flows SET document = ?3, revision = revision + 1, updated_at = ?4
                 WHERE id = ?1 AND revision = ?2
                 RETURNING revision",
-                params![id, base_revision as i64, document, now],
-                |row| row.get(0),
-            ).optional()?;
+                    params![id, base_revision as i64, document, now],
+                    |row| row.get(0),
+                )
+                .optional()?;
 
             if let Some(revision) = updated {
                 return Ok(to_revision(revision)?);
             }
 
             // No row matched; either the flow doesn't exist or someone else updated it first
-            let current: Option<i64> = conn.query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0)).optional()?;
+            let current: Option<i64> =
+                conn.query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0)).optional()?;
             match current {
                 None => Err(UpdateError::NotFound),
-                Some(current) => Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? }),
+                Some(current) => {
+                    Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                }
             }
-        }).await.map_err(FlowStoreError::from)? // Handle the join JoinError
+        })
+        .await
+        .map_err(FlowStoreError::from)? // Handle the join JoinError
     }
 
     pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
@@ -95,18 +115,24 @@ impl FlowStore {
         let id = id.to_string();
         task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
-            let rows_deleted: usize = conn.execute("DELETE FROM flows WHERE id = ?1 AND revision = ?2", params![id, base_revision as i64])?;
+            let rows_deleted: usize =
+                conn.execute("DELETE FROM flows WHERE id = ?1 AND revision = ?2", params![id, base_revision as i64])?;
             if rows_deleted == 1 {
                 return Ok(());
             }
 
             // No row matched: either the flow doesn't exist or someone else updated it first
-            let current: Option<i64> = conn.query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0)).optional()?;
+            let current: Option<i64> =
+                conn.query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0)).optional()?;
             match current {
-                Some(current) => Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? }),
+                Some(current) => {
+                    Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                }
                 None => Err(DeleteError::NotFound),
             }
-        }).await.map_err(FlowStoreError::from)? // Handle the join JoinError
+        })
+        .await
+        .map_err(FlowStoreError::from)? // Handle the join JoinError
     }
 }
 
@@ -152,11 +178,13 @@ fn row_to_stored_flow(row: &Row) -> rusqlite::Result<StoredFlow> {
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(err)))?;
 
     let updated_at: Option<String> = row.get(4)?;
-    let updated_at = updated_at.map(|updated_at| {
-        DateTime::parse_from_rfc3339(&updated_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|err| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err)))
-    }).transpose()?;
+    let updated_at = updated_at
+        .map(|updated_at| {
+            DateTime::parse_from_rfc3339(&updated_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|err| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err)))
+        })
+        .transpose()?;
 
     Ok(StoredFlow { id, revision, document, created_at, updated_at })
 }
@@ -177,7 +205,6 @@ pub enum FlowStoreError {
     InvalidRevision(i64),
     #[error("database schema {found} is newer than the {supported} version(s) supported")]
     UnsupportedSchemaVersion { found: usize, supported: usize },
-
 }
 
 #[derive(Error, Debug)]
@@ -199,7 +226,9 @@ impl From<rusqlite::Error> for InsertError {
 pub enum UpdateError {
     #[error("flow not found")]
     NotFound,
-    #[error("revision conflict: update is based on revision {base_revision}, but the current revision is {current_revision}")]
+    #[error(
+        "revision conflict: update is based on revision {base_revision}, but the current revision is {current_revision}"
+    )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
     #[error(transparent)]
     Store(#[from] FlowStoreError),
@@ -216,7 +245,9 @@ impl From<rusqlite::Error> for UpdateError {
 pub enum DeleteError {
     #[error("flow not found")]
     NotFound,
-    #[error("revision conflict: delete is based on revision {base_revision}, but the current revision is {current_revision}")]
+    #[error(
+        "revision conflict: delete is based on revision {base_revision}, but the current revision is {current_revision}"
+    )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
     #[error(transparent)]
     Store(#[from] FlowStoreError),
@@ -286,7 +317,8 @@ mod tests {
                 &now,
                 &now,
             ],
-        ).expect("insert");
+        )
+        .expect("insert");
         drop(conn);
 
         let rows = store.list().await.expect("list succeeded");
@@ -304,13 +336,17 @@ mod tests {
         conn.execute(
             "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             params!("badFlow", "1", "not valid json", &now, &now),
-        ).expect("insert bad");
+        )
+        .expect("insert bad");
         drop(conn);
 
         let result = store.list().await;
 
         // Invalid JSON means the database is corrupt
-        assert!(matches!(result, Err(FlowStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(2, _, _)))), "got {result:?}");
+        assert!(
+            matches!(result, Err(FlowStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(2, _, _)))),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -321,7 +357,8 @@ mod tests {
         conn.execute(
             "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             params!("flow", "0", r#"{"id":"flow","name":"Test","nodes":[]}"#, &now, None::<String>),
-        ).expect("insert");
+        )
+        .expect("insert");
         drop(conn);
 
         let rows = store.list().await.expect("list succeeded");
@@ -338,7 +375,8 @@ mod tests {
         conn.execute(
             "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             ["flow", "-1", r#"{"id":"flow","name":"Test","nodes":[]}"#, &now, &now],
-        ).expect("insert");
+        )
+        .expect("insert");
         drop(conn);
 
         let result = store.list().await;
@@ -414,7 +452,10 @@ mod tests {
 
         let result = store.update("flow", 0, flow_document()).await;
 
-        assert!(matches!(result, Err(UpdateError::RevisionConflict { base_revision: 0, current_revision: 1 })), "got {result:?}");
+        assert!(
+            matches!(result, Err(UpdateError::RevisionConflict { base_revision: 0, current_revision: 1 })),
+            "got {result:?}"
+        );
         assert_eq!(store.list().await.unwrap()[0].revision, 1, "revision must be unchanged");
     }
 
@@ -425,7 +466,10 @@ mod tests {
 
         let result = store.update("flow", 7, flow_document()).await;
 
-        assert!(matches!(result, Err(UpdateError::RevisionConflict { base_revision: 7, current_revision: 0 })), "got {result:?}");
+        assert!(
+            matches!(result, Err(UpdateError::RevisionConflict { base_revision: 7, current_revision: 0 })),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -457,7 +501,10 @@ mod tests {
 
         let result = store.delete("flow", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::RevisionConflict { base_revision: 0, current_revision: 1 })), "got {result:?}");
+        assert!(
+            matches!(result, Err(DeleteError::RevisionConflict { base_revision: 0, current_revision: 1 })),
+            "got {result:?}"
+        );
         assert!(store.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
     }
 
@@ -468,7 +515,10 @@ mod tests {
 
         let result = store.delete("flow", 7).await;
 
-        assert!(matches!(result, Err(DeleteError::RevisionConflict { base_revision: 7, current_revision: 0 })), "got {result:?}");
+        assert!(
+            matches!(result, Err(DeleteError::RevisionConflict { base_revision: 7, current_revision: 0 })),
+            "got {result:?}"
+        );
         assert!(store.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
     }
 

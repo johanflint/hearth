@@ -39,7 +39,8 @@ pub fn from_json(flow: SerializedFlow) -> Result<Flow, FlowFactoryError> {
         return Err(FlowFactoryError::MissingEndNode);
     }
 
-    let mut nodes_map: HashMap<String, SerializedFlowNode> = flow.nodes.into_iter().map(|node| (node.id().to_owned(), node)).collect(); // Take ownership of the nodes
+    let mut nodes_map: HashMap<String, SerializedFlowNode> =
+        flow.nodes.into_iter().map(|node| (node.id().to_owned(), node)).collect(); // Take ownership of the nodes
     let mut remaining_children: HashMap<String, usize> = HashMap::with_capacity(nodes_map.len());
     let mut child_to_parent: HashMap<String, String> = HashMap::new();
 
@@ -61,7 +62,8 @@ pub fn from_json(flow: SerializedFlow) -> Result<Flow, FlowFactoryError> {
             }
         }
 
-        let duplicates: Vec<String> = value_to_nodes.values().filter(|node_ids| node_ids.len() > 1).flatten().cloned().collect();
+        let duplicates: Vec<String> =
+            value_to_nodes.values().filter(|node_ids| node_ids.len() > 1).flatten().cloned().collect();
         if !duplicates.is_empty() {
             return Err(FlowFactoryError::DuplicateLinkValues { node_id: id.clone(), duplicates });
         }
@@ -113,9 +115,7 @@ pub fn from_json(flow: SerializedFlow) -> Result<Flow, FlowFactoryError> {
     }
 
     if !nodes_map.is_empty() {
-        return Err(FlowFactoryError::UnusedNodes {
-            nodes: nodes_map.into_keys().collect(),
-        });
+        return Err(FlowFactoryError::UnusedNodes { nodes: nodes_map.into_keys().collect() });
     }
 
     let flow = Flow::new(
@@ -130,7 +130,10 @@ pub fn from_json(flow: SerializedFlow) -> Result<Flow, FlowFactoryError> {
     Ok(flow)
 }
 
-fn map_outgoing_nodes(serialized_node: &SerializedFlowNode, flow_node_map: &HashMap<String, Arc<FlowNode>>) -> Result<Vec<FlowLink>, FlowFactoryError> {
+fn map_outgoing_nodes(
+    serialized_node: &SerializedFlowNode,
+    flow_node_map: &HashMap<String, Arc<FlowNode>>,
+) -> Result<Vec<FlowLink>, FlowFactoryError> {
     serialized_node
         .outgoing_nodes()
         .iter()
@@ -150,9 +153,15 @@ fn to_flow_node(serialized_node: SerializedFlowNode, outgoing_nodes: Vec<FlowLin
     match serialized_node {
         SerializedFlowNode::StartNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Start),
         SerializedFlowNode::EndNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::End),
-        SerializedFlowNode::ConditionalNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Conditional(node.expression)),
-        SerializedFlowNode::ActionNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Action(ActionFlowNode::new(node.action))),
-        SerializedFlowNode::SleepNode(node) => FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Sleep(node.duration)),
+        SerializedFlowNode::ConditionalNode(node) => {
+            FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Conditional(node.expression))
+        }
+        SerializedFlowNode::ActionNode(node) => {
+            FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Action(ActionFlowNode::new(node.action)))
+        }
+        SerializedFlowNode::SleepNode(node) => {
+            FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Sleep(node.duration))
+        }
     }
 }
 
@@ -176,7 +185,9 @@ pub enum FlowFactoryError {
     UnusedNodes { nodes: Vec<String> },
     #[error("duplicate outgoing link values for node '{node_id}', pointing to {}", duplicates.join(", "))]
     DuplicateLinkValues { node_id: String, duplicates: Vec<String> },
-    #[error("scheduled flows cannot use a PropertyChanged trigger - it has no single triggering event to compare against; use PropertyValue instead")]
+    #[error(
+        "scheduled flows cannot use a PropertyChanged trigger - it has no single triggering event to compare against; use PropertyValue instead"
+    )]
     PropertyChangedInScheduledFlow,
 }
 
@@ -300,7 +311,11 @@ mod tests {
         let flow = from_json_string(json).unwrap();
 
         let end_node = FlowNode::new("endNode".to_string(), vec![], FlowNodeKind::End);
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(end_node), Value::None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
+            FlowNodeKind::Start,
+        );
 
         let expected = Flow::new(
             "01K7KK65D87SZGGZE7VB8QYT20".to_string(),
@@ -327,7 +342,11 @@ mod tests {
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(LogAction::new("Action is triggered".to_string())))),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), Value::None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(Arc::new(action_node), Value::None)],
+            FlowNodeKind::Start,
+        );
 
         let expected = Flow::new(
             "01K7KK6H5R7Y72QJEJSJQCKMRQ".to_string(),
@@ -358,7 +377,11 @@ mod tests {
             )))),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(action_node), Value::None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(Arc::new(action_node), Value::None)],
+            FlowNodeKind::Start,
+        );
 
         let expected = Flow::new(
             "01K7KK5FC54SN8D4QYVNEGFYG4".to_string(),
@@ -386,12 +409,14 @@ mod tests {
                 FlowLink::new(Arc::new(end_node_true), Value::Boolean(true)),
                 FlowLink::new(Arc::new(end_node_false), Value::Boolean(false)),
             ],
-            FlowNodeKind::Conditional(Literal {
-                value: Value::Number(Number::Float(42.0)),
-            }),
+            FlowNodeKind::Conditional(Literal { value: Value::Number(Number::Float(42.0)) }),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(conditional_node), Value::None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(Arc::new(conditional_node), Value::None)],
+            FlowNodeKind::Start,
+        );
 
         let expected = Flow::new(
             "01K8JSTTCC831M6TERRH41D595".to_string(),
@@ -418,7 +443,11 @@ mod tests {
             FlowNodeKind::Sleep(Duration::from_secs(3907)),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), Value::None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(Arc::new(sleep_node), Value::None)],
+            FlowNodeKind::Start,
+        );
 
         let expected = Flow::new(
             "01K7KK7E6GG26XZZDXSGFZCWQ4".to_string(),

@@ -12,8 +12,10 @@ pub fn map_motion_sensors(
     temperatures: Vec<TemperatureGet>,
     device_map: &mut HashMap<String, DeviceGet>,
 ) -> Result<Vec<Device>, MapMotionSensorsError> {
-    let mut light_level_map: HashMap<String, LightLevelGet> = light_levels.into_iter().map(|light_level| (light_level.owner.rid.clone(), light_level)).collect();
-    let mut temperature_map: HashMap<String, TemperatureGet> = temperatures.into_iter().map(|temperature| (temperature.owner.rid.clone(), temperature)).collect();
+    let mut light_level_map: HashMap<String, LightLevelGet> =
+        light_levels.into_iter().map(|light_level| (light_level.owner.rid.clone(), light_level)).collect();
+    let mut temperature_map: HashMap<String, TemperatureGet> =
+        temperatures.into_iter().map(|temperature| (temperature.owner.rid.clone(), temperature)).collect();
     sensors
         .into_iter()
         .map(|sensor| {
@@ -26,10 +28,22 @@ pub fn map_motion_sensors(
 
             let mut properties: HashMap<String, Box<dyn Property>> = HashMap::with_capacity(8);
 
-            let enabled_property = Box::new(BooleanProperty::new("enabled".to_string(), PropertyType::Enabled, false, Some(sensor.id.clone()), sensor.enabled));
+            let enabled_property = Box::new(BooleanProperty::new(
+                "enabled".to_string(),
+                PropertyType::Enabled,
+                false,
+                Some(sensor.id.clone()),
+                sensor.enabled,
+            ));
             properties.insert(enabled_property.name().to_owned(), enabled_property);
 
-            let motion_property = Box::new(BooleanProperty::new("motion".to_string(), PropertyType::Motion, true, Some(sensor.id.clone()), sensor.motion.motion_report.as_ref().is_some_and(|r| r.motion)));
+            let motion_property = Box::new(BooleanProperty::new(
+                "motion".to_string(),
+                PropertyType::Motion,
+                true,
+                Some(sensor.id.clone()),
+                sensor.motion.motion_report.as_ref().is_some_and(|r| r.motion),
+            ));
             properties.insert(motion_property.name().to_owned(), motion_property);
 
             let motion_changed_property = Box::new(DateTimeProperty::new(
@@ -46,7 +60,11 @@ pub fn map_motion_sensors(
                 NumberProperty::builder("sensitivity".to_string(), PropertyType::MotionSensitivity, false)
                     .external_id(sensor.id.clone())
                     .unit(Unit::None)
-                    .positive_int(Some(sensor.sensitivity.sensitivity), Some(0), Some(sensor.sensitivity.sensitivity_max))
+                    .positive_int(
+                        Some(sensor.sensitivity.sensitivity),
+                        Some(0),
+                        Some(sensor.sensitivity.sensitivity_max),
+                    )
                     .build(),
             );
             properties.insert(sensitivity_property.name().to_owned(), sensitivity_property);
@@ -92,7 +110,8 @@ pub fn map_motion_sensors(
                     None,
                     report.map(|r| r.changed),
                 ));
-                properties.insert(temperature_last_changed_property.name().to_owned(), temperature_last_changed_property);
+                properties
+                    .insert(temperature_last_changed_property.name().to_owned(), temperature_last_changed_property);
             }
 
             Ok(Device {

@@ -27,30 +27,26 @@ mod extensions;
 mod flow_engine;
 mod flow_loader;
 mod flow_registry;
+mod flow_service;
+mod flow_store;
 mod geo_location_deserializer;
 mod hue;
+mod metrics;
+mod metrics_layer;
 mod property_changed_reducer;
+mod server;
 mod sse;
 mod store;
 mod store_listener;
-mod metrics;
-mod server;
 #[cfg(test)]
 mod test_support;
-mod metrics_layer;
-mod flow_store;
-mod flow_service;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,hearth::flow_engine=warn"))
         .add_directive("hearth::flow_log=info".parse()?);
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(tracing_subscriber::fmt::layer())
-        .with(MetricsLayer)
-        .init();
+    tracing_subscriber::registry().with(env_filter).with(tracing_subscriber::fmt::layer()).with(MetricsLayer).init();
 
     let prometheus_handle = PrometheusBuilder::new().install_recorder()?;
     metrics::describe();

@@ -68,7 +68,10 @@ mod tests {
     #[case("retry: yes", ServerSentEvent { id: None, event: None, retry: None, comment: None, data: None, })]
     #[case(": hi", ServerSentEvent { id: None, event: None, retry: None, comment: Some("hi".to_string()), data: None, })]
     #[case(r#"data: { "name": "Johan" } "#, ServerSentEvent { id: None, event: None, retry: None, comment: None, data: Some(Data { name: "Johan".to_string(), }), })]
-    fn deserializes_a_single_field(#[case] data: &str, #[case] expected: ServerSentEvent<Data>) -> Result<(), serde_json::Error> {
+    fn deserializes_a_single_field(
+        #[case] data: &str,
+        #[case] expected: ServerSentEvent<Data>,
+    ) -> Result<(), serde_json::Error> {
         let result: ServerSentEvent<Data> = ServerSentEvent::from_str(data)?;
 
         assert_eq!(result, expected);

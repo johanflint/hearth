@@ -13,7 +13,8 @@ use tracing::{error, info};
 
 pub(super) async fn create_flow(State(state): State<ApiState>, body: Bytes) -> Result<Response, Response> {
     let request: CreateFlowRequest = parse_request(&body)?;
-    let CreatedFlow { id, revision } = state.flow_service.create_flow(request.flow).await.map_err(create_error_response)?;
+    let CreatedFlow { id, revision } =
+        state.flow_service.create_flow(request.flow).await.map_err(create_error_response)?;
     info!("📥 Received request to create flow '{id}'... OK, revision {revision}");
 
     let location = format!("/api/flows/{id}");
@@ -38,9 +39,12 @@ fn create_error_response(err: CreateFlowError) -> Response {
         CreateFlowError::InvalidFlow(err) => flow_factory_error_response(err),
         CreateFlowError::SchedulerUnavailable => {
             error!("❌ Scheduler is unavailable");
-            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable"))).into_response()
+            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable")))
+                .into_response()
         }
-        CreateFlowError::AlreadyExists => (StatusCode::CONFLICT, Json(ErrorResponse::new_code_only("flowAlreadyExists"))).into_response(),
+        CreateFlowError::AlreadyExists => {
+            (StatusCode::CONFLICT, Json(ErrorResponse::new_code_only("flowAlreadyExists"))).into_response()
+        }
         CreateFlowError::Internal(err) => {
             error!("❌ Failed to persist flow to store: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
@@ -56,7 +60,9 @@ fn create_error_response(err: CreateFlowError) -> Response {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{Fixture, INVALID_FLOW_JSON, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{
+        Fixture, INVALID_FLOW_JSON, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document,
+    };
     use crate::flow_engine::SchedulerCommand;
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;

@@ -9,7 +9,11 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tracing::{error, info};
 
-pub(super) async fn delete_flow(Path(id): Path<String>, query: Result<Query<DeleteFlowQuery>, QueryRejection>, State(state): State<ApiState>) -> Result<Response, Response> {
+pub(super) async fn delete_flow(
+    Path(id): Path<String>,
+    query: Result<Query<DeleteFlowQuery>, QueryRejection>,
+    State(state): State<ApiState>,
+) -> Result<Response, Response> {
     let Query(DeleteFlowQuery { base_revision }) = query.map_err(invalid_query)?;
     state.flow_service.delete_flow(&id, base_revision).await.map_err(delete_error_response)?;
     info!("📥 Received request to delete flow '{id}'... OK, revision {base_revision}");
@@ -31,10 +35,15 @@ fn delete_error_response(err: DeleteFlowError) -> Response {
     match err {
         DeleteFlowError::SchedulerUnavailable => {
             error!("❌ Scheduler is unavailable");
-            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable"))).into_response()
+            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable")))
+                .into_response()
         }
-        DeleteFlowError::NotFound => (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
-        DeleteFlowError::RevisionConflict { .. } => (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
+        DeleteFlowError::NotFound => {
+            (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response()
+        }
+        DeleteFlowError::RevisionConflict { .. } => {
+            (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response()
+        }
         DeleteFlowError::Internal(err) => {
             error!("❌ Failed to delete flow from store: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
@@ -50,7 +59,9 @@ fn delete_error_response(err: DeleteFlowError) -> Response {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{Fixture, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{
+        Fixture, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document,
+    };
     use crate::flow_engine::{SchedulerCommand, VersionedFlow};
     use crate::flow_loader;
     use crate::flow_loader::SerializedFlow;
@@ -123,7 +134,8 @@ mod tests {
 
     #[tokio::test]
     async fn delete_flow_deletes_a_registry_entry_that_lags_behind_the_store() {
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_state(FlowRegistry::new(vec![valid_versioned_flow(0)]));
+        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } =
+            create_state(FlowRegistry::new(vec![valid_versioned_flow(0)]));
         seed_store(&flow_store, 1).await;
 
         let response = call_delete_flow(state, &delete_uri(VALID_FLOW_ID, 1)).await;

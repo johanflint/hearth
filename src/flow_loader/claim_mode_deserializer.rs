@@ -12,10 +12,7 @@ impl<'de> Deserialize<'de> for ClaimMode {
         match value.as_str() {
             "claim" => Ok(Self::Claim),
             "release" => Ok(Self::Release),
-            _ => Err(D::Error::unknown_variant(
-                &value,
-                &["claim", "release"],
-            )),
+            _ => Err(D::Error::unknown_variant(&value, &["claim", "release"])),
         }
     }
 }
@@ -43,6 +40,9 @@ mod tests {
         let parsed: Result<ClaimMode, _> = serde_json::from_value(json);
         let err = parsed.expect_err("expected an error but got Ok");
         let msg = err.to_string();
-        assert!(msg.contains(expected_message), "Expected error message to contain '{expected_message}', but got '{msg}'");
+        assert!(
+            msg.contains(expected_message),
+            "Expected error message to contain '{expected_message}', but got '{msg}'"
+        );
     }
 }

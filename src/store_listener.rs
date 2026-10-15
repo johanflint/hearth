@@ -12,16 +12,18 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::instrument;
 
 #[instrument(skip_all)]
-pub async fn store_listener(mut rx: Receiver<ReactiveUpdate>, flow_registry: Arc<FlowRegistry>, scheduler_tx: Sender<SchedulerCommand>, geo_location: GeoLocation) {
+pub async fn store_listener(
+    mut rx: Receiver<ReactiveUpdate>,
+    flow_registry: Arc<FlowRegistry>,
+    scheduler_tx: Sender<SchedulerCommand>,
+    geo_location: GeoLocation,
+) {
     while let Some(update) = rx.recv().await {
         if let Some(change) = &update.changed {
             update_claim(&update.snapshot, change);
         }
 
-        let flows = flow_registry.reactive_flows()
-            .into_iter()
-            .map(VersionedFlow::into_flow)
-            .collect::<Vec<_>>();
+        let flows = flow_registry.reactive_flows().into_iter().map(VersionedFlow::into_flow).collect::<Vec<_>>();
         execute_flows(flows, update.snapshot, update.changed, scheduler_tx.clone(), geo_location.clone()).await;
     }
 }
@@ -39,7 +41,7 @@ fn update_claim(snapshot: &StoreSnapshot, change: &PropertyChange) {
     match change.initiated_by {
         InitiatedBy::Hearth => return, // Hearth's writes carry their own claim, it's applied before they are sent
         InitiatedBy::Device => return, // Nobody changed the device
-        InitiatedBy::External => {},
+        InitiatedBy::External => {}
     }
 
     // The claim and release can't fail, claimability is checked above
@@ -123,7 +125,10 @@ mod tests {
 
     #[test]
     fn update_claim_ignores_a_device_that_is_not_claimable() {
-        let device = Device { claimable: false, ..DeviceBuilder::new("ignores_unclaimable").with_boolean_property("on", true).build() };
+        let device = Device {
+            claimable: false,
+            ..DeviceBuilder::new("ignores_unclaimable").with_boolean_property("on", true).build()
+        };
         update_claim(&snapshot(device.clone()), &change(&device.id, InitiatedBy::External));
 
         let claimable = Device { claimable: true, ..device };

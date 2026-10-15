@@ -64,7 +64,7 @@ impl Flow {
     }
 
     /// Iterates over all nodes depth-first, starting at the start node.
-    pub fn walk(&self) -> impl Iterator<Item=&FlowNode> + '_ {
+    pub fn walk(&self) -> impl Iterator<Item = &FlowNode> + '_ {
         self.start_node.walk()
     }
 }
@@ -94,7 +94,7 @@ impl FlowNode {
     }
 
     /// Iterates over this node and its descendants depth-first, following outgoing links in order.
-    pub fn walk(&self) -> impl Iterator<Item=&FlowNode> + '_ {
+    pub fn walk(&self) -> impl Iterator<Item = &FlowNode> + '_ {
         let mut stack = vec![self];
         std::iter::from_fn(move || {
             let node = stack.pop()?;

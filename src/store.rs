@@ -1,4 +1,6 @@
-use crate::domain::property::{BooleanProperty, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyLocator};
+use crate::domain::property::{
+    BooleanProperty, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyLocator,
+};
 use crate::domain::{Device, Event, InitiatedBy};
 use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::property_changed_reducer::reduce_property_changed_event;
@@ -59,13 +61,7 @@ impl Store {
         let (notifier_tx, notifier_rx) = watch::channel::<StoreSnapshot>(snapshot);
         let (reactive_tx, reactive_rx) = mpsc::channel::<ReactiveUpdate>(REACTIVE_CHANNEL_CAPACITY);
 
-        let store = Store {
-            devices,
-            rx,
-            notifier_tx,
-            notifier_rx,
-            reactive_tx,
-        };
+        let store = Store { devices, rx, notifier_tx, notifier_rx, reactive_tx };
         // Returning the receiver makes is impossible to forget to wire it
         (store, reactive_rx)
     }
@@ -78,9 +74,7 @@ impl Store {
     pub async fn listen(&mut self) {
         while let Some(event) = self.rx.recv().await {
             let changed = self.apply_event(event);
-            let snapshot = StoreSnapshot {
-                devices: Arc::new(self.devices.clone()),
-            };
+            let snapshot = StoreSnapshot { devices: Arc::new(self.devices.clone()) };
             self.notifier_tx.send(snapshot.clone()).unwrap_or_default();
             if let Err(e) = self.reactive_tx.send(ReactiveUpdate { snapshot, changed }).await {
                 error!("⚠️ Unable to deliver reactive update, reactive flows will not run for this change: {}", e);
@@ -104,65 +98,124 @@ impl Store {
                 None
             }
             Event::BooleanPropertyChanged { device_id, property_id, value, initiated_by } => {
-                let Some(resolved_property_id) = resolve_property_id::<BooleanProperty>(&self.devices, &device_id, &property_id) else {
+                let Some(resolved_property_id) =
+                    resolve_property_id::<BooleanProperty>(&self.devices, &device_id, &property_id)
+                else {
                     error!(device_id, ?property_id, "⚠️ Could not resolve boolean property for device '{}'", device_id);
-                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "boolean", "result" => "failure").increment(1);
-                    return None
+                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "boolean", "result" => "failure")
+                        .increment(1);
+                    return None;
                 };
-                let result = reduce_property_changed_event(&mut self.devices, &device_id, &resolved_property_id, initiated_by, |property: &mut BooleanProperty| {
-                    property.set_value(value)
-                });
+                let result = reduce_property_changed_event(
+                    &mut self.devices,
+                    &device_id,
+                    &resolved_property_id,
+                    initiated_by,
+                    |property: &mut BooleanProperty| property.set_value(value),
+                );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "boolean", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id, initiated_by })
+                result.unwrap_or(false).then(|| PropertyChange {
+                    device_id,
+                    property_id: resolved_property_id,
+                    initiated_by,
+                })
             }
             Event::DateTimePropertyChanged { device_id, property_id, value, initiated_by } => {
-                let Some(resolved_property_id) = resolve_property_id::<DateTimeProperty>(&self.devices, &device_id, &property_id) else {
-                    error!(device_id, ?property_id, "⚠️ Could not resolve date time property for device '{}'", device_id);
+                let Some(resolved_property_id) =
+                    resolve_property_id::<DateTimeProperty>(&self.devices, &device_id, &property_id)
+                else {
+                    error!(
+                        device_id,
+                        ?property_id,
+                        "⚠️ Could not resolve date time property for device '{}'",
+                        device_id
+                    );
                     counter!(Metric::StorePropertyChanges.name(), "property_type" => "date_time", "result" => "failure").increment(1);
-                    return None
+                    return None;
                 };
 
-                let result = reduce_property_changed_event(&mut self.devices, &device_id, &resolved_property_id, initiated_by, |property: &mut DateTimeProperty| {
-                    property.set_value(value)
-                });
+                let result = reduce_property_changed_event(
+                    &mut self.devices,
+                    &device_id,
+                    &resolved_property_id,
+                    initiated_by,
+                    |property: &mut DateTimeProperty| property.set_value(value),
+                );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "date_time", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id, initiated_by })
+                result.unwrap_or(false).then(|| PropertyChange {
+                    device_id,
+                    property_id: resolved_property_id,
+                    initiated_by,
+                })
             }
             Event::ColorPropertyChanged { device_id, property_id, xy, gamut, initiated_by } => {
-                let Some(resolved_property_id) = resolve_property_id::<ColorProperty>(&self.devices, &device_id, &property_id) else {
+                let Some(resolved_property_id) =
+                    resolve_property_id::<ColorProperty>(&self.devices, &device_id, &property_id)
+                else {
                     error!(device_id, ?property_id, "⚠️ Could not resolve color property for device '{}'", device_id);
-                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "color", "result" => "failure").increment(1);
-                    return None
+                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "color", "result" => "failure")
+                        .increment(1);
+                    return None;
                 };
-                let result = reduce_property_changed_event(&mut self.devices, &device_id, &resolved_property_id, initiated_by, |property: &mut ColorProperty| {
-                    property.set_value(xy, gamut)
-                });
+                let result = reduce_property_changed_event(
+                    &mut self.devices,
+                    &device_id,
+                    &resolved_property_id,
+                    initiated_by,
+                    |property: &mut ColorProperty| property.set_value(xy, gamut),
+                );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "color", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id, initiated_by })
+                result.unwrap_or(false).then(|| PropertyChange {
+                    device_id,
+                    property_id: resolved_property_id,
+                    initiated_by,
+                })
             }
             Event::NumberPropertyChanged { device_id, property_id, value, initiated_by } => {
-                let Some(resolved_property_id) = resolve_property_id::<NumberProperty>(&self.devices, &device_id, &property_id) else {
+                let Some(resolved_property_id) =
+                    resolve_property_id::<NumberProperty>(&self.devices, &device_id, &property_id)
+                else {
                     error!(device_id, ?property_id, "⚠️ Could not resolve number property for device '{}'", device_id);
-                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "number", "result" => "failure").increment(1);
-                    return None
+                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "number", "result" => "failure")
+                        .increment(1);
+                    return None;
                 };
-                let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &resolved_property_id, initiated_by, move |property: &mut NumberProperty| {
-                    property.set_value(value)
-                });
+                let result = reduce_property_changed_event(
+                    &mut self.devices,
+                    &device_id.clone(),
+                    &resolved_property_id,
+                    initiated_by,
+                    move |property: &mut NumberProperty| property.set_value(value),
+                );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "number", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id, initiated_by })
+                result.unwrap_or(false).then(|| PropertyChange {
+                    device_id,
+                    property_id: resolved_property_id,
+                    initiated_by,
+                })
             }
             Event::EnumPropertyChanged { device_id, property_id, value, initiated_by } => {
-                let Some(resolved_property_id) = resolve_property_id::<EnumProperty>(&self.devices, &device_id, &property_id) else {
+                let Some(resolved_property_id) =
+                    resolve_property_id::<EnumProperty>(&self.devices, &device_id, &property_id)
+                else {
                     error!(device_id, ?property_id, "⚠️ Could not resolve enum property for device '{}'", device_id);
-                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "enum", "result" => "failure").increment(1);
-                    return None
+                    counter!(Metric::StorePropertyChanges.name(), "property_type" => "enum", "result" => "failure")
+                        .increment(1);
+                    return None;
                 };
-                let result = reduce_property_changed_event(&mut self.devices, &device_id.clone(), &resolved_property_id, initiated_by, move |property: &mut EnumProperty| {
-                    property.set_value(value)
-                });
+                let result = reduce_property_changed_event(
+                    &mut self.devices,
+                    &device_id.clone(),
+                    &resolved_property_id,
+                    initiated_by,
+                    move |property: &mut EnumProperty| property.set_value(value),
+                );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "enum", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange { device_id, property_id: resolved_property_id, initiated_by })
+                result.unwrap_or(false).then(|| PropertyChange {
+                    device_id,
+                    property_id: resolved_property_id,
+                    initiated_by,
+                })
             }
         }
     }
@@ -170,7 +223,11 @@ impl Store {
 
 // Resolves a PropertyLocator (by name, or by the controller-owned external_id of the resource it
 // represents) to the property's well-known name, as expected by `reduce_property_changed_event`.
-fn resolve_property_id<T: 'static + Property>(devices: &DeviceMap, device_id: &str, locator: &PropertyLocator) -> Option<String> {
+fn resolve_property_id<T: 'static + Property>(
+    devices: &DeviceMap,
+    device_id: &str,
+    locator: &PropertyLocator,
+) -> Option<String> {
     devices.get(device_id)?.resolve_property::<T>(locator).map(|property| property.name().to_string())
 }
 
@@ -192,9 +249,7 @@ mod tests {
         });
 
         // Discover the device whose "on" property is false
-        let device = DeviceBuilder::new("device")
-            .with_boolean_property("on", false)
-            .build();
+        let device = DeviceBuilder::new("device").with_boolean_property("on", false).build();
         tx.send(Event::DiscoveredDevices(vec![device])).await.unwrap();
         notifier.changed().await.unwrap();
 
@@ -204,7 +259,9 @@ mod tests {
             property_id: PropertyLocator::Name("on".to_string()),
             value: true,
             initiated_by: InitiatedBy::Hearth,
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         notifier.changed().await.unwrap();
 
         let snapshot = notifier.borrow().clone();
@@ -233,17 +290,45 @@ mod tests {
         tx.send(Event::DiscoveredDevices(vec![device])).await.unwrap();
 
         // Sent back-to-back, without awaiting a reactive update in between
-        tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: PropertyLocator::Name("on".to_string()), value: true, initiated_by: InitiatedBy::Hearth }).await.unwrap();
-        tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: PropertyLocator::Name("motion".to_string()), value: true, initiated_by: InitiatedBy::Hearth }).await.unwrap();
+        tx.send(Event::BooleanPropertyChanged {
+            device_id: "device".to_string(),
+            property_id: PropertyLocator::Name("on".to_string()),
+            value: true,
+            initiated_by: InitiatedBy::Hearth,
+        })
+        .await
+        .unwrap();
+        tx.send(Event::BooleanPropertyChanged {
+            device_id: "device".to_string(),
+            property_id: PropertyLocator::Name("motion".to_string()),
+            value: true,
+            initiated_by: InitiatedBy::Hearth,
+        })
+        .await
+        .unwrap();
 
         let discovered = reactive_rx.recv().await.expect("expected a reactive update for device discovery");
         assert_eq!(discovered.changed, None);
 
         let first = reactive_rx.recv().await.expect("expected a reactive update for the first property change");
-        assert_eq!(first.changed, Some(PropertyChange { device_id: "device".to_string(), property_id: "on".to_string(), initiated_by: InitiatedBy::Hearth }));
+        assert_eq!(
+            first.changed,
+            Some(PropertyChange {
+                device_id: "device".to_string(),
+                property_id: "on".to_string(),
+                initiated_by: InitiatedBy::Hearth
+            })
+        );
 
         let second = reactive_rx.recv().await.expect("expected a reactive update for the second property change");
-        assert_eq!(second.changed, Some(PropertyChange { device_id: "device".to_string(), property_id: "motion".to_string(), initiated_by: InitiatedBy::Hearth }));
+        assert_eq!(
+            second.changed,
+            Some(PropertyChange {
+                device_id: "device".to_string(),
+                property_id: "motion".to_string(),
+                initiated_by: InitiatedBy::Hearth
+            })
+        );
     }
 
     #[tokio::test]
@@ -256,8 +341,14 @@ mod tests {
         });
 
         // No device named "unknown" exists, so the reducer rejects this event
-        tx.send(Event::BooleanPropertyChanged { device_id: "unknown".to_string(), property_id: PropertyLocator::Name("on".to_string()), value: true, initiated_by: InitiatedBy::Hearth }).await
-            .unwrap();
+        tx.send(Event::BooleanPropertyChanged {
+            device_id: "unknown".to_string(),
+            property_id: PropertyLocator::Name("on".to_string()),
+            value: true,
+            initiated_by: InitiatedBy::Hearth,
+        })
+        .await
+        .unwrap();
 
         let update = reactive_rx.recv().await.expect("expected a reactive update even for a rejected event");
         assert_eq!(update.changed, None, "a rejected event must not be reported as a property change");
@@ -282,17 +373,29 @@ mod tests {
 
         // Queue well past the reactive channel's capacity before consuming anything
         for i in 0..num_events {
-            tx.send(Event::BooleanPropertyChanged { device_id: "device".to_string(), property_id: PropertyLocator::Name("on".to_string()), value: i % 2 == 0, initiated_by: InitiatedBy::Hearth }).await
-                .unwrap();
+            tx.send(Event::BooleanPropertyChanged {
+                device_id: "device".to_string(),
+                property_id: PropertyLocator::Name("on".to_string()),
+                value: i % 2 == 0,
+                initiated_by: InitiatedBy::Hearth,
+            })
+            .await
+            .unwrap();
         }
 
         let discovered = reactive_rx.recv().await.expect("expected the discovery update");
         assert_eq!(discovered.changed, None);
 
         for i in 0..num_events {
-            let update = reactive_rx.recv().await.expect("expected every queued event to eventually arrive, none dropped");
-            let value = update.snapshot.devices.get("device").unwrap().get_property::<BooleanProperty>("on").unwrap().value();
-            assert_eq!(value, i % 2 == 0, "update #{i} must reflect its own event's value, not a later one merged into it");
+            let update =
+                reactive_rx.recv().await.expect("expected every queued event to eventually arrive, none dropped");
+            let value =
+                update.snapshot.devices.get("device").unwrap().get_property::<BooleanProperty>("on").unwrap().value();
+            assert_eq!(
+                value,
+                i % 2 == 0,
+                "update #{i} must reflect its own event's value, not a later one merged into it"
+            );
         }
     }
 }

@@ -15,15 +15,15 @@ pub struct ColorProperty {
 }
 
 impl ColorProperty {
-    pub fn new(name: String, property_type: PropertyType, readonly: bool, external_id: Option<String>, xy: CartesianCoordinate, gamut: Option<Gamut>) -> Self {
-        ColorProperty {
-            name,
-            property_type,
-            readonly,
-            external_id,
-            xy,
-            gamut,
-        }
+    pub fn new(
+        name: String,
+        property_type: PropertyType,
+        readonly: bool,
+        external_id: Option<String>,
+        xy: CartesianCoordinate,
+        gamut: Option<Gamut>,
+    ) -> Self {
+        ColorProperty { name, property_type, readonly, external_id, xy, gamut }
     }
 
     // This function does not check the readonly value as the value comes from an observer and the system

@@ -11,10 +11,7 @@ impl<'de> Deserialize<'de> for SerializedFlowLink {
     {
         let value: Value = Deserialize::deserialize(deserializer)?;
         match value {
-            Value::String(node_id) => Ok(SerializedFlowLink {
-                node_id,
-                value: domain::Value::None,
-            }),
+            Value::String(node_id) => Ok(SerializedFlowLink { node_id, value: domain::Value::None }),
             Value::Object(map) => {
                 let node = map
                     .get("node")
@@ -45,38 +42,21 @@ mod tests {
     #[test]
     fn deserializes_a_string() {
         let parsed = serde_json::from_value::<SerializedFlowLink>(json!("node_id")).unwrap();
-        assert_eq!(
-            parsed,
-            SerializedFlowLink {
-                node_id: "node_id".to_string(),
-                value: domain::Value::None
-            }
-        );
+        assert_eq!(parsed, SerializedFlowLink { node_id: "node_id".to_string(), value: domain::Value::None });
     }
 
     #[test]
     fn deserializes_a_link_without_value() {
         let parsed = serde_json::from_value::<SerializedFlowLink>(json!({ "node": "node_id" })).unwrap();
-        assert_eq!(
-            parsed,
-            SerializedFlowLink {
-                node_id: "node_id".to_string(),
-                value: domain::Value::None
-            }
-        );
+        assert_eq!(parsed, SerializedFlowLink { node_id: "node_id".to_string(), value: domain::Value::None });
     }
 
     #[rstest]
     #[case::with_boolean(json!(true), domain::Value::Boolean(true))]
     #[case::with_number(json!(0.2), domain::Value::Number(Number::Float(0.2)))]
     fn deserializes_a_link_with_value(#[case] value: Value, #[case] expected: domain::Value) {
-        let parsed = serde_json::from_value::<SerializedFlowLink>(json!({ "node": "node_id", "value": value })).unwrap();
-        assert_eq!(
-            parsed,
-            SerializedFlowLink {
-                node_id: "node_id".to_string(),
-                value: expected
-            }
-        );
+        let parsed =
+            serde_json::from_value::<SerializedFlowLink>(json!({ "node": "node_id", "value": value })).unwrap();
+        assert_eq!(parsed, SerializedFlowLink { node_id: "node_id".to_string(), value: expected });
     }
 }
