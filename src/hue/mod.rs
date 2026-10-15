@@ -7,6 +7,8 @@ mod discoverer;
 mod domain;
 mod enrich_devices;
 mod map_connectivity_changed;
+mod map_contact_sensors;
+mod map_contact_sensors_changed;
 mod map_device_power_changed;
 mod map_light_changed;
 mod map_lights;

@@ -1,4 +1,4 @@
-use crate::hue::domain::{ButtonChanged, DevicePowerChanged, LightChanged, MotionChanged, TemperatureChanged, ZigbeeConnectivityChanged};
+use crate::hue::domain::{ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, MotionChanged, TemperatureChanged, ZigbeeConnectivityChanged};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, to_string_pretty};
 
@@ -30,6 +30,7 @@ pub enum ChangedProperty {
     ZigbeeConnectivity(ZigbeeConnectivityChanged),
     DevicePower(DevicePowerChanged),
     Temperature(TemperatureChanged),
+    Contact(ContactChanged),
     #[serde(untagged)]
     Unknown(UnknownProperty),
 }
@@ -63,6 +64,7 @@ impl<'de> Deserialize<'de> for UnknownProperty {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hue::domain::ContactState;
 
     #[test]
     fn deserialize_a_known_property_type() -> Result<(), serde_json::Error> {
@@ -144,42 +146,6 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_an_unknown_property_types_returns_unknown() -> Result<(), serde_json::Error> {
-        let json = r#"
-        [
-          {
-            "creationtime": "2025-03-07T19:13:41Z",
-            "data": [
-              {
-                "id": "31e6d98c-09ca-4538-b4ea-b57c8c540b3e",
-                "id_v1": "/lights/22",
-                "on": {
-                  "on": false
-                },
-                "owner": {
-                  "rid": "84a3be14-5d90-4165-ac64-818b7981bb32",
-                  "rtype": "device"
-                },
-                "service_id": 0,
-                "type": "unknown"
-              }
-            ],
-            "id": "11c2f169-9c29-444b-9ef6-4868f6d2daf6",
-            "type": "update"
-          }
-        ]
-        "#;
-
-        let result = serde_json::from_str::<Vec<ServerSentEventPayload>>(json)?;
-        assert_eq!(result.len(), 1);
-        let first_result = &result[0];
-        assert_eq!(first_result.data.len(), 1);
-        assert!(matches!(&first_result.data[0], ChangedProperty::Unknown(UnknownProperty { property_type, .. }) if property_type == "unknown"));
-
-        Ok(())
-    }
-
-    #[test]
     fn deserialize_a_temperature_property() -> Result<(), serde_json::Error> {
         let json = r#"
         [
@@ -217,6 +183,79 @@ mod tests {
         assert_eq!(owner.rid, "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3");
         let report = temperature.as_ref().and_then(|t| t.temperature_report.as_ref()).expect("temperature_report should be present");
         assert_eq!(report.temperature, 21.34);
+
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_a_contact_property() -> Result<(), serde_json::Error> {
+        let json = r#"
+        [
+          {
+            "creationtime": "2026-09-23T15:37:22Z",
+            "data": [
+              {
+                "id": "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21",
+                "owner": {
+                  "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77",
+                  "rtype": "device"
+                },
+                "contact_report": {
+                  "changed": "2026-09-23T15:37:22.004Z",
+                  "state": "no_contact"
+                },
+                "type": "contact"
+              }
+            ],
+            "id": "11c2f169-9c29-444b-9ef6-4868f6d2daf6",
+            "type": "update"
+          }
+        ]
+        "#;
+
+        let result = serde_json::from_str::<Vec<ServerSentEventPayload>>(json)?;
+        let ChangedProperty::Contact(ContactChanged { id, owner, contact_report }) = &result[0].data[0] else {
+            panic!("expected a Contact variant");
+        };
+        assert_eq!(id, "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21");
+        assert_eq!(owner.rid, "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77");
+        assert_eq!(contact_report.as_ref().expect("contact_report should be present").state, ContactState::NoContact);
+
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_an_unknown_property_types_returns_unknown() -> Result<(), serde_json::Error> {
+        let json = r#"
+        [
+          {
+            "creationtime": "2025-03-07T19:13:41Z",
+            "data": [
+              {
+                "id": "31e6d98c-09ca-4538-b4ea-b57c8c540b3e",
+                "id_v1": "/lights/22",
+                "on": {
+                  "on": false
+                },
+                "owner": {
+                  "rid": "84a3be14-5d90-4165-ac64-818b7981bb32",
+                  "rtype": "device"
+                },
+                "service_id": 0,
+                "type": "unknown"
+              }
+            ],
+            "id": "11c2f169-9c29-444b-9ef6-4868f6d2daf6",
+            "type": "update"
+          }
+        ]
+        "#;
+
+        let result = serde_json::from_str::<Vec<ServerSentEventPayload>>(json)?;
+        assert_eq!(result.len(), 1);
+        let first_result = &result[0];
+        assert_eq!(first_result.data.len(), 1);
+        assert!(matches!(&first_result.data[0], ChangedProperty::Unknown(UnknownProperty { property_type, .. }) if property_type == "unknown"));
 
         Ok(())
     }

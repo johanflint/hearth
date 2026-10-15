@@ -1,3 +1,4 @@
+use std::fmt;
 use strum::EnumIter;
 
 #[derive(EnumIter, Debug, PartialEq)]
@@ -25,6 +26,12 @@ impl BatteryState {
     }
 }
 
+impl fmt::Display for BatteryState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,5 +46,13 @@ mod tests {
     #[case::full(100, BatteryState::Normal)]
     fn from_percent(#[case] percent: u64, #[case] expected: BatteryState) {
         assert_eq!(BatteryState::from_percent(percent), expected);
+    }
+
+    #[rstest]
+    #[case::normal(BatteryState::Normal, "normal")]
+    #[case::low(BatteryState::Low, "low")]
+    #[case::critical(BatteryState::Critical, "critical")]
+    fn display(#[case] state: BatteryState, #[case] expected: &str) {
+        assert_eq!(state.to_string(), expected);
     }
 }

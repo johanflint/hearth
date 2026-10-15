@@ -1,7 +1,8 @@
 use crate::app_config::AppConfig;
 use crate::domain::device::Device;
-use crate::hue::domain::{ButtonGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, TemperatureGet, ZigbeeConnectivityGet};
+use crate::hue::domain::{ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, TemperatureGet, ZigbeeConnectivityGet};
 use crate::hue::enrich_devices::enrich_devices;
+use crate::hue::map_contact_sensors::{MapContactSensorsError, map_contact_sensors};
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
 use crate::hue::map_remotes::{MapRemotesError, map_remotes};
@@ -78,6 +79,16 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     info!("Retrieving remotes... OK, {} found", remotes.len());
 
     let response = client
+        .get(format!("{}/clip/v2/resource/contact", hue_url))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(to_discover_error)?;
+
+    let contact_response = response.json::<HueResponse<ContactGet>>().await?;
+    info!("Retrieving contact sensors... OK, {} found", contact_response.data.len());
+
+    let response = client
         .get(format!("{}/clip/v2/resource/zigbee_connectivity", hue_url))
         .send()
         .await?
@@ -103,10 +114,12 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     let lights = map_lights(light_response.data, &mut device_map)?;
     let motion_sensors = map_motion_sensors(motion_response.data, light_levels_response.data, temperature_response.data, &mut device_map)?;
     let buttons = map_remotes(button_response.data, &mut device_map)?;
+    let contact_sensors = map_contact_sensors(contact_response.data, &mut device_map)?;
 
     devices.extend(lights);
     devices.extend(motion_sensors);
     devices.extend(buttons);
+    devices.extend(contact_sensors);
 
     // Enrich the devices with connectivity information
     enrich_devices(zigbee_connectivity_response.data, device_power_response.data, &mut devices);
@@ -148,6 +161,8 @@ pub enum DiscoverError {
     MapMotionSensors(#[from] MapMotionSensorsError),
     #[error(transparent)]
     MapRemotes(#[from] MapRemotesError),
+    #[error(transparent)]
+    MapContactSensors(#[from] MapContactSensorsError),
 }
 
 #[cfg(test)]
@@ -156,7 +171,7 @@ mod tests {
     use crate::app_config::AppConfigBuilder;
     use crate::domain::device::DeviceType;
     use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit};
-    use crate::domain::{BatteryState, Connectivity};
+    use crate::domain::{BatteryState, Connectivity, ContactState};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;
@@ -164,7 +179,7 @@ mod tests {
     use strum::IntoEnumIterator;
 
     fn connectivity_property(status: &str) -> Box<dyn Property> {
-        let allowed_connectivity_values: Vec<String> = Connectivity::iter().map(|c| c.as_str().to_string()).collect();
+        let allowed_connectivity_values: Vec<String> = Connectivity::iter().map(|c| c.to_string()).collect();
         Box::new(EnumProperty::new("connectivity".to_string(), PropertyType::Connectivity, true, None, Some(status.to_string()), allowed_connectivity_values.clone()).unwrap())
     }
 
@@ -176,7 +191,7 @@ mod tests {
     }
 
     fn battery_state_property(state: Option<&str>) -> Box<dyn Property> {
-        let allowed_battery_state_values: Vec<String> = BatteryState::iter().map(|s| s.as_str().to_string()).collect();
+        let allowed_battery_state_values: Vec<String> = BatteryState::iter().map(|s| s.to_string()).collect();
         Box::new(EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, state.map(str::to_string), allowed_battery_state_values).unwrap())
     }
 
@@ -230,6 +245,14 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(include_str!("../../tests/resources/hue_button_simplified_response.json"))
+            .create_async()
+            .await;
+
+        server
+            .mock("GET", "/clip/v2/resource/contact")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_contact_simplified_response.json"))
             .create_async()
             .await;
 
@@ -349,8 +372,25 @@ mod tests {
             Some("2026-09-20T18:36:08.948Z".parse().unwrap()),
         ));
 
+        let contact_property: Box<dyn Property> = Box::new(EnumProperty::new(
+            "contact".to_string(),
+            PropertyType::ContactSensor,
+            true,
+            Some("6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21".to_string()),
+            Some("open".to_string()),
+            ContactState::iter().map(|s| s.to_string()).collect(),
+        ).unwrap());
+
+        let contact_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "contactLastChanged".to_string(),
+            PropertyType::ContactSensorLastChanged,
+            true,
+            None,
+            Some("2026-09-23T15:37:22.004Z".parse().unwrap()),
+        ));
+
         mock.assert();
-        assert_eq!(response.len(), 3);
+        assert_eq!(response.len(), 4);
         assert_eq!(
             response[0],
             Device {
@@ -416,6 +456,26 @@ mod tests {
                     ("connectivity".to_string(), connectivity_property("unknown")),
                     ("batteryLevel".to_string(), battery_level_property(Some(1))),
                     ("batteryState".to_string(), battery_state_property(Some("critical"))),
+                ]),
+                external_id: None,
+                address: None,
+                controller_id: Some("hue"),
+            }
+        );
+        assert_eq!(
+            response[3],
+            Device {
+                id: "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77".to_string(),
+                r#type: DeviceType::ContactSensor,
+                manufacturer: "Signify Netherlands B.V.".to_string(),
+                model_id: "SOC001".to_string(),
+                product_name: "Hue secure contact sensor".to_string(),
+                name: "Voordeur".to_string(),
+                claimable: false,
+                properties: HashMap::from([
+                    (contact_property.name().to_string(), contact_property),
+                    (contact_last_changed_property.name().to_string(), contact_last_changed_property),
+                    ("connectivity".to_string(), connectivity_property("unknown")),
                 ]),
                 external_id: None,
                 address: None,

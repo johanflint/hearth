@@ -8,7 +8,7 @@ pub fn map_device_power_changed(property: DevicePowerChanged) -> Vec<Event> {
         return Vec::new();
     };
 
-    let battery_state = power_state.battery_level.map(|b| BatteryState::from_percent(u64::from(b)).as_str().to_string());
+    let battery_state = power_state.battery_level.map(|b| BatteryState::from_percent(u64::from(b)).to_string());
     vec![
         Event::NumberPropertyChanged {
             device_id: property.owner.rid.to_string(),
