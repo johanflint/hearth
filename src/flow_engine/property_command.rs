@@ -1,4 +1,5 @@
-use crate::flow_engine::{Expression, Value};
+use crate::domain::Value;
+use crate::flow_engine::Expression;
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -20,7 +21,6 @@ mod tests {
     use super::*;
     use crate::domain::Number;
     use crate::flow_engine::Expression::Literal;
-    use crate::flow_engine::Value;
     use crate::test_support::property_command;
     use serde_json::json;
 

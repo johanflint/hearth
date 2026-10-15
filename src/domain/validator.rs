@@ -128,9 +128,8 @@ impl Problem {
 mod tests {
     use super::*;
     use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
-    use crate::domain::Number;
+    use crate::domain::{Number, Value};
     use crate::flow_engine::Expression::*;
-    use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
     use crate::flow_engine::property_command::PropertyCommand;

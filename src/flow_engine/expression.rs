@@ -1,12 +1,11 @@
-use crate::domain::color::Color;
 use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, PropertyType, ValueKind};
-use crate::domain::{Number, Problem, Time, WeekdayCondition, find_device, find_property};
+use crate::domain::{Problem, Time, Value, WeekdayCondition, find_device, find_property};
 use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
 use crate::flow_engine::solar_event::EventTime;
 use crate::store::StoreSnapshot;
-use chrono::{DateTime, NaiveTime, Utc};
+use chrono::NaiveTime;
 use serde::Deserialize;
 use std::cmp::Ordering;
 use std::fmt;
@@ -201,42 +200,6 @@ impl fmt::Display for Expression {
 
             // Temporal
             Temporal { expression } => write!(f, "{expression}"),
-        }
-    }
-}
-
-#[derive(Eq, PartialEq, Hash, Debug, Clone)]
-pub enum Value {
-    Boolean(bool),
-    Color(Color),
-    DateTime(DateTime<Utc>),
-    Number(Number),
-    String(String),
-    None,
-}
-
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Value::Boolean(value) => write!(f, "{value}"),
-            Value::Color(color) => write!(f, "{color}"),
-            Value::DateTime(value) => f.write_str(&value.to_rfc3339()),
-            Value::Number(value) => write!(f, "{value}"),
-            Value::String(value) => write!(f, "{value:?}"),
-            Value::None => f.write_str("none"),
-        }
-    }
-}
-
-impl Value {
-    pub fn kind(&self) -> ValueKind {
-        match self {
-            Value::Boolean(_) => ValueKind::Boolean,
-            Value::Color(_) => ValueKind::Color,
-            Value::DateTime(_) => ValueKind::DateTime,
-            Value::Number(_) => ValueKind::Number,
-            Value::None => ValueKind::None,
-            Value::String(_) => ValueKind::Enum,
         }
     }
 }
@@ -561,7 +524,9 @@ fn join_kinds(kinds: &[ValueKind]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Number;
     use crate::domain::Weekday::*;
+    use crate::domain::color::Color;
     use crate::domain::device::Device;
     use crate::domain::events::InitiatedBy;
     use crate::domain::property::{CartesianCoordinate, Gamut, Property, Unit};
@@ -572,7 +537,7 @@ mod tests {
     use crate::flow_engine::expression::TemporalExpression::{HasSunRisen, HasSunSet, IsAfterTime, IsBeforeTime, IsDaytime, IsNighttime, IsToday};
     use crate::store::{DeviceMap, PropertyChange, StoreSnapshot};
     use crate::test_support::DeviceBuilder;
-    use chrono::{Local, TimeZone};
+    use chrono::{DateTime, Local, TimeZone, Utc};
     use rstest::rstest;
     use std::collections::HashMap;
     use std::sync::Arc;

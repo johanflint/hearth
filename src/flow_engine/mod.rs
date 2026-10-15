@@ -16,7 +16,7 @@ pub use context::Context;
 pub use engine::FlowEngineError;
 pub use engine::FlowExecutionReport;
 pub use engine::execute;
-pub use expression::{Expression, Value};
+pub use expression::Expression;
 pub use schedule::Schedule;
 pub use scheduler::{SchedulerCommand, scheduler};
 pub use versioned_flow::VersionedFlow;

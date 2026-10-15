@@ -1,6 +1,7 @@
+use crate::domain::Value;
 use crate::flow_engine::Expression::Literal;
 use crate::flow_engine::action::Action;
-use crate::flow_engine::{Expression, Schedule, Value};
+use crate::flow_engine::{Expression, Schedule};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;

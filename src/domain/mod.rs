@@ -15,6 +15,7 @@ mod connectivity;
 mod battery_state;
 mod validator;
 pub mod contact_state;
+mod value;
 
 pub use battery_state::BatteryState;
 pub use claim_mode::ClaimMode;
@@ -24,5 +25,6 @@ pub use geo_location::GeoLocation;
 pub use number::Number;
 pub use time::Time;
 pub use validator::{FlowValidationError, Location, Problem, ValidationIssue, find_device, find_property, validate};
+pub use value::Value;
 pub use weekday::Weekday;
 pub use weekday_condition::WeekdayCondition;

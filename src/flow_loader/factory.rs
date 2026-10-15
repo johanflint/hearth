@@ -1,4 +1,4 @@
-use crate::flow_engine::Value;
+use crate::domain::Value;
 use crate::flow_engine::flow::{ActionFlowNode, Flow, FlowLink, FlowNode, FlowNodeKind};
 use crate::flow_loader::serialized_flow::{SerializedFlow, SerializedFlowNode};
 use std::collections::{HashMap, VecDeque};
@@ -185,7 +185,6 @@ mod tests {
     use super::*;
     use crate::domain::Number;
     use crate::flow_engine::Expression::Literal;
-    use crate::flow_engine::Value;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::test_support::property_command;
     use pretty_assertions::assert_eq;

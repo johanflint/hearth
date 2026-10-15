@@ -1,6 +1,5 @@
 use crate::domain::property::{NumberProperty, Property, PropertyError, ValidatedValue};
-use crate::domain::{ClaimMode, Problem, find_device, find_property};
-use crate::flow_engine::Value;
+use crate::domain::{ClaimMode, Problem, Value, find_device, find_property};
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::expression::evaluate;

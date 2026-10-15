@@ -1,7 +1,7 @@
+use crate::domain::Value;
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, Property, PropertyType};
 use crate::flow_engine::Expression::Literal;
-use crate::flow_engine::Value;
 use crate::flow_engine::property_command::{PropertyCommand, ResolvedPropertyCommand};
 use std::collections::HashMap;
 

@@ -1,12 +1,11 @@
 use crate::app_config::AppConfig;
-use crate::domain::Number;
 use crate::domain::color::Color;
 use crate::domain::commands::Command;
 use crate::domain::controller::Controller;
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
+use crate::domain::{Number, Value};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
-use crate::flow_engine::Value;
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::hue::clip_to_gamut::clip_to_gamut;
 use crate::hue::domain::{LightRequest, MotionRequest, On, SetSensitivity};
