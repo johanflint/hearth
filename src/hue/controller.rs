@@ -1,7 +1,7 @@
 use crate::app_config::AppConfig;
 use crate::domain::Color;
 use crate::domain::Command;
-use crate::domain::controller::Controller;
+use crate::domain::Controller;
 use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue};
 use crate::domain::{Number, Value};

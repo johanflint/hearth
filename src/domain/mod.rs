@@ -1,7 +1,7 @@
 mod claim_mode;
 mod color;
 mod commands;
-pub mod controller;
+mod controller;
 pub mod controller_registry;
 pub mod device;
 pub mod events;
@@ -23,6 +23,7 @@ pub use color::Color;
 pub use commands::Command;
 pub use connectivity::Connectivity;
 pub use contact_state::ContactState;
+pub use controller::Controller;
 pub use geo_location::GeoLocation;
 pub use number::Number;
 pub use time::Time;
