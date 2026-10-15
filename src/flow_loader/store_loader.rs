@@ -38,7 +38,10 @@ mod tests {
         flow_store.insert("validFlow", valid_flow.clone()).await.expect("insert valid flow");
         flow_store.update("validFlow", 0, valid_flow).await.expect("update valid flow");
         // Valid JSON, but not a valid flow
-        flow_store.insert("invalidFlow", json!({"id": "invalidFlow", "name": "Invalid", "nodes": []})).await.expect("insert invalid flow");
+        flow_store
+            .insert("invalidFlow", json!({"id": "invalidFlow", "name": "Invalid", "nodes": []}))
+            .await
+            .expect("insert invalid flow");
 
         let flows = load_flows_from_store(&flow_store).await.expect("load succeeded");
 

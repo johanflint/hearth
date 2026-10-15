@@ -19,7 +19,12 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 #[track_failures(Metric::FlowExecutionFailures.name())]
 #[instrument(skip_all, fields(flow = flow.name(), metric_name = Metric::FlowExecutionDuration.name()))]
-pub async fn execute(flow: Arc<Flow>, node_id: Option<String>, context: &Context, tx: Sender<SchedulerCommand>) -> Result<FlowExecutionReport, FlowEngineError> {
+pub async fn execute(
+    flow: Arc<Flow>,
+    node_id: Option<String>,
+    context: &Context,
+    tx: Sender<SchedulerCommand>,
+) -> Result<FlowExecutionReport, FlowEngineError> {
     // Only check the trigger for a fresh run, not when resuming after a Sleep node (node_id is Some).
     // The trigger already passed before the sleep was scheduled, re-checking it could incorrectly kill the
     // continuation for edge-trigged expressions like PropertyChanged, whose "changed" fact is only true for
@@ -77,7 +82,11 @@ pub async fn execute(flow: Arc<Flow>, node_id: Option<String>, context: &Context
 }
 
 #[instrument(fields(node = node.id()), skip_all)]
-async fn execute_node<'a>(node: &'a FlowNode, context: &Context, scope: &mut Scope) -> Result<ExecuteNodeResult<'a>, FlowEngineError> {
+async fn execute_node<'a>(
+    node: &'a FlowNode,
+    context: &Context,
+    scope: &mut Scope,
+) -> Result<ExecuteNodeResult<'a>, FlowEngineError> {
     trace!("{:?}", node);
 
     let next_flow_link = match node.kind() {
@@ -120,10 +129,7 @@ async fn execute_node<'a>(node: &'a FlowNode, context: &Context, scope: &mut Sco
     debug!("Next node: {}", next_node.id());
 
     if let FlowNodeKind::Sleep(duration) = node.kind() {
-        return Ok(Sleep {
-            duration: *duration,
-            next: next_node,
-        });
+        return Ok(Sleep { duration: *duration, next: next_node });
     }
 
     match next_node.kind() {
@@ -181,10 +187,7 @@ impl FlowExecutionReport {
     }
 
     pub fn empty() -> Self {
-        FlowExecutionReport {
-            scope: HashMap::with_capacity(0),
-            duration: Duration::ZERO,
-        }
+        FlowExecutionReport { scope: HashMap::with_capacity(0), duration: Duration::ZERO }
     }
 
     #[allow(dead_code)]
@@ -224,8 +227,13 @@ mod tests {
             FlowNodeKind::Action(ActionFlowNode::new(Box::new(action))),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(log_node), Value::None)], FlowNodeKind::Start);
-        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
+        let start_node = FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(Arc::new(log_node), Value::None)],
+            FlowNodeKind::Start,
+        );
+        let flow =
+            Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
         let result = execute(Arc::new(flow), None, &Context::default(), scheduler_tx).await;
@@ -292,16 +300,24 @@ mod tests {
             (end_node.id().to_string(), end_node.clone()),
         ]);
         let trigger = PropertyChanged { device_id: "device".to_string(), property_id: "on".to_string() };
-        let flow = Arc::new(Flow::new("id".to_string(), "flow".to_string(), None, Some(trigger), start_node, nodes_by_id).unwrap());
+        let flow = Arc::new(
+            Flow::new("id".to_string(), "flow".to_string(), None, Some(trigger), start_node, nodes_by_id).unwrap(),
+        );
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
 
         // The property change that fires the flow - only true for this event's context
         let triggering_context = Context::builder()
-            .changed(Some(PropertyChange { device_id: "device".to_string(), property_id: "on".to_string(), initiated_by: InitiatedBy::Hearth }))
+            .changed(Some(PropertyChange {
+                device_id: "device".to_string(),
+                property_id: "on".to_string(),
+                initiated_by: InitiatedBy::Hearth,
+            }))
             .build();
         execute(flow.clone(), None, &triggering_context, scheduler_tx.clone()).await.unwrap();
-        assert!(matches!(scheduler_rx.recv().await, Some(SchedulerCommand::ScheduleOnce { node_id, .. }) if node_id == "midNode"));
+        assert!(
+            matches!(scheduler_rx.recv().await, Some(SchedulerCommand::ScheduleOnce { node_id, .. }) if node_id == "midNode")
+        );
 
         // The scheduler resumes later with a fresh, "nothing changed" context
         let resume_context = Context::default();
@@ -314,11 +330,12 @@ mod tests {
             "expected the flow to resume past midNode instead of being killed by trigger re-evaluation"
         );
     }
-    
+
     #[test(tokio::test)]
     async fn fails_if_the_start_node_id_cannot_be_found() {
         let start_node = FlowNode::new("startNode".to_string(), vec![], FlowNodeKind::Start);
-        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
+        let flow =
+            Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
         let result = execute(Arc::new(flow), Some("unknown".to_string()), &Context::default(), scheduler_tx).await;
@@ -328,7 +345,8 @@ mod tests {
     #[test(tokio::test)]
     async fn fails_if_an_outgoing_node_is_missing() {
         let start_node = FlowNode::new("startNode".to_string(), vec![], FlowNodeKind::Start);
-        let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
+        let flow =
+            Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap();
 
         let (scheduler_tx, _scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
         let result = execute(Arc::new(flow), None, &Context::default(), scheduler_tx).await;
@@ -345,8 +363,14 @@ mod tests {
             FlowNodeKind::Sleep(Duration::from_secs(42)),
         );
 
-        let start_node = FlowNode::new("startNode".to_string(), vec![FlowLink::new(Arc::new(sleep_node), Value::None)], FlowNodeKind::Start);
-        let original_flow = Arc::new(Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap());
+        let start_node = FlowNode::new(
+            "startNode".to_string(),
+            vec![FlowLink::new(Arc::new(sleep_node), Value::None)],
+            FlowNodeKind::Start,
+        );
+        let original_flow = Arc::new(
+            Flow::new("id".to_string(), "flow".to_string(), None, None, Arc::new(start_node), HashMap::new()).unwrap(),
+        );
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
 
@@ -386,7 +410,8 @@ mod tests {
         let flow = Flow::new("id".to_string(), "flow".to_string(), None, None, start_node, nodes_by_id).unwrap();
 
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
-        let result = execute(Arc::new(flow), Some("end_node".to_string()), &Context::default(), scheduler_tx).await.unwrap();
+        let result =
+            execute(Arc::new(flow), Some("end_node".to_string()), &Context::default(), scheduler_tx).await.unwrap();
 
         // Ensure that nothing was scheduled
         assert!(scheduler_rx.try_recv().is_err(), "Expected no scheduler commands to be sent");
@@ -439,9 +464,7 @@ mod tests {
                 FlowLink::new(end_node_true.clone(), Value::Number(Number::PositiveInt(42))),
                 FlowLink::new(end_node_false.clone(), Value::Boolean(false)),
             ],
-            FlowNodeKind::Conditional(Literal {
-                value: Value::Number(Number::Float(0.1)),
-            }),
+            FlowNodeKind::Conditional(Literal { value: Value::Number(Number::Float(0.1)) }),
         ));
 
         let start_node = Arc::new(FlowNode::new(

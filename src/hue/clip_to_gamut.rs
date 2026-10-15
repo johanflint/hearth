@@ -47,7 +47,11 @@ fn is_in_gamut(coordinate: &CartesianCoordinate, gamut: &Gamut) -> bool {
 }
 
 /// Find the closest point on a line segment to a given point
-fn closest_point_on_line(a: &CartesianCoordinate, b: &CartesianCoordinate, p: &CartesianCoordinate) -> CartesianCoordinate {
+fn closest_point_on_line(
+    a: &CartesianCoordinate,
+    b: &CartesianCoordinate,
+    p: &CartesianCoordinate,
+) -> CartesianCoordinate {
     let ap = CartesianCoordinate::new(p.x() - a.x(), p.y() - a.y());
     let ab = CartesianCoordinate::new(b.x() - a.x(), b.y() - a.y());
     let ab2 = ab.x() * ab.x() + ab.y() * ab.y();

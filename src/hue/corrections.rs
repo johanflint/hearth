@@ -14,14 +14,16 @@ pub fn is_unnoticeable_correction(change: &LightChanged, device: &Device) -> boo
         return false;
     }
 
-    let color_temperature_unnoticeable = match change.color_temperature.as_ref().and_then(|color_temperature| color_temperature.mirek) {
-        Some(mirek) => current_mirek(device).is_some_and(|current| current.abs_diff(mirek) <= UNNOTICEABLE_MIREK),
-        None => true,
-    };
+    let color_temperature_unnoticeable =
+        match change.color_temperature.as_ref().and_then(|color_temperature| color_temperature.mirek) {
+            Some(mirek) => current_mirek(device).is_some_and(|current| current.abs_diff(mirek) <= UNNOTICEABLE_MIREK),
+            None => true,
+        };
 
     let color_unnoticeable = match &change.color {
         Some(color) => device.get_property_of_type::<ColorProperty>(PropertyType::Color).is_some_and(|current| {
-            (current.xy().x() - color.xy.x).abs() <= UNNOTICEABLE_XY && (current.xy().y() - color.xy.y).abs() <= UNNOTICEABLE_XY
+            (current.xy().x() - color.xy.x).abs() <= UNNOTICEABLE_XY
+                && (current.xy().y() - color.xy.y).abs() <= UNNOTICEABLE_XY
         }),
         None => true, // Not part of this change
     };
@@ -30,7 +32,8 @@ pub fn is_unnoticeable_correction(change: &LightChanged, device: &Device) -> boo
 }
 
 fn current_mirek(device: &Device) -> Option<u64> {
-    device.get_property_of_type::<NumberProperty>(PropertyType::ColorTemperature)
+    device
+        .get_property_of_type::<NumberProperty>(PropertyType::ColorTemperature)
         .and_then(|property| property.value())
         .and_then(|kelvin| kelvin.as_u64())
         .map(|kelvin| kelvin.kelvin_to_mirek())
@@ -65,7 +68,9 @@ mod tests {
 
     #[test]
     fn the_correction_after_a_scene_recall_is_unnoticeable() {
-        let change = change(json!({ "color_temperature": { "mirek": 230, "mirek_valid": true }, "color": { "xy": { "x": 0.3669, "y": 0.3706 } } }));
+        let change = change(
+            json!({ "color_temperature": { "mirek": 230, "mirek_valid": true }, "color": { "xy": { "x": 0.3669, "y": 0.3706 } } }),
+        );
 
         assert!(is_unnoticeable_correction(&change, &device()));
     }
@@ -90,21 +95,26 @@ mod tests {
 
     #[test]
     fn a_noticeable_color_makes_the_whole_change_noticeable() {
-        let change = change(json!({ "color_temperature": { "mirek": 233, "mirek_valid": true }, "color": { "xy": { "x": 0.5, "y": 0.4 } } }));
+        let change = change(
+            json!({ "color_temperature": { "mirek": 233, "mirek_valid": true }, "color": { "xy": { "x": 0.5, "y": 0.4 } } }),
+        );
 
         assert!(!is_unnoticeable_correction(&change, &device()));
     }
 
     #[test]
     fn turning_a_light_on_or_off_is_never_a_correction() {
-        let change = change(json!({ "on": { "on": true }, "color_temperature": { "mirek": 233, "mirek_valid": true } }));
+        let change =
+            change(json!({ "on": { "on": true }, "color_temperature": { "mirek": 233, "mirek_valid": true } }));
 
         assert!(!is_unnoticeable_correction(&change, &device()));
     }
 
     #[test]
     fn dimming_a_light_is_never_a_correction() {
-        let change = change(json!({ "dimming": { "brightness": 50.0 }, "color_temperature": { "mirek": 233, "mirek_valid": true } }));
+        let change = change(
+            json!({ "dimming": { "brightness": 50.0 }, "color_temperature": { "mirek": 233, "mirek_valid": true } }),
+        );
 
         assert!(!is_unnoticeable_correction(&change, &device()));
     }

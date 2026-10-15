@@ -19,7 +19,7 @@ pub fn map_remote_changed(property: ButtonChanged) -> Vec<Event> {
             property_id: PropertyLocator::ExternalId(property.id),
             value: Some(report.updated),
             initiated_by: InitiatedBy::External,
-        }
+        },
     ]
 }
 
@@ -67,14 +67,19 @@ mod tests {
 
     #[test]
     fn map_remote_changed_returns_no_events_if_button_report_is_missing() {
-        let property = ButtonChanged { id: "5568ab93-2bef-4739-a667-8beb87898f78".to_string(), owner: owner(), button: None };
+        let property =
+            ButtonChanged { id: "5568ab93-2bef-4739-a667-8beb87898f78".to_string(), owner: owner(), button: None };
 
         assert_eq!(map_remote_changed(property), vec![]);
     }
 
     #[test]
     fn map_remote_changed_returns_no_events_if_button_report_is_omitted_from_a_partial_update() {
-        let property = ButtonChanged { id: "5568ab93-2bef-4739-a667-8beb87898f78".to_string(), owner: owner(), button: Some(ButtonUpdate { button_report: None }) };
+        let property = ButtonChanged {
+            id: "5568ab93-2bef-4739-a667-8beb87898f78".to_string(),
+            owner: owner(),
+            button: Some(ButtonUpdate { button_report: None }),
+        };
 
         assert_eq!(map_remote_changed(property), vec![]);
     }

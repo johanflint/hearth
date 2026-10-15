@@ -62,7 +62,7 @@ impl ClaimRegistry {
             Some(Claim { mode: ClaimMode::Release, .. }) => Ok(self.release(device)?),
             None => match self.claimed_by(&device.id) {
                 Some(origin) => Err(AuthorizeError::Claimed(origin)),
-                None => Ok(())
+                None => Ok(()),
             },
         }
     }
@@ -129,13 +129,21 @@ mod tests {
     #[case::claimed_claim(true, Some(ClaimMode::Claim), true, true)]
     #[case::unclaimed_release(false, Some(ClaimMode::Release), true, false)]
     #[case::claimed_release(true, Some(ClaimMode::Release), true, false)]
-    fn authorize(#[case] claimed: bool, #[case] mode: Option<ClaimMode>, #[case] expected_authorized: bool, #[case] expected_claimed: bool) {
+    fn authorize(
+        #[case] claimed: bool,
+        #[case] mode: Option<ClaimMode>,
+        #[case] expected_authorized: bool,
+        #[case] expected_claimed: bool,
+    ) {
         let registry = ClaimRegistry::default();
         let device = device(DEVICE_ID);
         if claimed {
             registry.claim(&device, flows(&["flow"])).unwrap();
         }
-        assert_eq!(registry.authorize(&device, mode.map(|mode| claim_intent(mode, &["flow"]))).is_ok(), expected_authorized);
+        assert_eq!(
+            registry.authorize(&device, mode.map(|mode| claim_intent(mode, &["flow"]))).is_ok(),
+            expected_authorized
+        );
         assert_eq!(registry.claimed_by(DEVICE_ID).is_some(), expected_claimed);
     }
 
@@ -153,7 +161,10 @@ mod tests {
         let registry = ClaimRegistry::default();
         registry.claim(&device(DEVICE_ID), flows(&["dinner", "movie"])).unwrap();
 
-        assert_eq!(registry.authorize(&device(DEVICE_ID), None), Err(AuthorizeError::Claimed(flows(&["dinner", "movie"]))));
+        assert_eq!(
+            registry.authorize(&device(DEVICE_ID), None),
+            Err(AuthorizeError::Claimed(flows(&["dinner", "movie"])))
+        );
     }
 
     #[test]
@@ -172,7 +183,10 @@ mod tests {
     fn authorize_rejects_a_claim_intent_for_a_device_that_is_not_claimable(#[case] mode: ClaimMode) {
         let registry = ClaimRegistry::default();
 
-        assert_eq!(registry.authorize(&unclaimable_device(DEVICE_ID), Some(claim_intent(mode, &["flow"]))), Err(AuthorizeError::NotClaimable(NotClaimable)));
+        assert_eq!(
+            registry.authorize(&unclaimable_device(DEVICE_ID), Some(claim_intent(mode, &["flow"]))),
+            Err(AuthorizeError::NotClaimable(NotClaimable))
+        );
         assert_eq!(registry.claimed_by(DEVICE_ID), None);
     }
 

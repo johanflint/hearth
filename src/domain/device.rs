@@ -33,7 +33,8 @@ impl Device {
             PropertyLocator::Name(name) => self.get_property(name),
             PropertyLocator::ExternalId(external_id) => {
                 // Require exactly one match to avoid updating the wrong property
-                let mut matches = self.properties
+                let mut matches = self
+                    .properties
                     .values()
                     .filter_map(|p| p.as_any().downcast_ref::<T>())
                     .filter(|p| p.external_id() == Some(external_id));
@@ -59,7 +60,17 @@ mod tests {
     use crate::test_support::DeviceBuilder;
 
     fn enum_property(name: &str, external_id: &str, value: &str) -> Box<dyn Property> {
-        Box::new(EnumProperty::new(name.to_string(), PropertyType::Button, true, Some(external_id.to_string()), Some(value.to_string()), vec![value.to_string()]).unwrap())
+        Box::new(
+            EnumProperty::new(
+                name.to_string(),
+                PropertyType::Button,
+                true,
+                Some(external_id.to_string()),
+                Some(value.to_string()),
+                vec![value.to_string()],
+            )
+            .unwrap(),
+        )
     }
 
     #[test]
@@ -68,7 +79,8 @@ mod tests {
             .with_properties(vec![enum_property("button1", "unique-external-id", "short_release")])
             .build();
 
-        let resolved = device.resolve_property::<EnumProperty>(&PropertyLocator::ExternalId("unique-external-id".to_string()));
+        let resolved =
+            device.resolve_property::<EnumProperty>(&PropertyLocator::ExternalId("unique-external-id".to_string()));
 
         assert_eq!(resolved.map(Property::name), Some("button1"));
     }
@@ -77,7 +89,10 @@ mod tests {
     fn resolve_property_returns_none_when_multiple_properties_of_the_same_type_share_an_external_id() {
         let external_id = "shared-external-id";
         let device = DeviceBuilder::new("device")
-            .with_properties(vec![enum_property("button1", external_id, "short_release"), enum_property("button2", external_id, "long_press")])
+            .with_properties(vec![
+                enum_property("button1", external_id, "short_release"),
+                enum_property("button2", external_id, "long_press"),
+            ])
             .build();
 
         let resolved = device.resolve_property::<EnumProperty>(&PropertyLocator::ExternalId(external_id.to_string()));

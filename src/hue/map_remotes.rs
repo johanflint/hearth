@@ -5,7 +5,10 @@ use crate::hue::domain::{ButtonGet, DeviceGet};
 use std::collections::HashMap;
 use thiserror::Error;
 
-pub fn map_remotes(mut buttons: Vec<ButtonGet>, device_map: &mut HashMap<String, DeviceGet>) -> Result<Vec<Device>, MapRemotesError> {
+pub fn map_remotes(
+    mut buttons: Vec<ButtonGet>,
+    device_map: &mut HashMap<String, DeviceGet>,
+) -> Result<Vec<Device>, MapRemotesError> {
     // Get a set of devices from the separate buttons
     let mut buttons_by_device: HashMap<String, Vec<&mut ButtonGet>> = HashMap::new();
     for button in &mut buttons {
@@ -16,7 +19,8 @@ pub fn map_remotes(mut buttons: Vec<ButtonGet>, device_map: &mut HashMap<String,
         buttons.sort_by_key(|b| b.metadata.control_id)
     }
 
-    buttons_by_device.into_iter()
+    buttons_by_device
+        .into_iter()
         .map(|(device_id, buttons)| {
             let device_get = device_map
                 .remove(&device_id)
@@ -30,18 +34,21 @@ pub fn map_remotes(mut buttons: Vec<ButtonGet>, device_map: &mut HashMap<String,
                 let value = report.map(|report| report.event);
                 let allowed_values = std::mem::take(&mut button.button.event_values);
 
-                let button_property = Box::new(EnumProperty::new(
-                    format!("button{}", button.metadata.control_id),
-                    PropertyType::Button,
-                    true,
-                    Some(button.id.clone()),
-                    value,
-                    allowed_values,
-                ).map_err(|source| MapRemotesError::InvalidButtonProperty {
-                    device_id: device_id.clone(),
-                    button_id: button.id.clone(),
-                    source,
-                })?);
+                let button_property = Box::new(
+                    EnumProperty::new(
+                        format!("button{}", button.metadata.control_id),
+                        PropertyType::Button,
+                        true,
+                        Some(button.id.clone()),
+                        value,
+                        allowed_values,
+                    )
+                    .map_err(|source| MapRemotesError::InvalidButtonProperty {
+                        device_id: device_id.clone(),
+                        button_id: button.id.clone(),
+                        source,
+                    })?,
+                );
                 properties.insert(button_property.name().to_owned(), button_property);
 
                 let button_last_changed_property = Box::new(DateTimeProperty::new(
@@ -76,5 +83,10 @@ pub enum MapRemotesError {
     #[error("unknown device '{device_id}'")]
     UnknownDevice { device_id: String },
     #[error("invalid button property for button '{button_id}' on device '{device_id}': {source}")]
-    InvalidButtonProperty { device_id: String, button_id: String, #[source] source: PropertyError },
+    InvalidButtonProperty {
+        device_id: String,
+        button_id: String,
+        #[source]
+        source: PropertyError,
+    },
 }

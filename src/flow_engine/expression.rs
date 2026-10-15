@@ -1,4 +1,6 @@
-use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, PropertyType, ValueKind};
+use crate::domain::property::{
+    BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, PropertyType, ValueKind,
+};
 use crate::domain::{Problem, Time, Value, WeekdayCondition, find_device, find_property};
 use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
@@ -62,12 +64,15 @@ impl Expression {
         use Expression::*;
 
         let value_kind = match self {
-            GreaterThanOrEqualTo { lhs, rhs } | GreaterThan { lhs, rhs } | LessThan { lhs, rhs } | LessThanOrEqualTo { lhs, rhs } => {
-                match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
-                    (ValueKind::Number, ValueKind::Number) | (ValueKind::DateTime, ValueKind::DateTime) => ValueKind::Boolean,
-                    (lhs, rhs) => return Err(self.incompatible_operands("Number|DateTime", vec![lhs, rhs])),
+            GreaterThanOrEqualTo { lhs, rhs }
+            | GreaterThan { lhs, rhs }
+            | LessThan { lhs, rhs }
+            | LessThanOrEqualTo { lhs, rhs } => match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
+                (ValueKind::Number, ValueKind::Number) | (ValueKind::DateTime, ValueKind::DateTime) => {
+                    ValueKind::Boolean
                 }
-            }
+                (lhs, rhs) => return Err(self.incompatible_operands("Number|DateTime", vec![lhs, rhs])),
+            },
             EqualTo { lhs, rhs } | NotEqualTo { lhs, rhs } => {
                 let (lhs, rhs) = (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?);
                 if lhs != rhs {
@@ -75,28 +80,24 @@ impl Expression {
                 }
                 ValueKind::Boolean
             }
-            And { lhs, rhs } | Or { lhs, rhs } => {
-                match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
-                    (ValueKind::Boolean, ValueKind::Boolean) => ValueKind::Boolean,
-                    (lhs, rhs) => return Err(self.incompatible_operands("Boolean", vec![lhs, rhs])),
-                }
-            }
+            And { lhs, rhs } | Or { lhs, rhs } => match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
+                (ValueKind::Boolean, ValueKind::Boolean) => ValueKind::Boolean,
+                (lhs, rhs) => return Err(self.incompatible_operands("Boolean", vec![lhs, rhs])),
+            },
             Not { expression } => match expression.value_kind(snapshot)? {
                 ValueKind::Boolean => ValueKind::Boolean,
                 kind => return Err(self.incompatible_operands("Boolean", vec![kind])),
             },
-            Add { lhs, rhs } | Subtract { lhs, rhs } => {
-                match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
-                    (ValueKind::Number, ValueKind::Number) => ValueKind::Number,
-                    (lhs, rhs) => return Err(self.incompatible_operands("Number", vec![lhs, rhs])),
-                }
+            Add { lhs, rhs } | Subtract { lhs, rhs } => match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
+                (ValueKind::Number, ValueKind::Number) => ValueKind::Number,
+                (lhs, rhs) => return Err(self.incompatible_operands("Number", vec![lhs, rhs])),
             },
             Literal { value } => value.kind(),
             PropertyChanged { .. } => ValueKind::Boolean,
             PropertyValue { device_id, property_id } => {
                 let device = find_device(device_id, snapshot)?;
                 find_property(device, property_id)?.value_kind()
-            },
+            }
             Temporal { .. } => ValueKind::Boolean,
         };
 
@@ -125,7 +126,7 @@ impl Expression {
     }
 
     /// Visits this expression and all its sub-expressions depth-first, left before right
-    pub fn walk(&self) -> impl Iterator<Item=&Expression> + '_ {
+    pub fn walk(&self) -> impl Iterator<Item = &Expression> + '_ {
         use Expression::*;
         let mut stack = vec![self];
         std::iter::from_fn(move || {
@@ -161,7 +162,9 @@ impl fmt::Display for Operand<'_> {
         use Expression::*;
 
         match self.0 {
-            Not { .. } | Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => write!(f, "{}", self.0),
+            Not { .. } | Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => {
+                write!(f, "{}", self.0)
+            }
             _ => write!(f, "({})", self.0),
         }
     }
@@ -325,7 +328,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
         PropertyChanged { device_id, property_id } => {
             let changed = context.changed().is_some_and(|c| &c.device_id == device_id && &c.property_id == property_id);
             Ok(Value::Boolean(changed))
-        },
+        }
         PropertyValue { device_id, property_id } => {
             let Some(device) = context.snapshot().devices.get(device_id) else {
                 warn!(device_id, "⚠️ Received property changed event for unknown device '{}'", device_id);
@@ -334,10 +337,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
 
             let Some(property) = device.properties.get(property_id) else {
                 warn!(device_id = device.id, "⚠️ Unknown property '{}' for device '{}'", property_id, device.name);
-                return Err(UnknownProperty {
-                    device_id: device_id.clone(),
-                    property_id: property_id.clone(),
-                });
+                return Err(UnknownProperty { device_id: device_id.clone(), property_id: property_id.clone() });
             };
 
             match property.property_type() {
@@ -356,13 +356,15 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 PropertyType::Button => {
                     let enum_property = property.as_any().downcast_ref::<EnumProperty>().unwrap();
                     Ok(enum_property.value().map(|v| Value::String(v.to_string())).unwrap_or(Value::None))
-                },
+                }
                 PropertyType::ButtonLastChanged => {
                     let button_last_changed = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
                     Ok(button_last_changed.value().map(Value::DateTime).unwrap_or(Value::None))
                 }
                 PropertyType::Color => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
-                PropertyType::ColorTemperature => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
+                PropertyType::ColorTemperature => {
+                    Err(ExpressionError::UnsupportedPropertyType(property.property_type()))
+                }
                 PropertyType::Connectivity => Err(ExpressionError::UnsupportedPropertyType(property.property_type())),
                 PropertyType::ContactSensor => {
                     let enum_property = property.as_any().downcast_ref::<EnumProperty>().unwrap();
@@ -375,7 +377,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 PropertyType::MotionLastChanged => {
                     let motion_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
                     Ok(motion_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
-                },
+                }
                 PropertyType::Enabled => {
                     let enabled_property = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
                     Ok(Value::Boolean(enabled_property.value()))
@@ -397,7 +399,8 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                     Ok(illuminance_property.value().map(Value::Number).unwrap_or(Value::None))
                 }
                 PropertyType::IlluminanceLastChanged => {
-                    let illuminance_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
+                    let illuminance_last_changed_property =
+                        property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
                     Ok(illuminance_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
                 }
                 PropertyType::Temperature => {
@@ -405,7 +408,8 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                     Ok(temperature_property.value().map(Value::Number).unwrap_or(Value::None))
                 }
                 PropertyType::TemperatureLastChanged => {
-                    let temperature_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
+                    let temperature_last_changed_property =
+                        property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
                     Ok(temperature_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
                 }
             }
@@ -432,27 +436,29 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                         .map(|target| now.time() > target)
                         .unwrap_or(false),
                 )),
-                TemporalExpression::HasSunRisen => Ok(Value::Boolean(
-                    match context.sunrise() {
-                        EventTime::At(sunrise) => now.time() >= sunrise.time(),
-                        EventTime::PolarDay => true,
-                        EventTime::PolarNight => false,
-                    }
-                )),
-                TemporalExpression::HasSunSet => Ok(Value::Boolean(
-                    match context.sunset() {
-                        EventTime::At(sunrise) => now.time() >= sunrise.time(),
-                        EventTime::PolarDay => true,
-                        EventTime::PolarNight => false,
-                    }
-                )),
+                TemporalExpression::HasSunRisen => Ok(Value::Boolean(match context.sunrise() {
+                    EventTime::At(sunrise) => now.time() >= sunrise.time(),
+                    EventTime::PolarDay => true,
+                    EventTime::PolarNight => false,
+                })),
+                TemporalExpression::HasSunSet => Ok(Value::Boolean(match context.sunset() {
+                    EventTime::At(sunrise) => now.time() >= sunrise.time(),
+                    EventTime::PolarDay => true,
+                    EventTime::PolarNight => false,
+                })),
                 TemporalExpression::IsDaytime => {
                     let is_daytime = match (context.sunrise(), context.sunset()) {
-                        (EventTime::At(sunrise), EventTime::At(sunset)) => now.time() >= sunrise.time() && now.time() < sunset.time(),
+                        (EventTime::At(sunrise), EventTime::At(sunset)) => {
+                            now.time() >= sunrise.time() && now.time() < sunset.time()
+                        }
                         (EventTime::PolarDay, EventTime::PolarDay) => true,
                         (EventTime::PolarNight, EventTime::PolarNight) => false,
                         (sunrise, sunset) => {
-                            warn!(?sunrise, ?sunset, "⚠️ Inconsistent sunrise/sunset classification, defaulting IsDaytime to false");
+                            warn!(
+                                ?sunrise,
+                                ?sunset,
+                                "⚠️ Inconsistent sunrise/sunset classification, defaulting IsDaytime to false"
+                            );
                             false
                         }
                     };
@@ -460,11 +466,17 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                 }
                 TemporalExpression::IsNighttime => {
                     let is_nighttime = match (context.sunrise(), context.sunset()) {
-                        (EventTime::At(sunrise), EventTime::At(sunset)) => now.time() < sunrise.time() || now.time() >= sunset.time(),
+                        (EventTime::At(sunrise), EventTime::At(sunset)) => {
+                            now.time() < sunrise.time() || now.time() >= sunset.time()
+                        }
                         (EventTime::PolarDay, EventTime::PolarDay) => false,
                         (EventTime::PolarNight, EventTime::PolarNight) => true,
                         (sunrise, sunset) => {
-                            warn!(?sunrise, ?sunset, "⚠️ Inconsistent sunrise/sunset classification, defaulting IsNighttime to false");
+                            warn!(
+                                ?sunrise,
+                                ?sunset,
+                                "⚠️ Inconsistent sunrise/sunset classification, defaulting IsNighttime to false"
+                            );
                             false
                         }
                     };
@@ -475,11 +487,15 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
     }
 }
 
-fn compare(lhs: &Expression, rhs: &Expression, cmp: fn(Ordering) -> bool, context: &Context) -> Result<Value, ExpressionError> {
+fn compare(
+    lhs: &Expression,
+    rhs: &Expression,
+    cmp: fn(Ordering) -> bool,
+    context: &Context,
+) -> Result<Value, ExpressionError> {
     match (evaluate(lhs, context)?, evaluate(rhs, context)?) {
-        (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(cmp(a.partial_cmp(&b).ok_or_else(|| ExpressionError::ComparisonFailed {
-            actual_lhs: format!("{:?}", lhs),
-            actual_rhs: format!("{:?}", rhs),
+        (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(cmp(a.partial_cmp(&b).ok_or_else(|| {
+            ExpressionError::ComparisonFailed { actual_lhs: format!("{:?}", lhs), actual_rhs: format!("{:?}", rhs) }
         })?))),
         (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(cmp(a.cmp(&b)))),
         (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
@@ -494,7 +510,8 @@ fn compare(lhs: &Expression, rhs: &Expression, cmp: fn(Ordering) -> bool, contex
 const BOOLEAN: &[ValueKind] = &[ValueKind::Boolean];
 const NUMBER: &[ValueKind] = &[ValueKind::Number];
 const COMPARABLE: &[ValueKind] = &[ValueKind::Number, ValueKind::DateTime];
-const EQUATABLE: &[ValueKind] = &[ValueKind::Boolean, ValueKind::Color, ValueKind::DateTime, ValueKind::Enum, ValueKind::None, ValueKind::Number];
+const EQUATABLE: &[ValueKind] =
+    &[ValueKind::Boolean, ValueKind::Color, ValueKind::DateTime, ValueKind::Enum, ValueKind::None, ValueKind::Number];
 
 #[derive(Error, PartialEq, Debug)]
 pub enum ExpressionError {
@@ -529,7 +546,9 @@ mod tests {
     use crate::flow_engine::context::ContextBuilder;
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
-    use crate::flow_engine::expression::TemporalExpression::{HasSunRisen, HasSunSet, IsAfterTime, IsBeforeTime, IsDaytime, IsNighttime, IsToday};
+    use crate::flow_engine::expression::TemporalExpression::{
+        HasSunRisen, HasSunSet, IsAfterTime, IsBeforeTime, IsDaytime, IsNighttime, IsToday,
+    };
     use crate::store::{DeviceMap, PropertyChange, StoreSnapshot};
     use crate::test_support::DeviceBuilder;
     use chrono::{DateTime, Local, TimeZone, Utc};
@@ -538,22 +557,14 @@ mod tests {
     use std::sync::Arc;
 
     fn context_with_location() -> ContextBuilder {
-        Context::builder().location(GeoLocation {
-            latitude: 51.9244,
-            longitude: 4.4777,
-            altitude: 0.0,
-        })
+        Context::builder().location(GeoLocation { latitude: 51.9244, longitude: 4.4777, altitude: 0.0 })
     }
 
     fn context_with_polar_location() -> ContextBuilder {
         // Longyearbyen, Svalbard: far enough north to experience both a polar day (sun never sets,
         // roughly mid-April to late-August) and a polar night (sun never rises, roughly late-October
         // to mid-February).
-        Context::builder().location(GeoLocation {
-            latitude: 78.2232,
-            longitude: 15.6267,
-            altitude: 0.0,
-        })
+        Context::builder().location(GeoLocation { latitude: 78.2232, longitude: 15.6267, altitude: 0.0 })
     }
 
     fn device() -> Device {
@@ -573,9 +584,13 @@ mod tests {
                 .build(),
         );
 
-        let motion_last_changed_property: Box<dyn Property> = Box::new(
-            DateTimeProperty::new("motionLastChanged".to_string(), PropertyType::MotionLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
-        );
+        let motion_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "motionLastChanged".to_string(),
+            PropertyType::MotionLastChanged,
+            true,
+            None,
+            Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()),
+        ));
 
         let illuminance_property: Box<dyn Property> = Box::new(
             NumberProperty::builder("illuminance".to_string(), PropertyType::Illuminance, true)
@@ -585,9 +600,13 @@ mod tests {
                 .build(),
         );
 
-        let illuminance_last_changed_property: Box<dyn Property> = Box::new(
-            DateTimeProperty::new("illuminanceLastChanged".to_string(), PropertyType::IlluminanceLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
-        );
+        let illuminance_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "illuminanceLastChanged".to_string(),
+            PropertyType::IlluminanceLastChanged,
+            true,
+            None,
+            Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()),
+        ));
 
         let temperature_property: Box<dyn Property> = Box::new(
             NumberProperty::builder("temperature".to_string(), PropertyType::Temperature, true)
@@ -596,15 +615,24 @@ mod tests {
                 .build(),
         );
 
-        let temperature_last_changed_property: Box<dyn Property> = Box::new(
-            DateTimeProperty::new("temperatureLastChanged".to_string(), PropertyType::TemperatureLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
-        );
+        let temperature_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "temperatureLastChanged".to_string(),
+            PropertyType::TemperatureLastChanged,
+            true,
+            None,
+            Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()),
+        ));
 
-        let contact_property: Box<dyn Property> = Box::new(BooleanProperty::new("open".to_string(), PropertyType::ContactSensor, true, None, true));
+        let contact_property: Box<dyn Property> =
+            Box::new(BooleanProperty::new("open".to_string(), PropertyType::ContactSensor, true, None, true));
 
-        let contact_last_changed_property: Box<dyn Property> = Box::new(
-            DateTimeProperty::new("openLastChanged".to_string(), PropertyType::ContactSensorLastChanged, true, None, Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()))
-        );
+        let contact_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "openLastChanged".to_string(),
+            PropertyType::ContactSensorLastChanged,
+            true,
+            None,
+            Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()),
+        ));
 
         let battery_level_property: Box<dyn Property> = Box::new(
             NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
@@ -614,7 +642,15 @@ mod tests {
         );
 
         let battery_state_property: Box<dyn Property> = Box::new(
-            EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, Some("normal".to_string()), vec!["normal".to_string(), "low".to_string(), "critical".to_string()]).unwrap(),
+            EnumProperty::new(
+                "batteryState".to_string(),
+                PropertyType::BatteryState,
+                true,
+                None,
+                Some("normal".to_string()),
+                vec!["normal".to_string(), "low".to_string(), "critical".to_string()],
+            )
+            .unwrap(),
         );
 
         DeviceBuilder::new("ab917a9a-a7d5-4853-9518-75909236a182")
@@ -639,7 +675,7 @@ mod tests {
                 contact_property,
                 contact_last_changed_property,
                 battery_level_property,
-                battery_state_property
+                battery_state_property,
             ])
             .build()
     }
@@ -649,10 +685,7 @@ mod tests {
     }
 
     fn cie_xyy(x: f64, y: f64, brightness: f64) -> Color {
-        Color::CIE_xyY {
-            xy: CartesianCoordinate::new(x, y),
-            brightness,
-        }
+        Color::CIE_xyY { xy: CartesianCoordinate::new(x, y), brightness }
     }
 
     mod greater_than_or_equal_to {
@@ -676,7 +709,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Number(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -689,13 +723,17 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap_err();
-            assert_eq!(result, OperandTypeMismatch {
-                operand: "Compare",
-                expected: COMPARABLE,
-                actual_lhs: ValueKind::Boolean,
-                actual_rhs: ValueKind::Boolean,
-            });
+            )
+            .unwrap_err();
+            assert_eq!(
+                result,
+                OperandTypeMismatch {
+                    operand: "Compare",
+                    expected: COMPARABLE,
+                    actual_lhs: ValueKind::Boolean,
+                    actual_rhs: ValueKind::Boolean,
+                }
+            );
         }
 
         #[rstest]
@@ -709,7 +747,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -717,16 +756,12 @@ mod tests {
         fn color() {
             let result = evaluate(
                 &GreaterThanOrEqualTo {
-                    lhs: Box::new(Literal {
-                        value: Value::Color(Color::RGB(255, 0, 0)),
-                    }),
-                    rhs: Box::new(Literal {
-                        value: Value::Color(Color::RGB(0, 0, 255)),
-                    }),
+                    lhs: Box::new(Literal { value: Value::Color(Color::RGB(255, 0, 0)) }),
+                    rhs: Box::new(Literal { value: Value::Color(Color::RGB(0, 0, 255)) }),
                 },
                 &Context::default(),
             )
-                .unwrap_err();
+            .unwrap_err();
             assert_eq!(
                 result,
                 OperandTypeMismatch {
@@ -760,7 +795,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Number(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -773,13 +809,17 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap_err();
-            assert_eq!(result, OperandTypeMismatch {
-                operand: "Compare",
-                expected: COMPARABLE,
-                actual_lhs: ValueKind::Boolean,
-                actual_rhs: ValueKind::Boolean,
-            });
+            )
+            .unwrap_err();
+            assert_eq!(
+                result,
+                OperandTypeMismatch {
+                    operand: "Compare",
+                    expected: COMPARABLE,
+                    actual_lhs: ValueKind::Boolean,
+                    actual_rhs: ValueKind::Boolean,
+                }
+            );
         }
 
         #[rstest]
@@ -793,7 +833,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -801,16 +842,12 @@ mod tests {
         fn color() {
             let result = evaluate(
                 &GreaterThan {
-                    lhs: Box::new(Literal {
-                        value: Value::Color(Color::RGB(255, 0, 0)),
-                    }),
-                    rhs: Box::new(Literal {
-                        value: Value::Color(Color::RGB(0, 0, 255)),
-                    }),
+                    lhs: Box::new(Literal { value: Value::Color(Color::RGB(255, 0, 0)) }),
+                    rhs: Box::new(Literal { value: Value::Color(Color::RGB(0, 0, 255)) }),
                 },
                 &Context::default(),
             )
-                .unwrap_err();
+            .unwrap_err();
             assert_eq!(
                 result,
                 OperandTypeMismatch {
@@ -844,7 +881,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Number(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -857,13 +895,17 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap_err();
-            assert_eq!(result, OperandTypeMismatch {
-                operand: "Compare",
-                expected: COMPARABLE,
-                actual_lhs: ValueKind::Boolean,
-                actual_rhs: ValueKind::Boolean,
-            });
+            )
+            .unwrap_err();
+            assert_eq!(
+                result,
+                OperandTypeMismatch {
+                    operand: "Compare",
+                    expected: COMPARABLE,
+                    actual_lhs: ValueKind::Boolean,
+                    actual_rhs: ValueKind::Boolean,
+                }
+            );
         }
 
         #[rstest]
@@ -877,7 +919,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
     }
@@ -903,7 +946,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Number(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -916,13 +960,17 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap_err();
-            assert_eq!(result, OperandTypeMismatch {
-                operand: "Compare",
-                expected: COMPARABLE,
-                actual_lhs: ValueKind::Boolean,
-                actual_rhs: ValueKind::Boolean,
-            });
+            )
+            .unwrap_err();
+            assert_eq!(
+                result,
+                OperandTypeMismatch {
+                    operand: "Compare",
+                    expected: COMPARABLE,
+                    actual_lhs: ValueKind::Boolean,
+                    actual_rhs: ValueKind::Boolean,
+                }
+            );
         }
 
         #[rstest]
@@ -937,7 +985,7 @@ mod tests {
                 },
                 &Context::default(),
             )
-                .unwrap();
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -945,16 +993,12 @@ mod tests {
         fn color() {
             let result = evaluate(
                 &LessThan {
-                    lhs: Box::new(Literal {
-                        value: Value::Color(Color::RGB(255, 0, 0)),
-                    }),
-                    rhs: Box::new(Literal {
-                        value: Value::Color(Color::RGB(0, 0, 255)),
-                    }),
+                    lhs: Box::new(Literal { value: Value::Color(Color::RGB(255, 0, 0)) }),
+                    rhs: Box::new(Literal { value: Value::Color(Color::RGB(0, 0, 255)) }),
                 },
                 &Context::default(),
             )
-                .unwrap_err();
+            .unwrap_err();
             assert_eq!(
                 result,
                 OperandTypeMismatch {
@@ -988,7 +1032,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Number(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1004,7 +1049,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::Boolean(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1025,7 +1071,7 @@ mod tests {
                 },
                 &Context::default(),
             )
-                .unwrap();
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1040,7 +1086,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1054,7 +1101,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::String(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1062,13 +1110,10 @@ mod tests {
         #[case(Value::None, Value::None, true)]
         fn none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
             let result = evaluate(
-                &EqualTo {
-                    lhs: Box::new(Literal { value: lhs }),
-                    rhs: Box::new(Literal { value: rhs }),
-                },
+                &EqualTo { lhs: Box::new(Literal { value: lhs }), rhs: Box::new(Literal { value: rhs }) },
                 &Context::default(),
             )
-                .unwrap();
+            .unwrap();
 
             assert_eq!(result, Value::Boolean(expected));
         }
@@ -1094,13 +1139,10 @@ mod tests {
             })]
         fn mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
             let result = evaluate(
-                &EqualTo {
-                    lhs: Box::new(Literal { value: lhs }),
-                    rhs: Box::new(Literal { value: rhs }),
-                },
+                &EqualTo { lhs: Box::new(Literal { value: lhs }), rhs: Box::new(Literal { value: rhs }) },
                 &Context::default(),
             )
-                .unwrap_err();
+            .unwrap_err();
             assert_eq!(result, expected);
         }
     }
@@ -1127,7 +1169,7 @@ mod tests {
                 },
                 &Context::default(),
             )
-                .unwrap();
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1144,7 +1186,7 @@ mod tests {
                 },
                 &Context::default(),
             )
-                .unwrap();
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1165,7 +1207,7 @@ mod tests {
                 },
                 &Context::default(),
             )
-                .unwrap();
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1180,7 +1222,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::DateTime(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1194,7 +1237,8 @@ mod tests {
                     rhs: Box::new(Literal { value: Value::String(rhs) }),
                 },
                 &Context::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(result, Value::Boolean(expected));
         }
 
@@ -1202,13 +1246,10 @@ mod tests {
         #[case(Value::None, Value::None, false)]
         fn none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
             let result = evaluate(
-                &NotEqualTo {
-                    lhs: Box::new(Literal { value: lhs }),
-                    rhs: Box::new(Literal { value: rhs }),
-                },
+                &NotEqualTo { lhs: Box::new(Literal { value: lhs }), rhs: Box::new(Literal { value: rhs }) },
                 &Context::default(),
             )
-                .unwrap();
+            .unwrap();
 
             assert_eq!(result, Value::Boolean(expected));
         }
@@ -1234,13 +1275,10 @@ mod tests {
             })]
         fn mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
             let result = evaluate(
-                &NotEqualTo {
-                    lhs: Box::new(Literal { value: lhs }),
-                    rhs: Box::new(Literal { value: rhs }),
-                },
+                &NotEqualTo { lhs: Box::new(Literal { value: lhs }), rhs: Box::new(Literal { value: rhs }) },
                 &Context::default(),
             )
-                .unwrap_err();
+            .unwrap_err();
             assert_eq!(result, expected);
         }
     }
@@ -1283,10 +1321,7 @@ mod tests {
         })]
     fn and_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
         let result = evaluate(
-            &And {
-                lhs: Box::new(Literal { value: lhs }),
-                rhs: Box::new(Literal { value: rhs }),
-            },
+            &And { lhs: Box::new(Literal { value: lhs }), rhs: Box::new(Literal { value: rhs }) },
             &Context::default(),
         )
         .unwrap_err();
@@ -1331,10 +1366,7 @@ mod tests {
         })]
     fn or_mismatch(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: ExpressionError) {
         let result = evaluate(
-            &Or {
-                lhs: Box::new(Literal { value: lhs }),
-                rhs: Box::new(Literal { value: rhs }),
-            },
+            &Or { lhs: Box::new(Literal { value: lhs }), rhs: Box::new(Literal { value: rhs }) },
             &Context::default(),
         )
         .unwrap_err();
@@ -1345,13 +1377,9 @@ mod tests {
     #[case(true, false)]
     #[case(false, true)]
     fn not(#[case] value: bool, #[case] expected: bool) {
-        let result = evaluate(
-            &Not {
-                expression: Box::new(Literal { value: Value::Boolean(value) }),
-            },
-            &Context::default(),
-        )
-        .unwrap();
+        let result =
+            evaluate(&Not { expression: Box::new(Literal { value: Value::Boolean(value) }) }, &Context::default())
+                .unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1367,13 +1395,7 @@ mod tests {
                 actual: ValueKind::Number,
         })]
     fn not_mismatch(#[case] value: Value, #[case] expected: ExpressionError) {
-        let result = evaluate(
-            &Not {
-                expression: Box::new(Literal { value }),
-            },
-            &Context::default(),
-        )
-        .unwrap_err();
+        let result = evaluate(&Not { expression: Box::new(Literal { value }) }, &Context::default()).unwrap_err();
         assert_eq!(result, expected);
     }
 
@@ -1389,7 +1411,7 @@ mod tests {
             },
             &Context::default(),
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(result, Value::Number(expected));
     }
 
@@ -1405,7 +1427,7 @@ mod tests {
             },
             &Context::default(),
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(result, Value::Number(expected));
     }
 
@@ -1440,25 +1462,42 @@ mod tests {
     #[test]
     fn property_changed_evaluates_to_true_when_it_matches_the_context() {
         let context = Context::builder()
-            .changed(Some(PropertyChange { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string(), initiated_by: InitiatedBy::Hearth }))
+            .changed(Some(PropertyChange {
+                device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
+                property_id: "on".to_string(),
+                initiated_by: InitiatedBy::Hearth,
+            }))
             .build();
-        let expression = PropertyChanged { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() };
+        let expression = PropertyChanged {
+            device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
+            property_id: "on".to_string(),
+        };
         assert_eq!(evaluate(&expression, &context), Ok(Value::Boolean(true)));
     }
 
     #[test]
     fn property_changed_evaluates_to_false_for_a_different_property() {
         let context = Context::builder()
-            .changed(Some(PropertyChange { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "brightness".to_string(), initiated_by: InitiatedBy::Hearth }))
+            .changed(Some(PropertyChange {
+                device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
+                property_id: "brightness".to_string(),
+                initiated_by: InitiatedBy::Hearth,
+            }))
             .build();
-        let expression = PropertyChanged { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() };
+        let expression = PropertyChanged {
+            device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
+            property_id: "on".to_string(),
+        };
         assert_eq!(evaluate(&expression, &context), Ok(Value::Boolean(false)));
     }
 
     #[test]
     fn property_changed_evaluates_to_false_when_the_context_has_no_change() {
         let context = Context::builder().build(); // e.g. a scheduled flow's context
-        let expression = PropertyChanged { device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(), property_id: "on".to_string() };
+        let expression = PropertyChanged {
+            device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
+            property_id: "on".to_string(),
+        };
         assert_eq!(evaluate(&expression, &context), Ok(Value::Boolean(false)));
     }
 
@@ -1468,28 +1507,41 @@ mod tests {
     #[case::boolean("ab917a9a-a7d5-4853-9518-75909236a182", "on", Ok(Value::Boolean(true)))]
     #[case::date_time("ab917a9a-a7d5-4853-9518-75909236a182", "motionLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
     #[case::number("ab917a9a-a7d5-4853-9518-75909236a182", "brightness", Ok(Value::Number(Number::Float(58.89))))]
-    #[case::color("ab917a9a-a7d5-4853-9518-75909236a182", "color", Err(ExpressionError::UnsupportedPropertyType(PropertyType::Color)))]
+    #[case::color(
+        "ab917a9a-a7d5-4853-9518-75909236a182",
+        "color",
+        Err(ExpressionError::UnsupportedPropertyType(PropertyType::Color))
+    )]
     #[case::color_temperature(
         "ab917a9a-a7d5-4853-9518-75909236a182",
         "colorTemperature",
         Err(ExpressionError::UnsupportedPropertyType(PropertyType::ColorTemperature))
     )]
-    #[case::illuminance("ab917a9a-a7d5-4853-9518-75909236a182", "illuminance", Ok(Value::Number(Number::Float(316.23))))]
+    #[case::illuminance(
+        "ab917a9a-a7d5-4853-9518-75909236a182",
+        "illuminance",
+        Ok(Value::Number(Number::Float(316.23)))
+    )]
     #[case::illuminance_last_changed("ab917a9a-a7d5-4853-9518-75909236a182", "illuminanceLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
     #[case::temperature("ab917a9a-a7d5-4853-9518-75909236a182", "temperature", Ok(Value::Number(Number::Float(21.5))))]
     #[case::temperature_last_changed("ab917a9a-a7d5-4853-9518-75909236a182", "temperatureLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
-    #[case::battery_level("ab917a9a-a7d5-4853-9518-75909236a182", "batteryLevel", Ok(Value::Number(Number::PositiveInt(42))))]
+    #[case::battery_level(
+        "ab917a9a-a7d5-4853-9518-75909236a182",
+        "batteryLevel",
+        Ok(Value::Number(Number::PositiveInt(42)))
+    )]
     #[case::battery_state("ab917a9a-a7d5-4853-9518-75909236a182", "batteryState", Ok(Value::String("normal".to_string())))]
-    fn property_value(#[case] device_id: &str, #[case] property_id: &str, #[case] expected: Result<Value, ExpressionError>) {
+    fn property_value(
+        #[case] device_id: &str,
+        #[case] property_id: &str,
+        #[case] expected: Result<Value, ExpressionError>,
+    ) {
         let device = device();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
         let snapshot = StoreSnapshot { devices: Arc::new(devices) };
 
         let result = evaluate(
-            &PropertyValue {
-                device_id: device_id.to_string(),
-                property_id: property_id.to_string(),
-            },
+            &PropertyValue { device_id: device_id.to_string(), property_id: property_id.to_string() },
             &Context::builder().snapshot(snapshot).build(),
         );
 
@@ -1507,11 +1559,7 @@ mod tests {
     fn is_today(#[case] weekday: Weekday, #[case] expected: bool) {
         let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap(); // A Friday
         let result = evaluate(
-            &Temporal {
-                expression: IsToday {
-                    when: WeekdayCondition::Specific(weekday),
-                },
-            },
+            &Temporal { expression: IsToday { when: WeekdayCondition::Specific(weekday) } },
             &Context::builder().now(fixed_date_time).build(),
         )
         .unwrap();
@@ -1686,11 +1734,17 @@ mod tests {
     #[test]
     fn property_value_evaluates_to_none_for_a_battery_state_without_a_reading() {
         let battery_state_property: Box<dyn Property> = Box::new(
-            EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, None, vec!["normal".to_string(), "low".to_string(), "critical".to_string()]).unwrap(),
+            EnumProperty::new(
+                "batteryState".to_string(),
+                PropertyType::BatteryState,
+                true,
+                None,
+                None,
+                vec!["normal".to_string(), "low".to_string(), "critical".to_string()],
+            )
+            .unwrap(),
         );
-        let device = DeviceBuilder::new("device")
-            .with_properties(vec![battery_state_property])
-            .build();
+        let device = DeviceBuilder::new("device").with_properties(vec![battery_state_property]).build();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
         let snapshot = StoreSnapshot { devices: Arc::new(devices) };
 
@@ -1711,7 +1765,10 @@ mod tests {
         }, true)]
     #[case::property_value_only(PropertyValue{ device_id: "light".to_string(), property_id: "on".to_string() }, false)]
     #[case::literal_only(Literal{ value: Value::Boolean(true) }, false)]
-    fn contains_property_changed_detects_it_anywhere_in_the_tree(#[case] expression: Expression, #[case] expected: bool) {
+    fn contains_property_changed_detects_it_anywhere_in_the_tree(
+        #[case] expression: Expression,
+        #[case] expected: bool,
+    ) {
         assert_eq!(expression.contains_property_changed(), expected);
     }
 
@@ -1725,15 +1782,18 @@ mod tests {
             rhs: Box::new(Not { expression: Box::new(c) }),
         };
 
-        let visited: Vec<&str> = expression.walk().map(|e| match e {
-            Or { .. } => "or",
-            GreaterThan { .. } => "gt",
-            Literal { value: Value::Number(_) } => "number",
-            PropertyValue { .. } => "property",
-            Not { .. } => "not",
-            Literal { value: Value::Boolean(_) } => "boolean",
-            _ => "other",
-        }).collect();
+        let visited: Vec<&str> = expression
+            .walk()
+            .map(|e| match e {
+                Or { .. } => "or",
+                GreaterThan { .. } => "gt",
+                Literal { value: Value::Number(_) } => "number",
+                PropertyValue { .. } => "property",
+                Not { .. } => "not",
+                Literal { value: Value::Boolean(_) } => "boolean",
+                _ => "other",
+            })
+            .collect();
 
         assert_eq!(visited, vec!["or", "gt", "number", "property", "not", "boolean"]);
     }
@@ -1744,7 +1804,10 @@ mod tests {
     fn walk_visits_both_operands_of_an_arithmetic_expression(#[case] expression: Expression) {
         let visited: Vec<Option<&Value>> = expression.walk().map(Expression::constant_value).collect();
 
-        assert_eq!(visited, vec![None, Some(&Value::Number(Number::PositiveInt(1))), Some(&Value::Number(Number::PositiveInt(2)))]);
+        assert_eq!(
+            visited,
+            vec![None, Some(&Value::Number(Number::PositiveInt(1))), Some(&Value::Number(Number::PositiveInt(2)))]
+        );
     }
 
     #[rstest]
@@ -1865,9 +1928,16 @@ mod tests {
 
         #[test]
         fn incompatible_operands_displays_the_operator_and_the_operand_kinds() {
-            let problem = Problem::IncompatibleOperands { operator: "And", expected: "Boolean", actual: vec![ValueKind::Boolean, ValueKind::Number] };
+            let problem = Problem::IncompatibleOperands {
+                operator: "And",
+                expected: "Boolean",
+                actual: vec![ValueKind::Boolean, ValueKind::Number],
+            };
 
-            assert_eq!(problem.to_string(), "incompatible operands for 'And': expected Boolean, got boolean and number");
+            assert_eq!(
+                problem.to_string(),
+                "incompatible operands for 'And': expected Boolean, got boolean and number"
+            );
         }
     }
 

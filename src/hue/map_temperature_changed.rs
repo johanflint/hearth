@@ -19,7 +19,7 @@ pub fn map_temperature_changed(property: TemperatureChanged) -> Vec<Event> {
             property_id: PropertyLocator::Name("temperatureLastChanged".to_string()),
             value: Some(report.changed),
             initiated_by: InitiatedBy::External,
-        }
+        },
     ]
 }
 
@@ -30,19 +30,12 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     fn owner() -> Owner {
-        Owner {
-            rid: "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3".to_string(),
-            rtype: "device".to_string(),
-        }
+        Owner { rid: "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3".to_string(), rtype: "device".to_string() }
     }
 
     #[test]
     fn returns_no_events_when_the_temperature_did_not_change() {
-        let property = TemperatureChanged {
-            id: "42".to_string(),
-            owner: owner(),
-            temperature: None,
-        };
+        let property = TemperatureChanged { id: "42".to_string(), owner: owner(), temperature: None };
 
         assert!(map_temperature_changed(property).is_empty());
     }

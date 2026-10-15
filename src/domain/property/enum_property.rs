@@ -13,7 +13,14 @@ pub struct EnumProperty {
 }
 
 impl EnumProperty {
-    pub fn new(name: String, property_type: PropertyType, readonly: bool, external_id: Option<String>, value: Option<String>, allowed_values: Vec<String>) -> Result<Self, PropertyError> {
+    pub fn new(
+        name: String,
+        property_type: PropertyType,
+        readonly: bool,
+        external_id: Option<String>,
+        value: Option<String>,
+        allowed_values: Vec<String>,
+    ) -> Result<Self, PropertyError> {
         if let Some(value) = &value {
             if allowed_values.is_empty() {
                 return Err(PropertyError::EmptyAllowedValues);
@@ -22,14 +29,7 @@ impl EnumProperty {
                 return Err(PropertyError::UnknownValue { value: value.clone(), allowed_values });
             }
         }
-        Ok(EnumProperty {
-            name,
-            property_type,
-            readonly,
-            external_id,
-            value,
-            allowed_values,
-        })
+        Ok(EnumProperty { name, property_type, readonly, external_id, value, allowed_values })
     }
 
     pub fn value(&self) -> Option<&str> {
@@ -45,7 +45,10 @@ impl EnumProperty {
                 return Err(PropertyError::EmptyAllowedValues);
             }
             if !self.allowed_values.contains(v) {
-                return Err(PropertyError::UnknownValue { value: v.clone(), allowed_values: self.allowed_values.clone() });
+                return Err(PropertyError::UnknownValue {
+                    value: v.clone(),
+                    allowed_values: self.allowed_values.clone(),
+                });
             }
         }
 
@@ -142,15 +145,25 @@ mod tests {
     fn new_returns_an_error_if_the_initial_value_is_invalid() {
         let property = property("unknown_initial_value".to_string(), true);
         assert!(property.is_err());
-        assert_eq!(property.unwrap_err(), PropertyError::UnknownValue {
-            value: "unknown_initial_value".to_string(),
-            allowed_values: vec!["initial_press".to_string(), "short_release".to_string()],
-        });
+        assert_eq!(
+            property.unwrap_err(),
+            PropertyError::UnknownValue {
+                value: "unknown_initial_value".to_string(),
+                allowed_values: vec!["initial_press".to_string(), "short_release".to_string()],
+            }
+        );
     }
 
     #[test]
     fn new_returns_an_error_if_allowed_values_is_empty_and_value_is_some() {
-        let property = EnumProperty::new("button0".to_string(), PropertyType::Button, true, None, Some("initial_press".to_string()), vec![]);
+        let property = EnumProperty::new(
+            "button0".to_string(),
+            PropertyType::Button,
+            true,
+            None,
+            Some("initial_press".to_string()),
+            vec![],
+        );
         assert_eq!(property.unwrap_err(), PropertyError::EmptyAllowedValues);
     }
 
@@ -189,16 +202,20 @@ mod tests {
         let result = property.set_value(Some("not_in_allowed_values".to_string()));
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), PropertyError::UnknownValue {
-            value: "not_in_allowed_values".to_string(),
-            allowed_values: vec!["initial_press".to_string(), "short_release".to_string()],
-        });
+        assert_eq!(
+            result.unwrap_err(),
+            PropertyError::UnknownValue {
+                value: "not_in_allowed_values".to_string(),
+                allowed_values: vec!["initial_press".to_string(), "short_release".to_string()],
+            }
+        );
         assert_eq!(property.value, Some("initial_press".to_string()));
     }
 
     #[test]
     fn set_value_rejects_a_value_if_allowed_values_is_empty() {
-        let mut property = EnumProperty::new("button0".to_string(), PropertyType::Button, true, None, None, vec![]).unwrap();
+        let mut property =
+            EnumProperty::new("button0".to_string(), PropertyType::Button, true, None, None, vec![]).unwrap();
         let result = property.set_value(Some("initial_press".to_string()));
         assert_eq!(result.unwrap_err(), PropertyError::EmptyAllowedValues);
     }

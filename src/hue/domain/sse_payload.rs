@@ -1,4 +1,7 @@
-use crate::hue::domain::{ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, LightLevelChanged, MotionChanged, TemperatureChanged, ZigbeeConnectivityChanged};
+use crate::hue::domain::{
+    ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, LightLevelChanged, MotionChanged,
+    TemperatureChanged, ZigbeeConnectivityChanged,
+};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, to_string_pretty};
 
@@ -139,7 +142,8 @@ mod tests {
         };
         assert_eq!(id, "a3f1c2d4-6b7e-4c1a-9d2e-5f8b0c3a7e11");
         assert_eq!(owner.rid, "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3");
-        let report = light.as_ref().and_then(|l| l.light_level_report.as_ref()).expect("light_level_report should be present");
+        let report =
+            light.as_ref().and_then(|l| l.light_level_report.as_ref()).expect("light_level_report should be present");
         assert_eq!(report.light_level, 12000);
 
         Ok(())
@@ -224,7 +228,10 @@ mod tests {
         };
         assert_eq!(id, "197f1e17-f04f-471d-b410-77b9267826e9");
         assert_eq!(owner.rid, "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3");
-        let report = temperature.as_ref().and_then(|t| t.temperature_report.as_ref()).expect("temperature_report should be present");
+        let report = temperature
+            .as_ref()
+            .and_then(|t| t.temperature_report.as_ref())
+            .expect("temperature_report should be present");
         assert_eq!(report.temperature, 21.34);
 
         Ok(())
@@ -298,7 +305,9 @@ mod tests {
         assert_eq!(result.len(), 1);
         let first_result = &result[0];
         assert_eq!(first_result.data.len(), 1);
-        assert!(matches!(&first_result.data[0], ChangedProperty::Unknown(UnknownProperty { property_type, .. }) if property_type == "unknown"));
+        assert!(
+            matches!(&first_result.data[0], ChangedProperty::Unknown(UnknownProperty { property_type, .. }) if property_type == "unknown")
+        );
 
         Ok(())
     }

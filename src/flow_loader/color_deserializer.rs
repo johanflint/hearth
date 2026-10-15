@@ -40,14 +40,8 @@ impl<'de> Deserialize<'de> for Color {
                 }
             }
             RawColor::Rgb { r, g, b } => Ok(Color::RGB(r, g, b)),
-            RawColor::XyY { x, y, brightness } => Ok(Color::CIE_xyY {
-                xy: CartesianCoordinate::new(x, y),
-                brightness,
-            }),
-            RawColor::XyYAlt { x, y, Y } => Ok(Color::CIE_xyY {
-                xy: CartesianCoordinate::new(x, y),
-                brightness: Y,
-            }),
+            RawColor::XyY { x, y, brightness } => Ok(Color::CIE_xyY { xy: CartesianCoordinate::new(x, y), brightness }),
+            RawColor::XyYAlt { x, y, Y } => Ok(Color::CIE_xyY { xy: CartesianCoordinate::new(x, y), brightness: Y }),
         }
     }
 }
@@ -63,7 +57,10 @@ mod tests {
     #[case::valid_hex_without_hash("000000", Ok(Color::Hex("#000000".to_string())))]
     #[case::valid_hex_mixed_case("#8A7b4C", Ok(Color::Hex("#8a7b4c".to_string())))]
     #[case::invalid_hex("#000", Err(Error::custom("invalid value: string \"#000\", expected a 6-digit hex color")))]
-    #[case::invalid_hex("#00000Z", Err(Error::custom("invalid value: string \"#00000Z\", expected a 6-digit hex color")))]
+    #[case::invalid_hex(
+        "#00000Z",
+        Err(Error::custom("invalid value: string \"#00000Z\", expected a 6-digit hex color"))
+    )]
     fn deserializes_hex_values(#[case] json_value: String, #[case] expected: serde_json::Result<Color>) {
         let json = format!(r#""{}""#, json_value);
 
@@ -75,7 +72,12 @@ mod tests {
 
     #[rstest]
     #[case(0, 150, 255, Ok(Color::RGB(0, 150, 255)))]
-    fn deserialize_rgb_values(#[case] r: u8, #[case] g: u8, #[case] b: u8, #[case] expected: serde_json::Result<Color>) {
+    fn deserialize_rgb_values(
+        #[case] r: u8,
+        #[case] g: u8,
+        #[case] b: u8,
+        #[case] expected: serde_json::Result<Color>,
+    ) {
         let json = format!(
             r#"{{
                 "r": {},
@@ -93,7 +95,12 @@ mod tests {
 
     #[rstest]
     #[case(0.4, 0.3, 0.9, Ok(Color::CIE_xyY { xy: CartesianCoordinate::new(x, y), brightness}))]
-    fn deserialize_xy_brightness_values(#[case] x: f64, #[case] y: f64, #[case] brightness: f64, #[case] expected: serde_json::Result<Color>) {
+    fn deserialize_xy_brightness_values(
+        #[case] x: f64,
+        #[case] y: f64,
+        #[case] brightness: f64,
+        #[case] expected: serde_json::Result<Color>,
+    ) {
         let json = format!(
             r#"{{
                 "x": {},
@@ -111,7 +118,12 @@ mod tests {
 
     #[rstest]
     #[case(0.4, 0.3, 0.9, Ok(Color::CIE_xyY { xy: CartesianCoordinate::new(x, y), brightness}))]
-    fn deserialize_xy_Y_values(#[case] x: f64, #[case] y: f64, #[case] brightness: f64, #[case] expected: serde_json::Result<Color>) {
+    fn deserialize_xy_Y_values(
+        #[case] x: f64,
+        #[case] y: f64,
+        #[case] brightness: f64,
+        #[case] expected: serde_json::Result<Color>,
+    ) {
         let json = format!(
             r#"{{
                 "x": {},

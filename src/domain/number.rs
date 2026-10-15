@@ -50,10 +50,12 @@ impl Add for Number {
         match (self, rhs) {
             // Integer + Integer
             (Number::PositiveInt(a), Number::PositiveInt(b)) => Number::PositiveInt(a.saturating_add(b)),
-            (Number::PositiveInt(a), Number::NegativeInt(b)) | (Number::NegativeInt(b), Number::PositiveInt(a)) => match a as i128 + b as i128 {
-                sum if sum >= 0 => Number::PositiveInt(sum.min(u64::MAX as i128) as u64),
-                sum => Number::NegativeInt(sum.max(i64::MIN as i128) as i64),
-            },
+            (Number::PositiveInt(a), Number::NegativeInt(b)) | (Number::NegativeInt(b), Number::PositiveInt(a)) => {
+                match a as i128 + b as i128 {
+                    sum if sum >= 0 => Number::PositiveInt(sum.min(u64::MAX as i128) as u64),
+                    sum => Number::NegativeInt(sum.max(i64::MIN as i128) as i64),
+                }
+            }
             (Number::NegativeInt(a), Number::NegativeInt(b)) => Number::NegativeInt(a.saturating_add(b)),
 
             // Float involved
@@ -87,11 +89,11 @@ impl Sub for Number {
                 } else {
                     Number::NegativeInt(diff as i64)
                 }
-            },
+            }
             (Number::NegativeInt(a), Number::PositiveInt(b)) => {
                 let diff = a as i128 - b as i128;
                 Number::NegativeInt(diff.max(i64::MIN as i128) as i64)
-            },
+            }
             (Number::NegativeInt(a), Number::NegativeInt(b)) => Number::NegativeInt(a.saturating_sub(b)),
 
             // Float involved

@@ -14,7 +14,10 @@ impl<'de> Deserialize<'de> for WeekdayCondition {
             type Value = WeekdayCondition;
 
             fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
-                write!(formatter, "a string like 'Monday', 'Mon-Fri', 'weekend', 'weekday' or an array like ['Mon', 'Wed']")
+                write!(
+                    formatter,
+                    "a string like 'Monday', 'Mon-Fri', 'weekend', 'weekday' or an array like ['Mon', 'Wed']"
+                )
             }
 
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -29,10 +32,10 @@ impl<'de> Deserialize<'de> for WeekdayCondition {
                     _ => {
                         // Handle "Mon-Fri" or a single "Mon"
                         if let Some((start, end)) = value.split_once('-') {
-                            let start_day: Weekday =
-                                serde_json::from_str(&format!("\"{}\"", start.trim())).map_err(|_| de::Error::invalid_value(Unexpected::Str(start), &"valid weekday"))?;
-                            let end_day: Weekday =
-                                serde_json::from_str(&format!("\"{}\"", end.trim())).map_err(|_| de::Error::invalid_value(Unexpected::Str(end), &"valid weekday"))?;
+                            let start_day: Weekday = serde_json::from_str(&format!("\"{}\"", start.trim()))
+                                .map_err(|_| de::Error::invalid_value(Unexpected::Str(start), &"valid weekday"))?;
+                            let end_day: Weekday = serde_json::from_str(&format!("\"{}\"", end.trim()))
+                                .map_err(|_| de::Error::invalid_value(Unexpected::Str(end), &"valid weekday"))?;
 
                             if start_day == end_day {
                                 return Ok(WeekdayCondition::Specific(start_day));
@@ -44,8 +47,8 @@ impl<'de> Deserialize<'de> for WeekdayCondition {
                                 Ok(WeekdayCondition::Range { start: end_day, end: start_day })
                             }
                         } else {
-                            let day: Weekday =
-                                serde_json::from_str(&format!("\"{}\"", value.trim())).map_err(|_| de::Error::invalid_value(Unexpected::Str(&value), &"valid weekday"))?;
+                            let day: Weekday = serde_json::from_str(&format!("\"{}\"", value.trim()))
+                                .map_err(|_| de::Error::invalid_value(Unexpected::Str(&value), &"valid weekday"))?;
                             Ok(WeekdayCondition::Specific(day))
                         }
                     }
@@ -61,7 +64,8 @@ impl<'de> Deserialize<'de> for WeekdayCondition {
                     seen[weekday.as_index()] = true;
                 }
 
-                let days: Vec<Weekday> = Weekday::all().iter().filter(|weekday| seen[weekday.as_index()]).cloned().collect();
+                let days: Vec<Weekday> =
+                    Weekday::all().iter().filter(|weekday| seen[weekday.as_index()]).cloned().collect();
                 Ok(WeekdayCondition::Set(days))
             }
         }

@@ -33,7 +33,9 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        let Some(span) = ctx.span(id) else { return; };
+        let Some(span) = ctx.span(id) else {
+            return;
+        };
         span.extensions_mut().insert(SpanStart(Instant::now()));
 
         let mut visitor = MetricNameVisitor::default();
@@ -44,9 +46,13 @@ where
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        let Some(span) = ctx.span(&id) else { return; };
+        let Some(span) = ctx.span(&id) else {
+            return;
+        };
         let extensions = span.extensions();
-        let Some(start) = extensions.get::<SpanStart>() else { return; };
+        let Some(start) = extensions.get::<SpanStart>() else {
+            return;
+        };
         let elapsed = start.0.elapsed();
 
         // Any span tagged with `fields(metric_name = "...")` is automatically recorded.

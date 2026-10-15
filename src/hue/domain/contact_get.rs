@@ -21,8 +21,8 @@ pub struct ContactReport {
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContactState {
-    Contact,    // The magnets touch, the door is closed
-    NoContact,  // The magnets are apart, the door is open
+    Contact,   // The magnets touch, the door is closed
+    NoContact, // The magnets are apart, the door is open
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,12 +44,12 @@ mod tests {
     #[case::open("no_contact", ContactState::NoContact)]
     fn deserialize_contact_get_with_a_report(#[case] state: &str, #[case] expected: ContactState) {
         let json = json!({
-                    "id": "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21",
-                    "owner": { "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77", "rtype": "device" },
-                    "enabled": true,
-                    "contact_report": { "changed": "2026-09-23T15:37:21.003Z", "state": state },
-                    "type": "contact"
-                });
+            "id": "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21",
+            "owner": { "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77", "rtype": "device" },
+            "enabled": true,
+            "contact_report": { "changed": "2026-09-23T15:37:21.003Z", "state": state },
+            "type": "contact"
+        });
 
         let contact_get = serde_json::from_value::<ContactGet>(json).unwrap();
 
@@ -62,11 +62,11 @@ mod tests {
     #[test]
     fn deserialize_contact_get_without_a_report() {
         let json = json!({
-                    "id": "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21",
-                    "owner": { "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77", "rtype": "device" },
-                    "enabled": true,
-                    "type": "contact"
-                });
+            "id": "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21",
+            "owner": { "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77", "rtype": "device" },
+            "enabled": true,
+            "type": "contact"
+        });
 
         let contact_get = serde_json::from_value::<ContactGet>(json).unwrap();
 
@@ -76,12 +76,12 @@ mod tests {
     #[test]
     fn deserialize_contact_get_with_an_unknown_state_fails() {
         let json = json!({
-                    "id": "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21",
-                    "owner": { "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77", "rtype": "device" },
-                    "enabled": true,
-                    "contact_report": { "changed": "2026-09-23T15:37:21.003Z", "state": "ajar" },
-                    "type": "contact"
-                });
+            "id": "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21",
+            "owner": { "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77", "rtype": "device" },
+            "enabled": true,
+            "contact_report": { "changed": "2026-09-23T15:37:21.003Z", "state": "ajar" },
+            "type": "contact"
+        });
 
         assert!(serde_json::from_value::<ContactGet>(json).is_err());
     }

@@ -30,7 +30,8 @@ pub async fn listen<T>(tx: Sender<ServerSentEvent<T>>, client: &Client, config: 
 where
     T: DeserializeOwned + Debug + 'static,
 {
-    let strategy = ExponentialBackoff::from_millis(config.retry_ms).factor(2).max_delay(config.retry_max_delay).map(jitter);
+    let strategy =
+        ExponentialBackoff::from_millis(config.retry_ms).factor(2).max_delay(config.retry_max_delay).map(jitter);
 
     info!("Connecting to SSE stream {}...", config.url);
     let last_event_id = Arc::new(Mutex::new(None::<String>));
@@ -57,12 +58,18 @@ where
     Ok(())
 }
 
-async fn connect_sse_stream<T>(tx: Sender<ServerSentEvent<T>>, client: &Client, config: &Config, last_event_id: Arc<Mutex<Option<String>>>) -> Result<(), Box<dyn Error>>
+async fn connect_sse_stream<T>(
+    tx: Sender<ServerSentEvent<T>>,
+    client: &Client,
+    config: &Config,
+    last_event_id: Arc<Mutex<Option<String>>>,
+) -> Result<(), Box<dyn Error>>
 where
     T: DeserializeOwned + Debug + 'static,
 {
     let url = format!("{}/eventstream/clip/v2", config.url);
-    let mut request = client.get(&url)
+    let mut request = client
+        .get(&url)
         .timeout(Duration::MAX) // Overrides the client_request_timeout_ms config
         .header("Accept", "text/event-stream");
 
@@ -119,7 +126,10 @@ where
                             }
                         }
                         Err(SendTimeoutError::Timeout(_)) => {
-                            warn!("⏳ SSE listener stalled for {}ms while forwarding event. Reconnecting...", config.send_timeout_ms.as_millis());
+                            warn!(
+                                "⏳ SSE listener stalled for {}ms while forwarding event. Reconnecting...",
+                                config.send_timeout_ms.as_millis()
+                            );
                             return Err("SSE listener stalled".into());
                         }
                         Err(SendTimeoutError::Closed(_)) => {

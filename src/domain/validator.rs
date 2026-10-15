@@ -5,7 +5,6 @@ use crate::flow_engine::Expression;
 use crate::flow_engine::flow::{Flow, FlowNodeKind};
 use crate::store::StoreSnapshot;
 use std::fmt;
-use std::fmt::Formatter;
 use thiserror::Error;
 
 /// Validates a flow against the given snapshot.
@@ -34,26 +33,30 @@ pub fn validate(flow: &Flow, snapshot: &StoreSnapshot) -> Result<(), FlowValidat
 }
 
 pub fn find_device<'a>(device_id: &str, snapshot: &'a StoreSnapshot) -> Result<&'a Device, Problem> {
-    snapshot.devices.get(device_id)
+    snapshot
+        .devices
+        .get(device_id)
         .map(|device| device.as_ref())
         .ok_or_else(|| Problem::UnknownDevice { device_id: device_id.to_string() })
 }
 
 pub fn find_property<'a>(device: &'a Device, property_id: &str) -> Result<&'a dyn Property, Problem> {
-    device.properties.get(property_id).map(|property| property.as_ref()).ok_or_else(|| Problem::UnknownProperty {
-        device_id: device.id.clone(),
-        property_id: property_id.to_string(),
-    })
+    device
+        .properties
+        .get(property_id)
+        .map(|property| property.as_ref())
+        .ok_or_else(|| Problem::UnknownProperty { device_id: device.id.clone(), property_id: property_id.to_string() })
 }
 
 fn validate_expression(snapshot: &StoreSnapshot, expression: &Expression) -> Vec<Problem> {
-    let problems: Vec<Problem> = expression.walk()
+    let problems: Vec<Problem> = expression
+        .walk()
         .filter_map(|expression| match expression {
-            Expression::PropertyChanged { device_id, property_id } |
-            Expression::PropertyValue { device_id, property_id } => {
+            Expression::PropertyChanged { device_id, property_id }
+            | Expression::PropertyValue { device_id, property_id } => {
                 find_device(device_id, snapshot).and_then(|device| find_property(device, property_id)).err()
             }
-            _ => None
+            _ => None,
         })
         .collect();
 
@@ -85,14 +88,14 @@ pub struct ValidationIssue {
     pub problem: Problem,
 }
 
-#[derive(Debug, PartialEq, Eq,PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Location {
     Trigger,
     Node { node_id: String },
 }
 
 impl fmt::Display for Location {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Location::Trigger => write!(f, "trigger"),
             Location::Node { node_id } => write!(f, "node '{}'", node_id),
@@ -108,7 +111,9 @@ pub enum Problem {
     UnknownProperty { device_id: String, property_id: String },
     #[error("readonly property '{property_id}' for device '{device_id}'")]
     ReadOnlyProperty { device_id: String, property_id: String },
-    #[error("incompatible value for property '{property_id}' for device '{device_id}': expected {expected}, got {actual}")]
+    #[error(
+        "incompatible value for property '{property_id}' for device '{device_id}': expected {expected}, got {actual}"
+    )]
     IncompatibleValue { device_id: String, property_id: String, expected: ValueKind, actual: ValueKind },
     #[error("incompatible operands for '{operator}': expected {expected}, got {}", .actual.iter().map(ToString::to_string).collect::<Vec<_>>().join(" and "))]
     IncompatibleOperands { operator: &'static str, expected: &'static str, actual: Vec<ValueKind> },
@@ -147,9 +152,14 @@ mod tests {
 
     fn flow_with_trigger(trigger: Expression) -> Flow {
         let end_node = FlowNode::new("end_node".to_string(), vec![], FlowNodeKind::End);
-        let start_node = FlowNode::new("start_node".to_string(), vec![FlowLink::new(Arc::new(end_node), Value::None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new(
+            "start_node".to_string(),
+            vec![FlowLink::new(Arc::new(end_node), Value::None)],
+            FlowNodeKind::Start,
+        );
 
-        Flow::new("flow".to_string(), "flow".to_string(), None, Some(trigger), Arc::new(start_node), HashMap::new()).unwrap()
+        Flow::new("flow".to_string(), "flow".to_string(), None, Some(trigger), Arc::new(start_node), HashMap::new())
+            .unwrap()
     }
 
     /// Builds `start -> nodes[0] -> nodes[1] -> ... -> end`, the nodes are given as `(id, kind)`.
@@ -158,9 +168,14 @@ mod tests {
         let first_node = nodes.into_iter().rev().fold(end_node, |next, (id, kind)| {
             FlowNode::new(id.to_string(), vec![FlowLink::new(Arc::new(next), Value::None)], kind)
         });
-        let start_node = FlowNode::new("start_node".to_string(), vec![FlowLink::new(Arc::new(first_node), Value::None)], FlowNodeKind::Start);
+        let start_node = FlowNode::new(
+            "start_node".to_string(),
+            vec![FlowLink::new(Arc::new(first_node), Value::None)],
+            FlowNodeKind::Start,
+        );
 
-        Flow::new("flow".to_string(), "flow".to_string(), None, Some(trigger), Arc::new(start_node), HashMap::new()).unwrap()
+        Flow::new("flow".to_string(), "flow".to_string(), None, Some(trigger), Arc::new(start_node), HashMap::new())
+            .unwrap()
     }
 
     fn flow_with_node(kind: FlowNodeKind) -> Flow {
@@ -173,7 +188,11 @@ mod tests {
 
     fn control_device_with(device_id: &str, property_id: &str, value: PropertyCommand) -> FlowNodeKind {
         let property = HashMap::from([(property_id.to_string(), value)]);
-        FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(device_id.to_string(), None, property))))
+        FlowNodeKind::Action(ActionFlowNode::new(Box::new(ControlDeviceAction::new(
+            device_id.to_string(),
+            None,
+            property,
+        ))))
     }
 
     fn log() -> FlowNodeKind {
@@ -188,8 +207,18 @@ mod tests {
         let device = DeviceBuilder::new(KNOWN_DEVICE_ID)
             .with_boolean_property("on", true)
             .with_properties(vec![
-                Box::new(BooleanProperty::new(READONLY_PROPERTY_ID.to_string(), PropertyType::Motion, true, None, false)),
-                Box::new(NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false).positive_int(Some(50), Some(1), Some(100)).build()),
+                Box::new(BooleanProperty::new(
+                    READONLY_PROPERTY_ID.to_string(),
+                    PropertyType::Motion,
+                    true,
+                    None,
+                    false,
+                )),
+                Box::new(
+                    NumberProperty::builder("brightness".to_string(), PropertyType::Brightness, false)
+                        .positive_int(Some(50), Some(1), Some(100))
+                        .build(),
+                ),
             ])
             .build();
 
@@ -230,22 +259,64 @@ mod tests {
     }
 
     fn readonly_property_at(device_id: &str, property_id: &str, location: Location) -> ValidationIssue {
-        Problem::ReadOnlyProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }.at(location)
+        Problem::ReadOnlyProperty { device_id: device_id.to_string(), property_id: property_id.to_string() }
+            .at(location)
     }
 
-    fn value_too_small_at(device_id: &str, property_id: &str, value: Number, minimum: Number, location: Location) -> ValidationIssue {
-        Problem::ValueTooSmall { device_id: device_id.to_string(), property_id: property_id.to_string(), value, minimum }.at(location)
+    fn value_too_small_at(
+        device_id: &str,
+        property_id: &str,
+        value: Number,
+        minimum: Number,
+        location: Location,
+    ) -> ValidationIssue {
+        Problem::ValueTooSmall {
+            device_id: device_id.to_string(),
+            property_id: property_id.to_string(),
+            value,
+            minimum,
+        }
+        .at(location)
     }
 
-    fn value_too_large_at(device_id: &str, property_id: &str, value: Number, maximum: Number, location: Location) -> ValidationIssue {
-        Problem::ValueTooLarge { device_id: device_id.to_string(), property_id: property_id.to_string(), value, maximum }.at(location)
+    fn value_too_large_at(
+        device_id: &str,
+        property_id: &str,
+        value: Number,
+        maximum: Number,
+        location: Location,
+    ) -> ValidationIssue {
+        Problem::ValueTooLarge {
+            device_id: device_id.to_string(),
+            property_id: property_id.to_string(),
+            value,
+            maximum,
+        }
+        .at(location)
     }
 
-    fn incompatible_value_at(device_id: &str, property_id: &str, expected: ValueKind, actual: ValueKind, location: Location) -> ValidationIssue {
-        Problem::IncompatibleValue { device_id: device_id.to_string(), property_id: property_id.to_string(), expected, actual }.at(location)
+    fn incompatible_value_at(
+        device_id: &str,
+        property_id: &str,
+        expected: ValueKind,
+        actual: ValueKind,
+        location: Location,
+    ) -> ValidationIssue {
+        Problem::IncompatibleValue {
+            device_id: device_id.to_string(),
+            property_id: property_id.to_string(),
+            expected,
+            actual,
+        }
+        .at(location)
     }
 
-    fn incompatible_operands_at(operator: &'static str, expected: &'static str, actual: Vec<ValueKind>, location: Location) -> ValidationIssue {
+    fn incompatible_operands_at(
+        operator: &'static str,
+        expected: &'static str,
+        actual: Vec<ValueKind>,
+        location: Location,
+    ) -> ValidationIssue {
         Problem::IncompatibleOperands { operator, expected, actual }.at(location)
     }
 
@@ -289,13 +360,19 @@ mod tests {
 
     #[test]
     fn validate_reports_unknown_devices_and_properties_in_the_trigger_in_order() {
-        let trigger = Or { lhs: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)), rhs: Box::new(property_changed("unknown")) };
+        let trigger = Or {
+            lhs: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)),
+            rhs: Box::new(property_changed("unknown")),
+        };
 
         let result = validate(&flow_with_trigger(trigger), &snapshot());
 
-        assert_eq!(result.unwrap_err().issues(), [unknown_property(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID), unknown_device("unknown")]);
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [unknown_property(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID), unknown_device("unknown")]
+        );
     }
-    
+
     #[test]
     fn validate_reports_all_unknown_devices_in_the_trigger_in_order() {
         let trigger = And { lhs: Box::new(property_changed("first")), rhs: Box::new(property_value("second")) };
@@ -314,28 +391,45 @@ mod tests {
 
     #[test]
     fn validate_reports_incompatible_operands_in_the_trigger() {
-        let trigger = EqualTo { lhs: Box::new(Literal { value: Value::Boolean(true) }), rhs: Box::new(Literal { value: Value::String("short_release".to_string()) }) };
+        let trigger = EqualTo {
+            lhs: Box::new(Literal { value: Value::Boolean(true) }),
+            rhs: Box::new(Literal { value: Value::String("short_release".to_string()) }),
+        };
 
         let result = validate(&flow_with_trigger(trigger), &snapshot());
 
         assert_eq!(
             result.unwrap_err().issues(),
-            [incompatible_operands_at("EqualTo", "operands of the same kind", vec![ValueKind::Boolean, ValueKind::Enum], Location::Trigger)]
+            [incompatible_operands_at(
+                "EqualTo",
+                "operands of the same kind",
+                vec![ValueKind::Boolean, ValueKind::Enum],
+                Location::Trigger
+            )]
         );
     }
 
     #[test]
     fn validate_reports_incompatible_operands_in_a_conditional_node() {
-        let condition = And { lhs: Box::new(property_value(KNOWN_DEVICE_ID)), rhs: Box::new(property_value_of(KNOWN_DEVICE_ID, "brightness")) };
+        let condition = And {
+            lhs: Box::new(property_value(KNOWN_DEVICE_ID)),
+            rhs: Box::new(property_value_of(KNOWN_DEVICE_ID, "brightness")),
+        };
 
         let result = validate(&flow_with_node(FlowNodeKind::Conditional(condition)), &snapshot());
 
-        assert_eq!(result.unwrap_err().issues(), [incompatible_operands_at("And", "Boolean", vec![ValueKind::Boolean, ValueKind::Number], node(NODE_ID))]);
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [incompatible_operands_at("And", "Boolean", vec![ValueKind::Boolean, ValueKind::Number], node(NODE_ID))]
+        );
     }
 
     #[test]
     fn validate_only_reports_the_unknown_device_when_the_operands_are_incompatible_too() {
-        let trigger = And { lhs: Box::new(property_value("unknown")), rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }) };
+        let trigger = And {
+            lhs: Box::new(property_value("unknown")),
+            rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }),
+        };
 
         let result = validate(&flow_with_trigger(trigger), &snapshot());
 
@@ -367,12 +461,18 @@ mod tests {
     fn validate_reports_an_unknown_property_in_a_node(#[case] kind: FlowNodeKind) {
         let result = validate(&flow_with_node(kind), &snapshot());
 
-        assert_eq!(result.unwrap_err().issues(), [unknown_property_at(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID, node(NODE_ID))]);
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [unknown_property_at(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID, node(NODE_ID))]
+        );
     }
 
     #[rstest]
     #[case::trigger(flow_with_trigger(property_changed_of(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID)))]
-    #[case::conditional(flow_with_node(FlowNodeKind::Conditional(property_value_of(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID))))]
+    #[case::conditional(flow_with_node(FlowNodeKind::Conditional(property_value_of(
+        KNOWN_DEVICE_ID,
+        READONLY_PROPERTY_ID
+    ))))]
     fn validate_accepts_reading_a_readonly_property(#[case] flow: Flow) {
         assert_eq!(validate(&flow, &snapshot()), Ok(()));
     }
@@ -381,25 +481,62 @@ mod tests {
     fn validate_reports_a_control_device_action_that_sets_a_readonly_property() {
         let result = validate(&flow_with_node(control_device(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID)), &snapshot());
 
-        assert_eq!(result.unwrap_err().issues(), [readonly_property_at(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID, node(NODE_ID))]);
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [readonly_property_at(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID, node(NODE_ID))]
+        );
     }
 
     #[test]
     fn validate_reports_a_control_device_action_that_sets_an_incompatible_value() {
-        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "on", property_command(Value::Number(Number::PositiveInt(50))))), &snapshot());
+        let result = validate(
+            &flow_with_node(control_device_with(
+                KNOWN_DEVICE_ID,
+                "on",
+                property_command(Value::Number(Number::PositiveInt(50))),
+            )),
+            &snapshot(),
+        );
 
-        assert_eq!(result.unwrap_err().issues(), [incompatible_value_at(KNOWN_DEVICE_ID, "on", ValueKind::Boolean, ValueKind::Number, node(NODE_ID))]);
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [incompatible_value_at(KNOWN_DEVICE_ID, "on", ValueKind::Boolean, ValueKind::Number, node(NODE_ID))]
+        );
     }
 
     #[rstest]
-    #[case::too_small(Number::PositiveInt(0), value_too_small_at(KNOWN_DEVICE_ID, "brightness", Number::PositiveInt(0), Number::PositiveInt(1), node(NODE_ID)))]
-    #[case::too_large(Number::PositiveInt(101), value_too_large_at(KNOWN_DEVICE_ID, "brightness", Number::PositiveInt(101), Number::PositiveInt(100), node(NODE_ID)))]
-    fn validate_reports_a_control_device_action_that_sets_a_value_out_of_range(#[case] value: Number, #[case] expected: ValidationIssue) {
-        let result = validate(&flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", property_command(Value::Number(value)))), &snapshot());
+    #[case::too_small(
+        Number::PositiveInt(0),
+        value_too_small_at(
+            KNOWN_DEVICE_ID,
+            "brightness",
+            Number::PositiveInt(0),
+            Number::PositiveInt(1),
+            node(NODE_ID)
+        )
+    )]
+    #[case::too_large(
+        Number::PositiveInt(101),
+        value_too_large_at(
+            KNOWN_DEVICE_ID,
+            "brightness",
+            Number::PositiveInt(101),
+            Number::PositiveInt(100),
+            node(NODE_ID)
+        )
+    )]
+    fn validate_reports_a_control_device_action_that_sets_a_value_out_of_range(
+        #[case] value: Number,
+        #[case] expected: ValidationIssue,
+    ) {
+        let result = validate(
+            &flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", property_command(Value::Number(value)))),
+            &snapshot(),
+        );
 
         assert_eq!(result.unwrap_err().issues(), [expected]);
     }
-    
+
     #[test]
     fn validate_reports_issues_in_the_trigger_first_then_in_the_nodes_in_order() {
         let nodes = vec![
@@ -412,7 +549,11 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err().issues(),
-            [unknown_device("trigger_device"), unknown_device_at("conditional_device", node("first")), unknown_device_at("action_device", node("second"))]
+            [
+                unknown_device("trigger_device"),
+                unknown_device_at("conditional_device", node("first")),
+                unknown_device_at("action_device", node("second"))
+            ]
         );
     }
 
@@ -422,7 +563,10 @@ mod tests {
 
         let result = validate(&flow, &snapshot());
 
-        assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown"), unknown_device_at("unknown", node(NODE_ID))]);
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [unknown_device("unknown"), unknown_device_at("unknown", node(NODE_ID))]
+        );
     }
     #[test]
     fn from_issues_returns_ok_without_issues() {
@@ -445,7 +589,8 @@ mod tests {
 
     #[test]
     fn flow_validation_error_displays_the_number_of_issues() {
-        let error = FlowValidationError::from_issues(vec![unknown_device("first"), unknown_device("second")]).unwrap_err();
+        let error =
+            FlowValidationError::from_issues(vec![unknown_device("first"), unknown_device("second")]).unwrap_err();
 
         assert_eq!(error.to_string(), "flow has 2 validation issues");
     }
@@ -454,7 +599,10 @@ mod tests {
     #[case::unknown_device(unknown_device("lamp"), "trigger: unknown device 'lamp'")]
     #[case::unknown_property(unknown_property("lamp", "on"), "trigger: unknown property 'on' for device 'lamp'")]
     #[case::node(unknown_device_at("lamp", node("turn_on")), "node 'turn_on': unknown device 'lamp'")]
-    #[case::readonly_property(readonly_property_at("sensor", "motion", node("turn_on")), "node 'turn_on': readonly property 'motion' for device 'sensor'")]
+    #[case::readonly_property(
+        readonly_property_at("sensor", "motion", node("turn_on")),
+        "node 'turn_on': readonly property 'motion' for device 'sensor'"
+    )]
     #[case::incompatible_value(
         incompatible_value_at("lamp", "on", ValueKind::Boolean, ValueKind::Number, node("turn_on")),
         "node 'turn_on': incompatible value for property 'on' for device 'lamp': expected boolean, got number"

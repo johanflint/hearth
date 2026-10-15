@@ -61,7 +61,9 @@ impl PartialEq for Color {
         match (self, other) {
             (RGB(r1, g1, b1), RGB(r2, g2, b2)) => (r1, g1, b1) == (r2, g2, b2),
             (Hex(a), Hex(b)) => a == b,
-            (CIE_xyY { xy: xy1, brightness: b1 }, CIE_xyY { xy: xy2, brightness: b2 }) => xy1 == xy2 && OrderedFloat(*b1) == OrderedFloat(*b2),
+            (CIE_xyY { xy: xy1, brightness: b1 }, CIE_xyY { xy: xy2, brightness: b2 }) => {
+                xy1 == xy2 && OrderedFloat(*b1) == OrderedFloat(*b2)
+            }
             _ => false,
         }
     }
@@ -103,9 +105,12 @@ pub enum ColorConversionError {
 fn hex_to_rgb(hex: &str) -> Result<(u8, u8, u8), ColorConversionError> {
     let hex = hex.trim_start_matches('#');
 
-    let red = u8::from_str_radix(&hex[0..2], 16).map_err(|_| ColorConversionError::InvalidHexFormat(hex.to_string()))?;
-    let green = u8::from_str_radix(&hex[2..4], 16).map_err(|_| ColorConversionError::InvalidHexFormat(hex.to_string()))?;
-    let blue = u8::from_str_radix(&hex[4..6], 16).map_err(|_| ColorConversionError::InvalidHexFormat(hex.to_string()))?;
+    let red =
+        u8::from_str_radix(&hex[0..2], 16).map_err(|_| ColorConversionError::InvalidHexFormat(hex.to_string()))?;
+    let green =
+        u8::from_str_radix(&hex[2..4], 16).map_err(|_| ColorConversionError::InvalidHexFormat(hex.to_string()))?;
+    let blue =
+        u8::from_str_radix(&hex[4..6], 16).map_err(|_| ColorConversionError::InvalidHexFormat(hex.to_string()))?;
 
     Ok((red, green, blue))
 }
@@ -125,10 +130,7 @@ fn rgb_to_xyY(red: u8, green: u8, blue: u8) -> Color {
     let sum = x + y + z;
     let (cx, cy) = if sum == 0.0 { (0.0, 0.0) } else { (x / sum, y / sum) };
 
-    CIE_xyY {
-        xy: CartesianCoordinate::new(cx, cy),
-        brightness: y,
-    }
+    CIE_xyY { xy: CartesianCoordinate::new(cx, cy), brightness: y }
 }
 
 fn gamma_correct(channel: f64) -> f64 {
@@ -161,11 +163,7 @@ fn xyY_to_rgb(xy: &CartesianCoordinate, brightness: f64) -> (u8, u8, u8) {
 }
 
 fn gamma_correct_rev(channel: f64) -> f64 {
-    if channel <= 0.0031308 {
-        channel * 12.92
-    } else {
-        1.055 * channel.powf(1.0 / 2.4) - 0.055
-    }
+    if channel <= 0.0031308 { channel * 12.92 } else { 1.055 * channel.powf(1.0 / 2.4) - 0.055 }
 }
 
 #[cfg(test)]
@@ -191,11 +189,8 @@ mod tests {
         #[allow(non_snake_case)]
         fn from_cie_xyY() {
             assert_eq!(
-                CIE_xyY {
-                    xy: CartesianCoordinate::new(0.3209201623815967, 0.15415426251691475),
-                    brightness: 0.2848
-                }
-                .to_hex(),
+                CIE_xyY { xy: CartesianCoordinate::new(0.3209201623815967, 0.15415426251691475), brightness: 0.2848 }
+                    .to_hex(),
                 Hex("#ff00ff".to_string())
             );
         }
@@ -219,12 +214,9 @@ mod tests {
         #[allow(non_snake_case)]
         fn from_cie_xyY() {
             assert_eq!(
-                CIE_xyY {
-                    xy: CartesianCoordinate::new(0.32092016238159676, 0.15415426251691475),
-                    brightness: 0.2848
-                }
-                .to_rgb()
-                .unwrap(),
+                CIE_xyY { xy: CartesianCoordinate::new(0.32092016238159676, 0.15415426251691475), brightness: 0.2848 }
+                    .to_rgb()
+                    .unwrap(),
                 RGB(255, 0, 255)
             );
         }
@@ -237,10 +229,7 @@ mod tests {
         fn from_rgb() {
             assert_eq!(
                 RGB(255, 0, 255).to_cie_xyY().unwrap(),
-                CIE_xyY {
-                    xy: CartesianCoordinate::new(0.32092016238159676, 0.15415426251691475),
-                    brightness: 0.2848
-                }
+                CIE_xyY { xy: CartesianCoordinate::new(0.32092016238159676, 0.15415426251691475), brightness: 0.2848 }
             );
         }
 
@@ -248,10 +237,7 @@ mod tests {
         fn from_hex() {
             assert_eq!(
                 Hex("#ff00ff".to_string()).to_cie_xyY().unwrap(),
-                CIE_xyY {
-                    xy: CartesianCoordinate::new(0.32092016238159676, 0.15415426251691475),
-                    brightness: 0.2848
-                }
+                CIE_xyY { xy: CartesianCoordinate::new(0.32092016238159676, 0.15415426251691475), brightness: 0.2848 }
             );
         }
 
@@ -259,16 +245,10 @@ mod tests {
         #[allow(non_snake_case)]
         fn from_cie_xyY() {
             assert_eq!(
-                CIE_xyY {
-                    xy: CartesianCoordinate::new(0.3209201623815967, 0.15415426251691475),
-                    brightness: 0.2848
-                }
-                .to_cie_xyY()
-                .unwrap(),
-                CIE_xyY {
-                    xy: CartesianCoordinate::new(0.3209201623815967, 0.15415426251691475),
-                    brightness: 0.2848
-                }
+                CIE_xyY { xy: CartesianCoordinate::new(0.3209201623815967, 0.15415426251691475), brightness: 0.2848 }
+                    .to_cie_xyY()
+                    .unwrap(),
+                CIE_xyY { xy: CartesianCoordinate::new(0.3209201623815967, 0.15415426251691475), brightness: 0.2848 }
             );
         }
     }
@@ -284,10 +264,7 @@ mod tests {
         }
 
         fn cie(x: f64, y: f64, brightness: f64) -> Color {
-            CIE_xyY {
-                xy: CartesianCoordinate::new(x, y),
-                brightness,
-            }
+            CIE_xyY { xy: CartesianCoordinate::new(x, y), brightness }
         }
 
         #[test]

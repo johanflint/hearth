@@ -47,7 +47,7 @@ impl Metric {
     const fn unit(&self) -> Unit {
         match self {
             Metric::FlowExecutionDuration => Unit::Seconds,
-            _ => Unit::Count
+            _ => Unit::Count,
         }
     }
 

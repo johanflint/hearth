@@ -31,30 +31,20 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     fn owner() -> Owner {
-        Owner {
-            rid: "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3".to_string(),
-            rtype: "device".to_string(),
-        }
+        Owner { rid: "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3".to_string(), rtype: "device".to_string() }
     }
 
     #[test]
     fn returns_no_events_when_the_light_level_did_not_change() {
-        let property = LightLevelChanged {
-            id: "42".to_string(),
-            owner: owner(),
-            light: None,
-        };
+        let property = LightLevelChanged { id: "42".to_string(), owner: owner(), light: None };
 
         assert!(map_light_level_changed(property).is_empty());
     }
 
     #[test]
     fn returns_no_events_without_a_report() {
-        let property = LightLevelChanged {
-            id: "42".to_string(),
-            owner: owner(),
-            light: Some(Light { light_level_report: None }),
-        };
+        let property =
+            LightLevelChanged { id: "42".to_string(), owner: owner(), light: Some(Light { light_level_report: None }) };
 
         assert!(map_light_level_changed(property).is_empty());
     }
@@ -65,15 +55,15 @@ mod tests {
         let property = LightLevelChanged {
             id: "42".to_string(),
             owner: owner(),
-            light: Some(Light {
-                light_level_report: Some(LightLevelReport { changed, light_level: 10_001 }),
-            }),
+            light: Some(Light { light_level_report: Some(LightLevelReport { changed, light_level: 10_001 }) }),
         };
 
         let events = map_light_level_changed(property);
 
         assert_eq!(events.len(), 2);
-        let Event::NumberPropertyChanged { device_id, property_id, value: Some(Number::Float(lux)), initiated_by } = &events[0] else {
+        let Event::NumberPropertyChanged { device_id, property_id, value: Some(Number::Float(lux)), initiated_by } =
+            &events[0]
+        else {
             panic!("expected a NumberPropertyChanged event with a float value");
         };
         assert_eq!(device_id, &owner().rid);
@@ -97,13 +87,13 @@ mod tests {
         let property = LightLevelChanged {
             id: "42".to_string(),
             owner: owner(),
-            light: Some(Light {
-                light_level_report: Some(LightLevelReport { changed, light_level: 0 }),
-            }),
+            light: Some(Light { light_level_report: Some(LightLevelReport { changed, light_level: 0 }) }),
         };
 
         let events = map_light_level_changed(property);
 
-        assert!(matches!(&events[0], Event::NumberPropertyChanged { value: Some(Number::Float(lux)), .. } if *lux == 0.0));
+        assert!(
+            matches!(&events[0], Event::NumberPropertyChanged { value: Some(Number::Float(lux)), .. } if *lux == 0.0)
+        );
     }
 }

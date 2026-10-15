@@ -63,7 +63,7 @@ pub struct SetSensitivity {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MotionType {
-    Motion
+    Motion,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,7 +107,10 @@ mod tests {
     fn motion_request_serializes_both_fields() {
         let request = MotionRequest::new(Some(true), Some(SetSensitivity { sensitivity: 2 }));
 
-        assert_eq!(serde_json::to_value(request).unwrap(), json!({ "enabled": true, "sensitivity": { "sensitivity": 2 } }));
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            json!({ "enabled": true, "sensitivity": { "sensitivity": 2 } })
+        );
     }
 
     #[test]

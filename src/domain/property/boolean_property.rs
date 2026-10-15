@@ -12,14 +12,14 @@ pub struct BooleanProperty {
 }
 
 impl BooleanProperty {
-    pub fn new(name: String, property_type: PropertyType, readonly: bool, external_id: Option<String>, value: bool) -> Self {
-        BooleanProperty {
-            name,
-            property_type,
-            readonly,
-            external_id,
-            value,
-        }
+    pub fn new(
+        name: String,
+        property_type: PropertyType,
+        readonly: bool,
+        external_id: Option<String>,
+        value: bool,
+    ) -> Self {
+        BooleanProperty { name, property_type, readonly, external_id, value }
     }
 
     pub fn value(&self) -> bool {

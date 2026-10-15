@@ -25,19 +25,19 @@ pub enum EventTime {
 pub fn solar_event_time(event: SolarEvent, now: DateTime<Local>, location: &GeoLocation) -> EventTime {
     let date = now.date_naive();
     let coordinates = Coordinates::new(location.latitude, location.longitude).expect("valid coordinates");
-    let solar_day = SolarDay::new(coordinates, date)
-        .with_altitude(location.altitude);
+    let solar_day = SolarDay::new(coordinates, date).with_altitude(location.altitude);
 
-    solar_day.event_time(to_solar_event(event))
-        .map(|time| EventTime::At(time.with_timezone(&Local)))
-        .unwrap_or_else(|| {
-            let deep_horizon_crossing_exists = solar_day.event_time(sunrise::SolarEvent::Elevation { elevation: POLAR_DISCRIMINATOR_DEPRESSION_DEG.to_radians(), morning: true }).is_some();
-            if deep_horizon_crossing_exists {
-                EventTime::PolarNight
-            } else {
-                EventTime::PolarDay
-            }
-        })
+    solar_day.event_time(to_solar_event(event)).map(|time| EventTime::At(time.with_timezone(&Local))).unwrap_or_else(
+        || {
+            let deep_horizon_crossing_exists = solar_day
+                .event_time(sunrise::SolarEvent::Elevation {
+                    elevation: POLAR_DISCRIMINATOR_DEPRESSION_DEG.to_radians(),
+                    morning: true,
+                })
+                .is_some();
+            if deep_horizon_crossing_exists { EventTime::PolarNight } else { EventTime::PolarDay }
+        },
+    )
 }
 
 fn to_solar_event(event: SolarEvent) -> sunrise::SolarEvent {

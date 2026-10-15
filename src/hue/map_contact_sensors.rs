@@ -6,14 +6,16 @@ use std::collections::HashMap;
 use strum::IntoEnumIterator;
 use thiserror::Error;
 
-pub fn map_contact_sensors(sensors: Vec<ContactGet>, device_map: &mut HashMap<String, DeviceGet>) -> Result<Vec<Device>, MapContactSensorsError> {
+pub fn map_contact_sensors(
+    sensors: Vec<ContactGet>,
+    device_map: &mut HashMap<String, DeviceGet>,
+) -> Result<Vec<Device>, MapContactSensorsError> {
     sensors
         .into_iter()
         .map(|sensor| {
             let device_id = sensor.owner.rid;
-            let device_get = device_map
-                .remove(&device_id)
-                .ok_or_else(|| MapContactSensorsError::UnknownDevice { device_id })?;
+            let device_get =
+                device_map.remove(&device_id).ok_or_else(|| MapContactSensorsError::UnknownDevice { device_id })?;
 
             let mut properties = HashMap::with_capacity(2);
 
@@ -27,7 +29,8 @@ pub fn map_contact_sensors(sensors: Vec<ContactGet>, device_map: &mut HashMap<St
                     Some(sensor.id.clone()),
                     value,
                     allowed_values,
-                ).expect("contact value is always one of the allowed values")
+                )
+                .expect("contact value is always one of the allowed values"),
             );
             properties.insert(contact_property.name().to_owned(), contact_property);
 
@@ -95,10 +98,7 @@ mod tests {
                 software_version: "2.67.9".to_string(),
                 hardware_platform_type: None,
             },
-            metadata: Metadata {
-                name: "Voordeur".to_string(),
-                archetype: "unknown_archetype".to_string(),
-            },
+            metadata: Metadata { name: "Voordeur".to_string(), archetype: "unknown_archetype".to_string() },
         };
 
         HashMap::from([(device_get.id.clone(), device_get)])
@@ -127,7 +127,8 @@ mod tests {
                 Some(CONTACT_ID.to_string()),
                 value.map(str::to_string),
                 ContactState::iter().map(|s| s.to_string()).collect(),
-            ).unwrap(),
+            )
+            .unwrap(),
         )
     }
 

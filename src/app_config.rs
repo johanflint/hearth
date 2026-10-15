@@ -29,7 +29,9 @@ impl AppConfig {
         &self.core
     }
 
-    pub fn db(&self) -> &Db { &self.db }
+    pub fn db(&self) -> &Db {
+        &self.db
+    }
 
     pub fn hue(&self) -> &Hue {
         &self.hue
@@ -52,7 +54,7 @@ impl Core {
     pub fn port(&self) -> usize {
         self.port
     }
-    
+
     pub fn store_buffer_size(&self) -> usize {
         self.store_buffer_size
     }
@@ -129,9 +131,7 @@ impl AppConfigBuilder {
                     client_connection_timeout_ms: 100,
                     client_request_timeout_ms: 100,
                 },
-                db: Db {
-                    file_name: "hearth.db".to_string(),
-                },
+                db: Db { file_name: "hearth.db".to_string() },
                 hue: Hue {
                     url: "https://hue.url/".to_string(),
                     retry_ms: 100,
@@ -140,11 +140,7 @@ impl AppConfigBuilder {
                     send_timeout_ms: 100,
                     application_key: "key".to_string(),
                 },
-                location: GeoLocation {
-                    latitude: 51.8615899,
-                    longitude: 4.3580323,
-                    altitude: 0.0,
-                },
+                location: GeoLocation { latitude: 51.8615899, longitude: 4.3580323, altitude: 0.0 },
             },
         }
     }

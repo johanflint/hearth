@@ -20,9 +20,7 @@ async fn supervise(app: Router, port: usize, mut listener: TcpListener) -> Resul
     loop {
         let app_clone = app.clone();
 
-        let handle = task::spawn(async move {
-            axum::serve(listener, app_clone).await
-        });
+        let handle = task::spawn(async move { axum::serve(listener, app_clone).await });
 
         match handle.await {
             Ok(Ok(())) => warn!("Server exited cleanly. Restarting..."),

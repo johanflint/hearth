@@ -46,7 +46,7 @@ fn retrieve_error_response(id: &str, err: RetrieveFlowError) -> Response {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{VALID_FLOW_ID, Fixture, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{Fixture, VALID_FLOW_ID, body_json, create_state, valid_flow_document};
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
     use axum::http::Request;

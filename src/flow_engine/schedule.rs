@@ -51,12 +51,25 @@ impl Schedule {
     {
         match self {
             Schedule::Cron(expression) => {
-                let schedule = cron::Schedule::from_str(expression).unwrap_or_else(|_| panic!("invalid cron expression '{}'", expression));
+                let schedule = cron::Schedule::from_str(expression)
+                    .unwrap_or_else(|_| panic!("invalid cron expression '{}'", expression));
                 let iterator = schedule.after_owned(from);
                 ScheduleIterator::Cron(iterator)
             }
-            Schedule::Sunrise { when, offset } => ScheduleIterator::SunEvent(SunEventIterator::new(location, from, when.clone(), *offset, SolarEvent::Sunrise)),
-            Schedule::Sunset { when, offset } => ScheduleIterator::SunEvent(SunEventIterator::new(location, from, when.clone(), *offset, SolarEvent::Sunset)),
+            Schedule::Sunrise { when, offset } => ScheduleIterator::SunEvent(SunEventIterator::new(
+                location,
+                from,
+                when.clone(),
+                *offset,
+                SolarEvent::Sunrise,
+            )),
+            Schedule::Sunset { when, offset } => ScheduleIterator::SunEvent(SunEventIterator::new(
+                location,
+                from,
+                when.clone(),
+                *offset,
+                SolarEvent::Sunset,
+            )),
         }
     }
 
@@ -108,16 +121,15 @@ impl<Z> SunEventIterator<Z>
 where
     Z: TimeZone,
 {
-    fn new(location: GeoLocation, current: DateTime<Z>, when: WeekdayCondition, offset: i64, solar_event: SolarEvent) -> Self {
+    fn new(
+        location: GeoLocation,
+        current: DateTime<Z>,
+        when: WeekdayCondition,
+        offset: i64,
+        solar_event: SolarEvent,
+    ) -> Self {
         let coordinates = Coordinates::new(location.latitude, location.longitude).expect("valid coordinates");
-        Self {
-            coordinates,
-            altitude: location.altitude,
-            current,
-            when,
-            offset,
-            solar_event,
-        }
+        Self { coordinates, altitude: location.altitude, current, when, offset, solar_event }
     }
 
     fn event_time(&self, date: NaiveDate) -> Option<DateTime<Z>>
@@ -171,7 +183,8 @@ mod tests {
         let upcoming = schedule.after(now, location()).take(5).collect::<Vec<_>>();
 
         // Notice that the nanoseconds are passed, that's done to ensure that the occurence is exactly at 20:00:00Z on the hour without subsecond drift
-        let first = NaiveDate::from_ymd_opt(2000, 8, 4).and_then(|dt| dt.and_hms_nano_opt(20, 0, 0, 0)).unwrap().and_utc();
+        let first =
+            NaiveDate::from_ymd_opt(2000, 8, 4).and_then(|dt| dt.and_hms_nano_opt(20, 0, 0, 0)).unwrap().and_utc();
         assert_eq!(upcoming[0], first);
         assert_eq!(upcoming[1], first.with_day(5).unwrap());
         assert_eq!(upcoming[2], first.with_day(6).unwrap());
@@ -181,10 +194,7 @@ mod tests {
 
     #[test]
     fn test_schedule_with_sunrise_event() {
-        let schedule = Schedule::Sunrise {
-            when: WeekdayCondition::Range { start: Wednesday, end: Friday },
-            offset: 0,
-        };
+        let schedule = Schedule::Sunrise { when: WeekdayCondition::Range { start: Wednesday, end: Friday }, offset: 0 };
 
         let now = Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap(); // A Friday
         let upcoming = schedule.after(now, location()).take(5).collect::<Vec<_>>();
@@ -204,10 +214,7 @@ mod tests {
 
     #[test]
     fn test_schedule_with_sunset_event() {
-        let schedule = Schedule::Sunset {
-            when: WeekdayCondition::Range { start: Wednesday, end: Friday },
-            offset: 0,
-        };
+        let schedule = Schedule::Sunset { when: WeekdayCondition::Range { start: Wednesday, end: Friday }, offset: 0 };
 
         let now = Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap(); // A Friday
         let upcoming = schedule.after(now, location()).take(5).collect::<Vec<_>>();
@@ -227,19 +234,12 @@ mod tests {
 
     #[test]
     fn test_schedule_with_sunrise_event_on_polar_night() {
-        let schedule = Schedule::Sunrise {
-            when: WeekdayCondition::Any,
-            offset: 0,
-        };
+        let schedule = Schedule::Sunrise { when: WeekdayCondition::Any, offset: 0 };
 
         // Longyearbyen, Svalbard sits far enough north to experience a polar night: no sunrise occurs from
         // late October until mid-February. Starting just before the polar night ends should skip every day
         // without a sunrise and resume once the sun rises again.
-        let polar_location = GeoLocation {
-            latitude: 78.2232,
-            longitude: 15.6267,
-            altitude: 0.0,
-        };
+        let polar_location = GeoLocation { latitude: 78.2232, longitude: 15.6267, altitude: 0.0 };
         let now = Utc.with_ymd_and_hms(2000, 2, 13, 12, 0, 0).unwrap();
         let upcoming = schedule.after(now, polar_location).take(3).collect::<Vec<_>>();
 
@@ -250,10 +250,6 @@ mod tests {
     }
 
     fn location() -> GeoLocation {
-        GeoLocation {
-            latitude: 51.8615899,
-            longitude: 4.3580323,
-            altitude: 0.0,
-        }
+        GeoLocation { latitude: 51.8615899, longitude: 4.3580323, altitude: 0.0 }
     }
 }

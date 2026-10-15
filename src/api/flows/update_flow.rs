@@ -10,10 +10,18 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
-pub(super) async fn update_flow(Path(id): Path<String>, State(state): State<ApiState>, body: Bytes) -> Result<Response, Response> {
+pub(super) async fn update_flow(
+    Path(id): Path<String>,
+    State(state): State<ApiState>,
+    body: Bytes,
+) -> Result<Response, Response> {
     debug!("Received request to update flow '{id}'...");
     let request: UpdateFlowRequest = parse_request(&body)?;
-    let revision = state.flow_service.update_flow(&id, request.base_revision, request.flow).await.map_err(update_error_response)?;
+    let revision = state
+        .flow_service
+        .update_flow(&id, request.base_revision, request.flow)
+        .await
+        .map_err(update_error_response)?;
     info!("📥 Received request to update flow '{id}'... OK, revision {revision}");
 
     Ok((StatusCode::OK, Json(UpdateFlowResponse { id, revision })).into_response())
@@ -24,15 +32,21 @@ fn update_error_response(err: UpdateFlowError) -> Response {
         UpdateFlowError::InvalidDocument(err) => invalid_json(err),
         UpdateFlowError::InvalidFlow(err) => flow_factory_error_response(err),
         UpdateFlowError::IdMismatch { id, flow_id } => {
-            let response = ErrorResponse::new("flowIdMismatch", format!("body id '{flow_id}' does not match path id '{id}'"));
+            let response =
+                ErrorResponse::new("flowIdMismatch", format!("body id '{flow_id}' does not match path id '{id}'"));
             (StatusCode::UNPROCESSABLE_ENTITY, Json(response)).into_response()
         }
         UpdateFlowError::SchedulerUnavailable => {
             error!("❌ Scheduler is unavailable");
-            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable"))).into_response()
+            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable")))
+                .into_response()
         }
-        UpdateFlowError::NotFound => (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response(),
-        UpdateFlowError::RevisionConflict { .. } => (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response(),
+        UpdateFlowError::NotFound => {
+            (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("flowNotFound"))).into_response()
+        }
+        UpdateFlowError::RevisionConflict { .. } => {
+            (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response()
+        }
         UpdateFlowError::Internal(err) => {
             error!("❌ Failed to persist flow to store: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
@@ -58,12 +72,13 @@ struct UpdateFlowResponse {
     pub revision: u64,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{VALID_FLOW_ID, VALID_FLOW_JSON, Fixture, body_json, create_state, valid_flow_document};
+    use crate::api::flows::test_support::{
+        Fixture, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document,
+    };
     use crate::flow_engine::{SchedulerCommand, VersionedFlow};
     use crate::flow_loader;
     use crate::flow_loader::SerializedFlow;
@@ -146,7 +161,8 @@ mod tests {
     async fn update_flow_leaves_the_registry_untouched_and_skips_reconcile_when_a_newer_revision_already_landed() {
         // Registry that is ahead of the store simulates a concurrent update that landed first
         let newer = valid_versioned_flow(5);
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_state(FlowRegistry::new(vec![newer.clone()]));
+        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } =
+            create_state(FlowRegistry::new(vec![newer.clone()]));
         flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;

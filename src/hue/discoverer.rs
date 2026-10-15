@@ -1,6 +1,9 @@
 use crate::app_config::AppConfig;
 use crate::domain::Device;
-use crate::hue::domain::{ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, TemperatureGet, ZigbeeConnectivityGet};
+use crate::hue::domain::{
+    ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, TemperatureGet,
+    ZigbeeConnectivityGet,
+};
 use crate::hue::enrich_devices::enrich_devices;
 use crate::hue::map_contact_sensors::{MapContactSensorsError, map_contact_sensors};
 use crate::hue::map_lights::{MapLightsError, map_lights};
@@ -112,7 +115,12 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
 
     let mut devices = vec![];
     let lights = map_lights(light_response.data, &mut device_map)?;
-    let motion_sensors = map_motion_sensors(motion_response.data, light_levels_response.data, temperature_response.data, &mut device_map)?;
+    let motion_sensors = map_motion_sensors(
+        motion_response.data,
+        light_levels_response.data,
+        temperature_response.data,
+        &mut device_map,
+    )?;
     let buttons = map_remotes(button_response.data, &mut device_map)?;
     let contact_sensors = map_contact_sensors(contact_response.data, &mut device_map)?;
 
@@ -143,7 +151,9 @@ fn to_discover_error(e: reqwest::Error) -> DiscoverError {
 fn log_unmapped_devices(device_map: &HashMap<String, DeviceGet>) {
     let unmapped_devices = device_map
         .iter()
-        .map(|(_, d)| format!("- {} {} '{}'", d.product_data.manufacturer_name, d.product_data.product_name, d.metadata.name))
+        .map(|(_, d)| {
+            format!("- {} {} '{}'", d.product_data.manufacturer_name, d.product_data.product_name, d.metadata.name)
+        })
         .collect::<Vec<String>>()
         .join("\n");
     warn!("⚠️ Ignored {} unsupported Hue devices:\n{}", device_map.len(), unmapped_devices);
@@ -169,7 +179,9 @@ pub enum DiscoverError {
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
-    use crate::domain::property::{BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit};
+    use crate::domain::property::{
+        BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit,
+    };
     use crate::domain::{BatteryState, Connectivity, ContactState, DeviceType};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
@@ -179,19 +191,41 @@ mod tests {
 
     fn connectivity_property(status: &str) -> Box<dyn Property> {
         let allowed_connectivity_values: Vec<String> = Connectivity::iter().map(|c| c.to_string()).collect();
-        Box::new(EnumProperty::new("connectivity".to_string(), PropertyType::Connectivity, true, None, Some(status.to_string()), allowed_connectivity_values.clone()).unwrap())
+        Box::new(
+            EnumProperty::new(
+                "connectivity".to_string(),
+                PropertyType::Connectivity,
+                true,
+                None,
+                Some(status.to_string()),
+                allowed_connectivity_values.clone(),
+            )
+            .unwrap(),
+        )
     }
 
     fn battery_level_property(battery_level: Option<u64>) -> Box<dyn Property> {
-        Box::new(NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
-            .unit(Unit::Percentage)
-            .positive_int(battery_level, Some(0), Some(100))
-            .build())
+        Box::new(
+            NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
+                .unit(Unit::Percentage)
+                .positive_int(battery_level, Some(0), Some(100))
+                .build(),
+        )
     }
 
     fn battery_state_property(state: Option<&str>) -> Box<dyn Property> {
         let allowed_battery_state_values: Vec<String> = BatteryState::iter().map(|s| s.to_string()).collect();
-        Box::new(EnumProperty::new("batteryState".to_string(), PropertyType::BatteryState, true, None, state.map(str::to_string), allowed_battery_state_values).unwrap())
+        Box::new(
+            EnumProperty::new(
+                "batteryState".to_string(),
+                PropertyType::BatteryState,
+                true,
+                None,
+                state.map(str::to_string),
+                allowed_battery_state_values,
+            )
+            .unwrap(),
+        )
     }
 
     #[tokio::test]
@@ -320,7 +354,7 @@ mod tests {
             NumberProperty::builder("illuminance".to_string(), PropertyType::Illuminance, true)
                 .unit(Unit::Lux)
                 .float(Some(36.257679024119625), Some(0.0), None)
-                .build()
+                .build(),
         );
 
         let illuminance_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
@@ -360,7 +394,8 @@ mod tests {
                     "long_release".to_string(),
                     "long_press".to_string(),
                 ],
-            ).unwrap(),
+            )
+            .unwrap(),
         );
 
         let button_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
@@ -371,14 +406,17 @@ mod tests {
             Some("2026-09-20T18:36:08.948Z".parse().unwrap()),
         ));
 
-        let contact_property: Box<dyn Property> = Box::new(EnumProperty::new(
-            "contact".to_string(),
-            PropertyType::ContactSensor,
-            true,
-            Some("6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21".to_string()),
-            Some("open".to_string()),
-            ContactState::iter().map(|s| s.to_string()).collect(),
-        ).unwrap());
+        let contact_property: Box<dyn Property> = Box::new(
+            EnumProperty::new(
+                "contact".to_string(),
+                PropertyType::ContactSensor,
+                true,
+                Some("6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21".to_string()),
+                Some("open".to_string()),
+                ContactState::iter().map(|s| s.to_string()).collect(),
+            )
+            .unwrap(),
+        );
 
         let contact_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
             "contactLastChanged".to_string(),

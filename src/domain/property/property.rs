@@ -106,7 +106,9 @@ pub enum PropertyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty};
+    use crate::domain::property::{
+        BooleanProperty, CartesianCoordinate, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty,
+    };
     use rstest::rstest;
 
     #[rstest]

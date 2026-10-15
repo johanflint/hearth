@@ -9,17 +9,16 @@ pub struct FlowRegistry {
 
 impl FlowRegistry {
     pub fn new(flows: Vec<VersionedFlow>) -> Self {
-        let entries = flows
-            .into_iter()
-            .map(|versioned_flow| (versioned_flow.flow.id().to_string(), versioned_flow))
-            .collect();
+        let entries =
+            flows.into_iter().map(|versioned_flow| (versioned_flow.flow.id().to_string(), versioned_flow)).collect();
 
         Self { entries: RwLock::new(entries) }
     }
 
     pub fn reactive_flows(&self) -> Vec<VersionedFlow> {
         self.entries
-            .read().expect("flow registry lock poisoned")
+            .read()
+            .expect("flow registry lock poisoned")
             .values()
             .filter(|entry| entry.schedule().is_none())
             .cloned()
@@ -28,7 +27,8 @@ impl FlowRegistry {
 
     pub fn scheduled_flows(&self) -> Vec<VersionedFlow> {
         self.entries
-            .read().expect("flow registry lock poisoned")
+            .read()
+            .expect("flow registry lock poisoned")
             .values()
             .filter(|entry| entry.schedule().is_some())
             .cloned()
@@ -102,10 +102,7 @@ mod tests {
     }
 
     fn versioned_flow(id: &str, schedule: Option<Schedule>) -> VersionedFlow {
-        VersionedFlow {
-            flow: Arc::new(flow(id, schedule)),
-            revision: 0,
-        }
+        VersionedFlow { flow: Arc::new(flow(id, schedule)), revision: 0 }
     }
 
     fn flow(id: &str, schedule: Option<Schedule>) -> Flow {
@@ -144,7 +141,7 @@ mod tests {
         let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
         assert_eq!(registry.by_id("flow").unwrap().revision, 0);
     }
-    
+
     #[test]
     fn register_returns_added_for_an_unknown_flow() {
         let registry = FlowRegistry::new(vec![]);
@@ -156,7 +153,10 @@ mod tests {
     #[test]
     fn register_stores_a_newer_revision() {
         let registry = FlowRegistry::new(vec![reactive_flow("flow")]);
-        let replacement = VersionedFlow { flow: Arc::new(flow("flow", Some(Schedule::Cron("* * * * * *".to_string())))), revision: 1 };
+        let replacement = VersionedFlow {
+            flow: Arc::new(flow("flow", Some(Schedule::Cron("* * * * * *".to_string())))),
+            revision: 1,
+        };
 
         assert_eq!(registry.register(replacement), RegisterResult::Replaced);
 
@@ -220,10 +220,7 @@ mod tests {
 
     #[test]
     fn unregister_rejects_an_older_revision_than_registered() {
-        let flow = VersionedFlow {
-            flow: Arc::new(flow("flow", None)),
-            revision: 1,
-        };
+        let flow = VersionedFlow { flow: Arc::new(flow("flow", None)), revision: 1 };
         let registry = FlowRegistry::new(vec![flow]);
 
         let result = registry.unregister("flow", 0);

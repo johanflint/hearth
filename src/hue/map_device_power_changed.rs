@@ -30,10 +30,7 @@ mod tests {
     use crate::hue::domain::{Owner, PowerState};
 
     fn owner() -> Owner {
-        Owner {
-            rid: "3a3225cb-dcda-46fb-8f21-00a8c76024bc".to_string(),
-            rtype: "device".to_string(),
-        }
+        Owner { rid: "3a3225cb-dcda-46fb-8f21-00a8c76024bc".to_string(), rtype: "device".to_string() }
     }
 
     #[test]
@@ -41,10 +38,7 @@ mod tests {
         let property = DevicePowerChanged {
             id: "5568ab93-2bef-4739-a667-8beb87898f78".to_string(),
             owner: owner(),
-            power_state: Some(PowerState {
-                battery_level: Some(56),
-                battery_state: Some("normal".to_string()),
-            }),
+            power_state: Some(PowerState { battery_level: Some(56), battery_state: Some("normal".to_string()) }),
         };
 
         let events = map_device_power_changed(property);
@@ -73,10 +67,7 @@ mod tests {
         let property = DevicePowerChanged {
             id: "5568ab93-2bef-4739-a667-8beb87898f78".to_string(),
             owner: owner(),
-            power_state: Some(PowerState {
-                battery_level: None,
-                battery_state: None,
-            }),
+            power_state: Some(PowerState { battery_level: None, battery_state: None }),
         };
 
         let events = map_device_power_changed(property);
