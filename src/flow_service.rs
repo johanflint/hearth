@@ -287,6 +287,7 @@ pub enum ValidateError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
     use serde_json::json;
     use std::path::Path;
     use tokio::sync::{mpsc, watch};
@@ -315,7 +316,8 @@ mod tests {
     }
 
     fn create_service(flow_registry: FlowRegistry) -> Fixture {
-        let flow_store = Arc::new(FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store"));
+        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
+        let flow_store = Arc::new(FlowStore::new(database));
         let flow_registry = Arc::new(flow_registry);
         let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
         let (_, snapshot_rx) = watch::channel(StoreSnapshot::default());

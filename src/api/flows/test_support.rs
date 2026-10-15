@@ -1,4 +1,5 @@
 use crate::api::ApiState;
+use crate::database::Database;
 use crate::flow_engine::SchedulerCommand;
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
@@ -33,7 +34,8 @@ pub(super) struct Fixture {
 pub(super) fn create_state(flow_registry: FlowRegistry) -> Fixture {
     let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
     let handle = PrometheusBuilder::new().build_recorder().handle();
-    let flow_store = Arc::new(FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store"));
+    let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
+    let flow_store = Arc::new(FlowStore::new(database));
     let flow_registry = Arc::new(flow_registry);
     let (_, snapshot_rx) = watch::channel(StoreSnapshot::default());
     let flow_service =

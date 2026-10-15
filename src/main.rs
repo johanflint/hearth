@@ -1,5 +1,6 @@
 use crate::api::ApiState;
 use crate::app_config::AppConfig;
+use crate::database::Database;
 use crate::domain::{Event, controller_registry};
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
@@ -21,6 +22,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod api;
 mod app_config;
 mod claim_registry;
+mod database;
 mod domain;
 mod execute_flows;
 mod extensions;
@@ -33,6 +35,7 @@ mod geo_location_deserializer;
 mod hue;
 mod metrics;
 mod metrics_layer;
+mod preset_store;
 mod property_changed_reducer;
 mod server;
 mod sse;
@@ -56,9 +59,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
 
-    let flow_store = Arc::new(FlowStore::open(Path::new(config.db().file_name()))?);
+    let database = Database::open(Path::new(config.db().file_name()))?;
     info!("✅  Started database");
 
+    let flow_store = Arc::new(FlowStore::new(database));
     let flows = flow_loader::load_flows_from_store(&flow_store).await?;
     let flow_registry = Arc::new(FlowRegistry::new(flows));
     info!("✅  Loaded flows");
