@@ -1,8 +1,7 @@
 use crate::claim_registry;
 use crate::claim_registry::ClaimOrigin;
-use crate::domain::GeoLocation;
-use crate::domain::events::InitiatedBy;
 use crate::domain::property::{BooleanProperty, PropertyType};
+use crate::domain::{GeoLocation, InitiatedBy};
 use crate::execute_flows::execute_flows;
 use crate::flow_engine::VersionedFlow;
 use crate::flow_registry::FlowRegistry;

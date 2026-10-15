@@ -1,4 +1,4 @@
-use crate::domain::events::InitiatedBy;
+use crate::domain::InitiatedBy;
 use crate::domain::property::{Property, PropertyError};
 use crate::store::DeviceMap;
 use std::any::type_name;

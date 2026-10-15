@@ -1,7 +1,6 @@
 use crate::api::ApiState;
 use crate::app_config::AppConfig;
-use crate::domain::controller_registry;
-use crate::domain::events::Event;
+use crate::domain::{Event, controller_registry};
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;

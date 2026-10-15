@@ -1,6 +1,5 @@
-use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::PropertyLocator;
-use crate::domain::{BatteryState, Number};
+use crate::domain::{BatteryState, Event, InitiatedBy, Number};
 use crate::hue::domain::DevicePowerChanged;
 
 pub fn map_device_power_changed(property: DevicePowerChanged) -> Vec<Event> {

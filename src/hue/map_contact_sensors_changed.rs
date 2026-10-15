@@ -1,6 +1,5 @@
-use crate::domain::ContactState;
-use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::PropertyLocator;
+use crate::domain::{ContactState, Event, InitiatedBy};
 use crate::hue::domain::ContactChanged;
 
 pub fn map_contact_sensors_changed(property: ContactChanged) -> Vec<Event> {

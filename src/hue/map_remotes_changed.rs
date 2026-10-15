@@ -1,5 +1,5 @@
-use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::PropertyLocator;
+use crate::domain::{Event, InitiatedBy};
 use crate::hue::domain::ButtonChanged;
 
 pub fn map_remote_changed(property: ButtonChanged) -> Vec<Event> {

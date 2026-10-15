@@ -1,5 +1,5 @@
 use crate::app_config::AppConfig;
-use crate::domain::events::{Event, InitiatedBy};
+use crate::domain::{Event, InitiatedBy};
 use crate::hue::PendingWrites;
 use crate::hue::corrections::is_unnoticeable_correction;
 use crate::hue::domain::{ChangedProperty, LightChanged, ServerSentEventPayload, UnknownProperty};

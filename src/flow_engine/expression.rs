@@ -524,10 +524,8 @@ fn join_kinds(kinds: &[ValueKind]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::events::InitiatedBy;
     use crate::domain::property::{CartesianCoordinate, Gamut, Property, Unit};
-    use crate::domain::{Color, Device, Number, Weekday::*};
-    use crate::domain::{GeoLocation, Weekday};
+    use crate::domain::{Color, Device, GeoLocation, InitiatedBy, Number, Weekday, Weekday::*};
     use crate::flow_engine::context::ContextBuilder;
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};

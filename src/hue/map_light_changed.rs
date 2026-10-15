@@ -1,6 +1,5 @@
-use crate::domain::Number;
-use crate::domain::events::{Event, InitiatedBy};
 use crate::domain::property::{CartesianCoordinate, PropertyLocator};
+use crate::domain::{Event, InitiatedBy, Number};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::hue::domain::LightChanged;
 use tracing::warn;
@@ -56,8 +55,8 @@ pub fn map_light_changed_property(property: LightChanged, initiated_by: Initiate
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Event::{BooleanPropertyChanged, ColorPropertyChanged, NumberPropertyChanged};
     use crate::domain::Number::{Float, PositiveInt};
-    use crate::domain::events::Event::{BooleanPropertyChanged, ColorPropertyChanged, NumberPropertyChanged};
     use crate::domain::property::Gamut;
     use crate::hue::domain::{ChangedColor, ChangedColorTemperature, ColorGamut, Dimming, On, Owner, Xy};
     use pretty_assertions::assert_eq;
