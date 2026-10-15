@@ -2,6 +2,7 @@ use crate::domain::device::{Device, DeviceType};
 use crate::domain::property::{BooleanProperty, DateTimeProperty, NumberProperty, Property, PropertyType, Unit};
 use crate::hue::controller::CONTROLLER_ID;
 use crate::hue::domain::{DeviceGet, LightLevelGet, MotionGet, TemperatureGet};
+use crate::hue::illuminance::light_level_to_lux;
 use std::collections::HashMap;
 use thiserror::Error;
 
@@ -51,8 +52,7 @@ pub fn map_motion_sensors(
             properties.insert(sensitivity_property.name().to_owned(), sensitivity_property);
 
             let (light_level_lx, light_level_changed) = match light_level.light.light_level_report {
-                Some(report) if report.light_level == 0 => (0.0, Some(report.changed)),
-                Some(report) => (10f64.powf((report.light_level as f64 - 1.0) / 10_000.0), Some(report.changed)),
+                Some(report) => (light_level_to_lux(report.light_level), Some(report.changed)),
                 None => (0.0, None),
             };
 
