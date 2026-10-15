@@ -27,17 +27,10 @@ pub fn solar_event_time(event: SolarEvent, now: DateTime<Local>, location: &GeoL
     let coordinates = Coordinates::new(location.latitude, location.longitude).expect("valid coordinates");
     let solar_day = SolarDay::new(coordinates, date).with_altitude(location.altitude);
 
-    solar_day.event_time(to_solar_event(event)).map(|time| EventTime::At(time.with_timezone(&Local))).unwrap_or_else(
-        || {
-            let deep_horizon_crossing_exists = solar_day
-                .event_time(sunrise::SolarEvent::Elevation {
-                    elevation: POLAR_DISCRIMINATOR_DEPRESSION_DEG.to_radians(),
-                    morning: true,
-                })
-                .is_some();
-            if deep_horizon_crossing_exists { EventTime::PolarNight } else { EventTime::PolarDay }
-        },
-    )
+    solar_day
+        .event_time(to_solar_event(event))
+        .map(|time| EventTime::At(time.with_timezone(&Local)))
+        .unwrap_or_else(|| polar_event_time(&solar_day))
 }
 
 fn to_solar_event(event: SolarEvent) -> sunrise::SolarEvent {
@@ -45,6 +38,16 @@ fn to_solar_event(event: SolarEvent) -> sunrise::SolarEvent {
         SolarEvent::Sunrise => sunrise::SolarEvent::Sunrise,
         SolarEvent::Sunset => sunrise::SolarEvent::Sunset,
     }
+}
+
+fn polar_event_time(solar_day: &SolarDay) -> EventTime {
+    let deep_horizon_crossing_exists = solar_day
+        .event_time(sunrise::SolarEvent::Elevation {
+            elevation: POLAR_DISCRIMINATOR_DEPRESSION_DEG.to_radians(),
+            morning: true,
+        })
+        .is_some();
+    if deep_horizon_crossing_exists { EventTime::PolarNight } else { EventTime::PolarDay }
 }
 
 #[cfg(test)]
