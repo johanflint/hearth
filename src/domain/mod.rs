@@ -14,7 +14,7 @@ mod weekday_condition;
 mod connectivity;
 mod battery_state;
 mod validator;
-pub mod contact_state;
+mod contact_state;
 mod value;
 
 pub use battery_state::BatteryState;
