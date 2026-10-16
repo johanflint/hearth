@@ -1,11 +1,11 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
+use crate::api::presets::preset_response::PresetResponse;
 use crate::preset_service::ListPresetError;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tracing::error;
 
@@ -29,16 +29,6 @@ pub(super) async fn list_presets(State(state): State<ApiState>) -> Result<Respon
 #[derive(Debug, Serialize)]
 struct ListPresetsResponse {
     presets: Vec<PresetResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PresetResponse {
-    id: String,
-    name: String,
-    value: serde_json::Value,
-    created_at: DateTime<Utc>,
-    updated_at: Option<DateTime<Utc>>,
 }
 
 fn list_error_response(err: ListPresetError) -> Response {

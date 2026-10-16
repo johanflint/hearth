@@ -17,10 +17,22 @@ impl PresetService {
     pub async fn list(&self) -> Result<Vec<StoredPreset>, ListPresetError> {
         Ok(self.preset_store.list().await?)
     }
+
+    pub async fn retrieve_preset(&self, id: &str) -> Result<StoredPreset, RetrievePresetError> {
+        self.preset_store.by_id(id).await?.ok_or(RetrievePresetError::NotFound)
+    }
 }
 
 #[derive(Debug, Error)]
 pub enum ListPresetError {
+    #[error(transparent)]
+    Internal(#[from] PresetStoreError),
+}
+
+#[derive(Debug, Error)]
+pub enum RetrievePresetError {
+    #[error("preset not found")]
+    NotFound,
     #[error(transparent)]
     Internal(#[from] PresetStoreError),
 }
@@ -84,5 +96,37 @@ mod tests {
         let result = service.list().await;
 
         assert!(matches!(result, Err(ListPresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn retrieve_preset_returns_the_stored_preset() {
+        let (service, database) = create_service();
+        insert_row(&database, "other", "true").await;
+        insert_row(&database, "preset", "10").await;
+
+        let preset = service.retrieve_preset("preset").await.expect("retrieve succeeded");
+
+        assert_eq!(preset.id, "preset");
+        assert_eq!(preset.value, serde_json::json!(10));
+    }
+
+    #[tokio::test]
+    async fn retrieve_preset_returns_not_found_for_an_unknown_id() {
+        let (service, database) = create_service();
+        insert_row(&database, "other", "true").await;
+
+        let result = service.retrieve_preset("preset").await;
+
+        assert!(matches!(result, Err(RetrievePresetError::NotFound)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn retrieve_preset_fails_when_the_store_fails() {
+        let (service, database) = create_service();
+        insert_row(&database, "preset", "not valid json").await;
+
+        let result = service.retrieve_preset("preset").await;
+
+        assert!(matches!(result, Err(RetrievePresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
     }
 }
