@@ -3,6 +3,7 @@ use crate::domain::{ClaimMode, Command, Device, GeoLocation, controller_registry
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::flow_engine::{CommandMap, Context, FlowEngineError, FlowExecutionReport};
+use crate::preset_registry::PresetRegistry;
 use crate::scheduler::SchedulerCommand;
 use crate::store::{PropertyChange, StoreSnapshot};
 use crate::{claim_registry, flow_engine};
@@ -40,10 +41,15 @@ pub async fn execute_flow(
     flow: Arc<Flow>,
     node_id: Option<String>,
     snapshot: StoreSnapshot,
+    preset_registry: Arc<PresetRegistry>,
     tx: Sender<SchedulerCommand>,
     geo_location: GeoLocation,
 ) {
-    let context = Context::builder().snapshot(snapshot.clone()).location(geo_location).build();
+    let context = Context::builder()
+        .snapshot(snapshot.clone())
+        .preset_registry(preset_registry) // Passing the Arc to avoid expensive copies
+        .location(geo_location)
+        .build();
     let result = flow_engine::execute(flow.clone(), node_id, &context, tx).await;
 
     let dispatch_map = merge_command_maps(vec![(flow, result)]);
@@ -54,11 +60,17 @@ pub async fn execute_flow(
 pub async fn execute_flows(
     flows: Vec<Arc<Flow>>,
     snapshot: StoreSnapshot,
+    preset_registry: Arc<PresetRegistry>,
     changed: Option<PropertyChange>,
     tx: Sender<SchedulerCommand>,
     geo_location: GeoLocation,
 ) {
-    let context = Context::builder().snapshot(snapshot.clone()).changed(changed).location(geo_location).build();
+    let context = Context::builder()
+        .snapshot(snapshot.clone())
+        .preset_registry(preset_registry)
+        .changed(changed)
+        .location(geo_location)
+        .build();
     let results = FuturesUnordered::from_iter(flows.into_iter().map(|flow| async {
         let result = flow_engine::execute(flow.clone(), None, &context, tx.clone()).await;
         (flow, result)

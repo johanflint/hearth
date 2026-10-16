@@ -3,6 +3,7 @@ use crate::domain::device::Device;
 use crate::domain::property::{Property, ValueKind};
 use crate::flow_engine::Expression;
 use crate::flow_engine::flow::{Flow, FlowNodeKind};
+use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
 use std::fmt;
 use thiserror::Error;
@@ -11,20 +12,30 @@ use thiserror::Error;
 ///
 /// Performs semantic validation, it assumes the structural validation by the
 /// `flow_loader::from_json` is already done.
-pub fn validate(flow: &Flow, snapshot: &StoreSnapshot) -> Result<(), FlowValidationError> {
+pub fn validate(
+    flow: &Flow,
+    snapshot: &StoreSnapshot,
+    preset_registry: &PresetRegistry,
+) -> Result<(), FlowValidationError> {
     let mut issues = vec![];
 
-    issues.extend(validate_expression(snapshot, flow.trigger()).into_iter().map(|p| p.at(Location::Trigger)));
+    issues.extend(
+        validate_expression(snapshot, flow.trigger(), preset_registry).into_iter().map(|p| p.at(Location::Trigger)),
+    );
 
     for node in flow.walk() {
         let location = || Location::Node { node_id: node.id().to_string() };
         match node.kind() {
             FlowNodeKind::Start | FlowNodeKind::End | FlowNodeKind::Sleep(_) => {}
             FlowNodeKind::Conditional(expression) => {
-                issues.extend(validate_expression(snapshot, expression).into_iter().map(|p| p.at(location())));
+                issues.extend(
+                    validate_expression(snapshot, expression, preset_registry).into_iter().map(|p| p.at(location())),
+                );
             }
             FlowNodeKind::Action(action_node) => {
-                issues.extend(action_node.action().validate(snapshot).into_iter().map(|p| p.at(location())));
+                issues.extend(
+                    action_node.action().validate(snapshot, preset_registry).into_iter().map(|p| p.at(location())),
+                );
             }
         }
     }
@@ -48,7 +59,11 @@ pub fn find_property<'a>(device: &'a Device, property_id: &str) -> Result<&'a dy
         .ok_or_else(|| Problem::UnknownProperty { device_id: device.id.clone(), property_id: property_id.to_string() })
 }
 
-fn validate_expression(snapshot: &StoreSnapshot, expression: &Expression) -> Vec<Problem> {
+fn validate_expression(
+    snapshot: &StoreSnapshot,
+    expression: &Expression,
+    preset_registry: &PresetRegistry,
+) -> Vec<Problem> {
     let problems: Vec<Problem> = expression
         .walk()
         .filter_map(|expression| match expression {
@@ -64,7 +79,7 @@ fn validate_expression(snapshot: &StoreSnapshot, expression: &Expression) -> Vec
         return problems;
     }
 
-    expression.value_kind(snapshot).err().into_iter().collect()
+    expression.value_kind(snapshot, preset_registry).err().into_iter().collect()
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -121,6 +136,8 @@ pub enum Problem {
     ValueTooSmall { device_id: String, property_id: String, value: Number, minimum: Number },
     #[error("value too large for property '{property_id}' for device '{device_id}': maximum {maximum}, got {value}")]
     ValueTooLarge { device_id: String, property_id: String, value: Number, maximum: Number },
+    #[error("unknown preset '{id}'")]
+    PresetNotFound { id: String },
 }
 
 impl Problem {
@@ -133,7 +150,7 @@ impl Problem {
 mod tests {
     use super::*;
     use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
-    use crate::domain::{Number, Value};
+    use crate::domain::{Number, Preset, Value};
     use crate::flow_engine::Expression::*;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
@@ -224,6 +241,31 @@ mod tests {
 
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
         StoreSnapshot { devices: Arc::new(devices) }
+    }
+
+    fn preset_registry() -> Arc<PresetRegistry> {
+        Arc::new(PresetRegistry::new(vec![]))
+    }
+
+    fn preset_registry_with_presets() -> Arc<PresetRegistry> {
+        let preset = |id: &str, value| Preset { id: id.to_string(), name: id.to_string(), value };
+        Arc::new(PresetRegistry::new(vec![
+            preset("enabled", Value::Boolean(true)),
+            preset("dim", Value::Number(Number::PositiveInt(10))),
+            preset("too_bright", Value::Number(Number::PositiveInt(101))),
+        ]))
+    }
+
+    fn preset_value(id: &str) -> Expression {
+        PresetValue { id: id.to_string() }
+    }
+
+    fn preset_command(id: &str) -> PropertyCommand {
+        PropertyCommand { value: preset_value(id), transition: None }
+    }
+
+    fn preset_not_found_at(id: &str, location: Location) -> ValidationIssue {
+        Problem::PresetNotFound { id: id.to_string() }.at(location)
     }
 
     fn property_changed(device_id: &str) -> Expression {
@@ -326,7 +368,7 @@ mod tests {
     #[case::property_value(property_value(KNOWN_DEVICE_ID))]
     #[case::nested(And{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(Not { expression: Box::new(property_value(KNOWN_DEVICE_ID)) }) })]
     fn validate_accepts_a_trigger_that_only_references_known_devices_and_properties(#[case] trigger: Expression) {
-        assert_eq!(validate(&flow_with_trigger(trigger), &snapshot()), Ok(()));
+        assert_eq!(validate(&flow_with_trigger(trigger), &snapshot(), &preset_registry()), Ok(()));
     }
 
     #[rstest]
@@ -335,7 +377,7 @@ mod tests {
     #[case::nested_in_not(Not{ expression: Box::new(property_value("unknown")) })]
     #[case::next_to_a_known_device(Or{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(property_value("unknown")) })]
     fn validate_reports_an_unknown_device_in_the_trigger(#[case] trigger: Expression) {
-        let result = validate(&flow_with_trigger(trigger), &snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot(), &preset_registry());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown")]);
     }
@@ -346,14 +388,18 @@ mod tests {
     #[case::nested_in_not(Not{ expression: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)) })]
     #[case::next_to_a_known_property(And{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)) })]
     fn validate_reports_an_unknown_property_in_the_trigger(#[case] trigger: Expression) {
-        let result = validate(&flow_with_trigger(trigger), &snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot(), &preset_registry());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_property(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)]);
     }
 
     #[test]
     fn validate_only_reports_the_unknown_device_when_its_property_is_unknown_too() {
-        let result = validate(&flow_with_trigger(property_changed_of("unknown", UNKNOWN_PROPERTY_ID)), &snapshot());
+        let result = validate(
+            &flow_with_trigger(property_changed_of("unknown", UNKNOWN_PROPERTY_ID)),
+            &snapshot(),
+            &preset_registry(),
+        );
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown")]);
     }
@@ -365,7 +411,7 @@ mod tests {
             rhs: Box::new(property_changed("unknown")),
         };
 
-        let result = validate(&flow_with_trigger(trigger), &snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot(), &preset_registry());
 
         assert_eq!(
             result.unwrap_err().issues(),
@@ -377,14 +423,97 @@ mod tests {
     fn validate_reports_all_unknown_devices_in_the_trigger_in_order() {
         let trigger = And { lhs: Box::new(property_changed("first")), rhs: Box::new(property_value("second")) };
 
-        let result = validate(&flow_with_trigger(trigger), &snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot(), &preset_registry());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device("first"), unknown_device("second")]);
     }
 
+    #[rstest]
+    #[case::direct(preset_value("enabled"))]
+    #[case::nested_in_not(Not{ expression: Box::new(preset_value("enabled")) })]
+    #[case::next_to_a_known_device(And{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(preset_value("enabled")) })]
+    fn validate_accepts_a_known_preset_in_the_trigger(#[case] trigger: Expression) {
+        assert_eq!(validate(&flow_with_trigger(trigger), &snapshot(), &preset_registry_with_presets()), Ok(()));
+    }
+
+    #[rstest]
+    #[case::direct(preset_value("unknown"))]
+    #[case::nested_in_not(Not{ expression: Box::new(preset_value("unknown")) })]
+    #[case::next_to_a_known_device(And{ lhs: Box::new(property_changed(KNOWN_DEVICE_ID)), rhs: Box::new(preset_value("unknown")) })]
+    fn validate_reports_an_unknown_preset_in_the_trigger(#[case] trigger: Expression) {
+        let result = validate(&flow_with_trigger(trigger), &snapshot(), &preset_registry_with_presets());
+
+        assert_eq!(result.unwrap_err().issues(), [preset_not_found_at("unknown", Location::Trigger)]);
+    }
+
+    #[test]
+    fn validate_reports_an_unknown_preset_in_a_conditional_node() {
+        let flow = flow_with_node(FlowNodeKind::Conditional(preset_value("unknown")));
+
+        let result = validate(&flow, &snapshot(), &preset_registry_with_presets());
+
+        assert_eq!(result.unwrap_err().issues(), [preset_not_found_at("unknown", node(NODE_ID))]);
+    }
+
+    #[test]
+    fn validate_reports_an_unknown_preset_in_a_control_device_action() {
+        let flow = flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", preset_command("unknown")));
+
+        let result = validate(&flow, &snapshot(), &preset_registry_with_presets());
+
+        assert_eq!(result.unwrap_err().issues(), [preset_not_found_at("unknown", node(NODE_ID))]);
+    }
+
+    #[test]
+    fn validate_accepts_a_matching_preset_in_a_control_device_action() {
+        let flow = flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", preset_command("dim")));
+
+        assert_eq!(validate(&flow, &snapshot(), &preset_registry_with_presets()), Ok(()));
+    }
+
+    #[test]
+    fn validate_reports_a_preset_of_the_wrong_kind_in_a_control_device_action() {
+        let flow = flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", preset_command("enabled")));
+
+        let result = validate(&flow, &snapshot(), &preset_registry_with_presets());
+
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [incompatible_value_at(
+                KNOWN_DEVICE_ID,
+                "brightness",
+                ValueKind::Number,
+                ValueKind::Boolean,
+                node(NODE_ID)
+            )]
+        );
+    }
+
+    #[test]
+    fn validate_reports_a_preset_outside_the_property_range_in_a_control_device_action() {
+        let flow = flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", preset_command("too_bright")));
+
+        let result = validate(&flow, &snapshot(), &preset_registry_with_presets());
+
+        assert_eq!(
+            result.unwrap_err().issues(),
+            [value_too_large_at(
+                KNOWN_DEVICE_ID,
+                "brightness",
+                Number::PositiveInt(101),
+                Number::PositiveInt(100),
+                node(NODE_ID)
+            )]
+        );
+    }
+
     #[test]
     fn validate_reports_every_device_as_unknown_for_an_empty_snapshot() {
-        let result = validate(&flow_with_trigger(property_changed(KNOWN_DEVICE_ID)), &StoreSnapshot::default());
+        let result = validate(
+            &flow_with_trigger(property_changed(KNOWN_DEVICE_ID)),
+            &StoreSnapshot::default(),
+            &preset_registry(),
+        );
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device(KNOWN_DEVICE_ID)]);
     }
@@ -396,7 +525,7 @@ mod tests {
             rhs: Box::new(Literal { value: Value::String("short_release".to_string()) }),
         };
 
-        let result = validate(&flow_with_trigger(trigger), &snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot(), &preset_registry());
 
         assert_eq!(
             result.unwrap_err().issues(),
@@ -416,7 +545,7 @@ mod tests {
             rhs: Box::new(property_value_of(KNOWN_DEVICE_ID, "brightness")),
         };
 
-        let result = validate(&flow_with_node(FlowNodeKind::Conditional(condition)), &snapshot());
+        let result = validate(&flow_with_node(FlowNodeKind::Conditional(condition)), &snapshot(), &preset_registry());
 
         assert_eq!(
             result.unwrap_err().issues(),
@@ -431,7 +560,7 @@ mod tests {
             rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }),
         };
 
-        let result = validate(&flow_with_trigger(trigger), &snapshot());
+        let result = validate(&flow_with_trigger(trigger), &snapshot(), &preset_registry());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device("unknown")]);
     }
@@ -442,7 +571,7 @@ mod tests {
     #[case::action_without_validation(log())]
     #[case::sleep(FlowNodeKind::Sleep(Duration::from_secs(1)))]
     fn validate_accepts_a_node_that_only_references_known_devices_and_properties(#[case] kind: FlowNodeKind) {
-        assert_eq!(validate(&flow_with_node(kind), &snapshot()), Ok(()));
+        assert_eq!(validate(&flow_with_node(kind), &snapshot(), &preset_registry()), Ok(()));
     }
 
     #[rstest]
@@ -450,7 +579,7 @@ mod tests {
     #[case::conditional_nested(FlowNodeKind::Conditional(Not{ expression: Box::new(property_changed("unknown")) }))]
     #[case::control_device(control_device("unknown", "on"))]
     fn validate_reports_an_unknown_device_in_a_node(#[case] kind: FlowNodeKind) {
-        let result = validate(&flow_with_node(kind), &snapshot());
+        let result = validate(&flow_with_node(kind), &snapshot(), &preset_registry());
 
         assert_eq!(result.unwrap_err().issues(), [unknown_device_at("unknown", node(NODE_ID))]);
     }
@@ -459,7 +588,7 @@ mod tests {
     #[case::conditional(FlowNodeKind::Conditional(property_value_of(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID)))]
     #[case::control_device(control_device(KNOWN_DEVICE_ID, UNKNOWN_PROPERTY_ID))]
     fn validate_reports_an_unknown_property_in_a_node(#[case] kind: FlowNodeKind) {
-        let result = validate(&flow_with_node(kind), &snapshot());
+        let result = validate(&flow_with_node(kind), &snapshot(), &preset_registry());
 
         assert_eq!(
             result.unwrap_err().issues(),
@@ -474,12 +603,16 @@ mod tests {
         READONLY_PROPERTY_ID
     ))))]
     fn validate_accepts_reading_a_readonly_property(#[case] flow: Flow) {
-        assert_eq!(validate(&flow, &snapshot()), Ok(()));
+        assert_eq!(validate(&flow, &snapshot(), &preset_registry()), Ok(()));
     }
 
     #[test]
     fn validate_reports_a_control_device_action_that_sets_a_readonly_property() {
-        let result = validate(&flow_with_node(control_device(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID)), &snapshot());
+        let result = validate(
+            &flow_with_node(control_device(KNOWN_DEVICE_ID, READONLY_PROPERTY_ID)),
+            &snapshot(),
+            &preset_registry(),
+        );
 
         assert_eq!(
             result.unwrap_err().issues(),
@@ -496,6 +629,7 @@ mod tests {
                 property_command(Value::Number(Number::PositiveInt(50))),
             )),
             &snapshot(),
+            &preset_registry(),
         );
 
         assert_eq!(
@@ -532,6 +666,7 @@ mod tests {
         let result = validate(
             &flow_with_node(control_device_with(KNOWN_DEVICE_ID, "brightness", property_command(Value::Number(value)))),
             &snapshot(),
+            &preset_registry(),
         );
 
         assert_eq!(result.unwrap_err().issues(), [expected]);
@@ -545,7 +680,7 @@ mod tests {
         ];
         let flow = flow_with_nodes(property_changed("trigger_device"), nodes);
 
-        let result = validate(&flow, &snapshot());
+        let result = validate(&flow, &snapshot(), &preset_registry());
 
         assert_eq!(
             result.unwrap_err().issues(),
@@ -561,7 +696,7 @@ mod tests {
     fn validate_reports_the_same_unknown_device_once_per_reference() {
         let flow = flow_with_nodes(property_changed("unknown"), vec![(NODE_ID, control_device("unknown", "on"))]);
 
-        let result = validate(&flow, &snapshot());
+        let result = validate(&flow, &snapshot(), &preset_registry());
 
         assert_eq!(
             result.unwrap_err().issues(),

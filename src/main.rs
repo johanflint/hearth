@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let preset_store = Arc::new(PresetStore::new(database));
     let presets = preset_loader::load_presets_from_store(&preset_store).await?;
-    let _ = Arc::new(PresetRegistry::new(presets));
+    let preset_registry = Arc::new(PresetRegistry::new(presets));
     info!("✅  Loaded presets");
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
@@ -82,10 +82,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let scheduler_tx_clone = scheduler_tx.clone();
     let store_rx = store.notifier();
-    let registry_clone = flow_registry.clone();
+    let flow_registry_clone = flow_registry.clone();
+    let preset_registry_clone = preset_registry.clone();
     let geo_location_clone = config.geo_location().clone();
     task::spawn(async move {
-        scheduler(scheduler_tx_clone, scheduler_rx, store_rx, registry_clone, geo_location_clone).await;
+        scheduler(
+            scheduler_tx_clone,
+            scheduler_rx,
+            store_rx,
+            flow_registry_clone,
+            preset_registry_clone,
+            geo_location_clone,
+        )
+        .await;
     });
     info!("✅  Started scheduler");
 
@@ -107,9 +116,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let geo_location = config.geo_location().clone();
     let flow_registry_clone = flow_registry.clone();
+    let preset_registry_clone = preset_registry.clone();
     let scheduler_tx_clone = scheduler_tx.clone();
     task::spawn(async move {
-        store_listener(store_reactive_rx, flow_registry_clone, scheduler_tx_clone, geo_location).await;
+        store_listener(store_reactive_rx, flow_registry_clone, preset_registry_clone, scheduler_tx_clone, geo_location)
+            .await;
     });
     info!("✅  Initialized store listener");
 
@@ -120,7 +131,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store");
 
-    let flow_service = Arc::new(FlowService::new(flow_store, flow_registry, scheduler_tx, store_rx_clone));
+    let flow_service =
+        Arc::new(FlowService::new(flow_store, flow_registry, preset_registry, scheduler_tx, store_rx_clone));
     let api_state = ApiState::new(prometheus_handle, flow_service);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
