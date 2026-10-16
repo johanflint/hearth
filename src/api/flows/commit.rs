@@ -39,7 +39,7 @@ pub(super) fn flow_factory_error_response(err: FlowFactoryError) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::flows::test_support::body_json;
+    use crate::api::test_support::body_json;
     use serde_json::json;
 
     async fn assert_error(response: Response, status: StatusCode, code: &str) {

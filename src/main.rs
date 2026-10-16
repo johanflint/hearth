@@ -8,6 +8,7 @@ use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
 use crate::metrics_layer::MetricsLayer;
 use crate::preset_registry::PresetRegistry;
+use crate::preset_service::PresetService;
 use crate::preset_store::PresetStore;
 use crate::store::Store;
 use crate::store_listener::store_listener;
@@ -39,6 +40,7 @@ mod metrics;
 mod metrics_layer;
 mod preset_loader;
 mod preset_registry;
+mod preset_service;
 mod preset_store;
 mod property_changed_reducer;
 mod server;
@@ -132,8 +134,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Initialized store");
 
     let flow_service =
-        Arc::new(FlowService::new(flow_store, flow_registry, preset_registry, scheduler_tx, store_rx_clone));
-    let api_state = ApiState::new(prometheus_handle, flow_service);
+        Arc::new(FlowService::new(flow_store, flow_registry, preset_registry.clone(), scheduler_tx, store_rx_clone));
+    let preset_service = Arc::new(PresetService::new(preset_store, preset_registry));
+    let api_state = ApiState::new(prometheus_handle, flow_service, preset_service);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 

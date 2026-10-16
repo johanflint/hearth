@@ -76,7 +76,7 @@ struct UpdateFlowResponse {
 mod tests {
     use super::*;
     use crate::api::flows::router;
-    use crate::api::flows::test_support::{
+    use crate::api::test_support::{
         Fixture, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document,
     };
     use crate::flow_engine::{SchedulerCommand, VersionedFlow};

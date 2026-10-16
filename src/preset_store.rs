@@ -52,9 +52,7 @@ pub struct StoredPreset {
     pub id: String,
     pub name: String,
     pub value: serde_json::Value,
-    #[allow(dead_code)]
     pub created_at: DateTime<Utc>,
-    #[allow(dead_code)]
     pub updated_at: Option<DateTime<Utc>>,
 }
 

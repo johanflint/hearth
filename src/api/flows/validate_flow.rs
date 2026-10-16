@@ -98,7 +98,7 @@ fn problem_code(problem: &Problem) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::flows::test_support::body_json;
+    use crate::api::test_support::body_json;
     use crate::domain::Number;
     use crate::domain::property::ValueKind;
     use rstest::rstest;
