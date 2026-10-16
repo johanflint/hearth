@@ -3,6 +3,7 @@ use crate::execute_flows::{execute_flow, execute_flows};
 use crate::flow_engine::VersionedFlow;
 use crate::flow_engine::flow::Flow;
 use crate::flow_registry::FlowRegistry;
+use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
 use chrono::Local;
 use std::collections::HashMap;
@@ -45,6 +46,7 @@ pub async fn scheduler(
     mut rx: Receiver<SchedulerCommand>,
     notifier_rx: WatchReceiver<StoreSnapshot>,
     flow_registry: Arc<FlowRegistry>,
+    preset_registry: Arc<PresetRegistry>,
     geo_location: GeoLocation,
 ) {
     let mut scheduled_flows: HashMap<String, ScheduledJob> = HashMap::new();
@@ -110,6 +112,7 @@ pub async fn scheduler(
                 let flow_id_clone = flow_id.clone();
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
+                let preset_registry_clone = preset_registry.clone();
                 let geo_location_clone = geo_location.clone();
                 let join_handle = tokio::spawn(async move {
                     for datetime in schedule.upcoming(Local, geo_location_clone.clone()) {
@@ -133,6 +136,7 @@ pub async fn scheduler(
                         execute_flows(
                             vec![entry.flow.clone()],
                             snapshot,
+                            preset_registry_clone.clone(),
                             None,
                             tx_clone.clone(),
                             geo_location_clone.clone(),
@@ -169,6 +173,7 @@ pub async fn scheduler(
                 debug!("🕗 Scheduling flow '{}' to run node '{}' after {:?}... OK", flow.id(), node_id, delay);
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
+                let preset_registry_clone = preset_registry.clone();
                 let geo_location_clone = geo_location.clone();
                 tokio::spawn(async move {
                     let scheduled_instant = Instant::now() + Duration::from_millis(delay.as_millis() as u64);
@@ -176,7 +181,15 @@ pub async fn scheduler(
 
                     debug!("🕗 Waking up flow '{}'...", flow.name());
                     let snapshot = notifier_rx_clone.borrow().clone();
-                    execute_flow(flow, Some(node_id), snapshot, tx_clone.clone(), geo_location_clone.clone()).await;
+                    execute_flow(
+                        flow,
+                        Some(node_id),
+                        snapshot,
+                        preset_registry_clone,
+                        tx_clone.clone(),
+                        geo_location_clone.clone(),
+                    )
+                    .await;
                 });
             }
         }

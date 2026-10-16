@@ -6,6 +6,7 @@ use crate::extensions::date_time_ext::ToWeekday;
 use crate::flow_engine::Context;
 use crate::flow_engine::expression::ExpressionError::UnknownProperty;
 use crate::flow_engine::solar_event::EventTime;
+use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
 use chrono::NaiveTime;
 use serde::Deserialize;
@@ -44,6 +45,9 @@ pub enum Expression {
     PropertyChanged { device_id: String, property_id: String },
     PropertyValue { device_id: String, property_id: String },
 
+    // Presets
+    PresetValue { id: String },
+
     // Temporal
     Temporal { expression: TemporalExpression },
 }
@@ -60,44 +64,54 @@ impl Expression {
         }
     }
 
-    pub fn value_kind(&self, snapshot: &StoreSnapshot) -> Result<ValueKind, Problem> {
+    pub fn value_kind(&self, snapshot: &StoreSnapshot, registry: &PresetRegistry) -> Result<ValueKind, Problem> {
         use Expression::*;
 
         let value_kind = match self {
             GreaterThanOrEqualTo { lhs, rhs }
             | GreaterThan { lhs, rhs }
             | LessThan { lhs, rhs }
-            | LessThanOrEqualTo { lhs, rhs } => match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
-                (ValueKind::Number, ValueKind::Number) | (ValueKind::DateTime, ValueKind::DateTime) => {
-                    ValueKind::Boolean
+            | LessThanOrEqualTo { lhs, rhs } => {
+                match (lhs.value_kind(snapshot, registry)?, rhs.value_kind(snapshot, registry)?) {
+                    (ValueKind::Number, ValueKind::Number) | (ValueKind::DateTime, ValueKind::DateTime) => {
+                        ValueKind::Boolean
+                    }
+                    (lhs, rhs) => return Err(self.incompatible_operands("Number|DateTime", vec![lhs, rhs])),
                 }
-                (lhs, rhs) => return Err(self.incompatible_operands("Number|DateTime", vec![lhs, rhs])),
-            },
+            }
             EqualTo { lhs, rhs } | NotEqualTo { lhs, rhs } => {
-                let (lhs, rhs) = (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?);
+                let (lhs, rhs) = (lhs.value_kind(snapshot, registry)?, rhs.value_kind(snapshot, registry)?);
                 if lhs != rhs {
                     return Err(self.incompatible_operands("operands of the same kind", vec![lhs, rhs]));
                 }
                 ValueKind::Boolean
             }
-            And { lhs, rhs } | Or { lhs, rhs } => match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
-                (ValueKind::Boolean, ValueKind::Boolean) => ValueKind::Boolean,
-                (lhs, rhs) => return Err(self.incompatible_operands("Boolean", vec![lhs, rhs])),
-            },
-            Not { expression } => match expression.value_kind(snapshot)? {
+            And { lhs, rhs } | Or { lhs, rhs } => {
+                match (lhs.value_kind(snapshot, registry)?, rhs.value_kind(snapshot, registry)?) {
+                    (ValueKind::Boolean, ValueKind::Boolean) => ValueKind::Boolean,
+                    (lhs, rhs) => return Err(self.incompatible_operands("Boolean", vec![lhs, rhs])),
+                }
+            }
+            Not { expression } => match expression.value_kind(snapshot, registry)? {
                 ValueKind::Boolean => ValueKind::Boolean,
                 kind => return Err(self.incompatible_operands("Boolean", vec![kind])),
             },
-            Add { lhs, rhs } | Subtract { lhs, rhs } => match (lhs.value_kind(snapshot)?, rhs.value_kind(snapshot)?) {
-                (ValueKind::Number, ValueKind::Number) => ValueKind::Number,
-                (lhs, rhs) => return Err(self.incompatible_operands("Number", vec![lhs, rhs])),
-            },
+            Add { lhs, rhs } | Subtract { lhs, rhs } => {
+                match (lhs.value_kind(snapshot, registry)?, rhs.value_kind(snapshot, registry)?) {
+                    (ValueKind::Number, ValueKind::Number) => ValueKind::Number,
+                    (lhs, rhs) => return Err(self.incompatible_operands("Number", vec![lhs, rhs])),
+                }
+            }
             Literal { value } => value.kind(),
             PropertyChanged { .. } => ValueKind::Boolean,
             PropertyValue { device_id, property_id } => {
                 let device = find_device(device_id, snapshot)?;
                 find_property(device, property_id)?.value_kind()
             }
+            PresetValue { id } => registry
+                .by_id(id)
+                .map(|preset| preset.value.kind())
+                .ok_or_else(|| Problem::PresetNotFound { id: id.to_string() })?,
             Temporal { .. } => ValueKind::Boolean,
         };
 
@@ -119,7 +133,9 @@ impl Expression {
             Not { .. } => "Not",
             Add { .. } => "Add",
             Subtract { .. } => "Subtract",
-            Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => "Unknown",
+            Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | PresetValue { .. } | Temporal { .. } => {
+                "Unknown"
+            }
         };
 
         Problem::IncompatibleOperands { operator, expected, actual }
@@ -146,7 +162,11 @@ impl Expression {
                     stack.push(lhs);
                 }
                 Not { expression } => stack.push(expression),
-                Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => {}
+                Literal { .. }
+                | PropertyChanged { .. }
+                | PropertyValue { .. }
+                | PresetValue { .. }
+                | Temporal { .. } => {}
             }
 
             Some(expression)
@@ -162,9 +182,12 @@ impl fmt::Display for Operand<'_> {
         use Expression::*;
 
         match self.0 {
-            Not { .. } | Literal { .. } | PropertyChanged { .. } | PropertyValue { .. } | Temporal { .. } => {
-                write!(f, "{}", self.0)
-            }
+            Not { .. }
+            | Literal { .. }
+            | PropertyChanged { .. }
+            | PropertyValue { .. }
+            | PresetValue { .. }
+            | Temporal { .. } => write!(f, "{}", self.0),
             _ => write!(f, "({})", self.0),
         }
     }
@@ -200,6 +223,9 @@ impl fmt::Display for Expression {
             // Property
             PropertyChanged { device_id, property_id } => write!(f, "changed({device_id}.{property_id})"),
             PropertyValue { device_id, property_id } => write!(f, "{device_id}.{property_id}"),
+
+            // Preset
+            PresetValue { id } => write!(f, "preset({id})"),
 
             // Temporal
             Temporal { expression } => write!(f, "{expression}"),
@@ -415,6 +441,13 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             }
         }
 
+        // Preset
+        PresetValue { id } => context
+            .preset_registry()
+            .by_id(id)
+            .map(|preset| preset.value.clone())
+            .ok_or_else(|| ExpressionError::PresetNotFound { id: id.to_string() }),
+
         // Temporal
         // Uses wall-clock so it needs to use NaiveTime
         Temporal { expression } => {
@@ -532,6 +565,8 @@ pub enum ExpressionError {
     UnsupportedPropertyType(PropertyType),
     #[error("unable to compare given Numbers {actual_lhs} and {actual_rhs}")]
     ComparisonFailed { actual_lhs: String, actual_rhs: String },
+    #[error("unknown preset '{id}'")]
+    PresetNotFound { id: String },
 }
 
 fn join_kinds(kinds: &[ValueKind]) -> String {
@@ -542,7 +577,7 @@ fn join_kinds(kinds: &[ValueKind]) -> String {
 mod tests {
     use super::*;
     use crate::domain::property::{CartesianCoordinate, Gamut, Property, Unit};
-    use crate::domain::{Color, Device, GeoLocation, InitiatedBy, Number, Weekday, Weekday::*};
+    use crate::domain::{Color, Device, GeoLocation, InitiatedBy, Number, Preset, Weekday, Weekday::*};
     use crate::flow_engine::context::ContextBuilder;
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
@@ -553,6 +588,7 @@ mod tests {
     use crate::test_support::DeviceBuilder;
     use chrono::{DateTime, Local, TimeZone, Utc};
     use rstest::rstest;
+    use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -565,6 +601,18 @@ mod tests {
         // roughly mid-April to late-August) and a polar night (sun never rises, roughly late-October
         // to mid-February).
         Context::builder().location(GeoLocation { latitude: 78.2232, longitude: 15.6267, altitude: 0.0 })
+    }
+
+    fn preset(id: &str, value: Value) -> Preset {
+        Preset { id: id.to_string(), name: id.to_string(), value }
+    }
+
+    fn context_with_presets(presets: Vec<Preset>) -> Context {
+        Context::builder().preset_registry(Arc::new(PresetRegistry::new(presets))).build()
+    }
+
+    fn preset_value(id: &str) -> Expression {
+        PresetValue { id: id.to_string() }
     }
 
     fn device() -> Device {
@@ -1549,6 +1597,64 @@ mod tests {
     }
 
     #[rstest]
+    #[case::boolean(Value::Boolean(true))]
+    #[case::number(Value::Number(Number::PositiveInt(42)))]
+    #[case::string(Value::String("low".to_string()))]
+    #[case::color(Value::Color(Color::Hex("#ff0000".to_string())))]
+    fn preset_value_evaluates_to_the_value_of_the_preset(#[case] value: Value) {
+        let context = context_with_presets(vec![preset("warm", value.clone())]);
+
+        assert_eq!(evaluate(&preset_value("warm"), &context), Ok(value));
+    }
+
+    #[rstest]
+    #[case::other_preset(context_with_presets(vec![preset("warm", Value::Boolean(true))]))]
+    #[case::empty_registry(context_with_presets(vec![]))]
+    #[case::default_context(Context::default())]
+    fn preset_value_fails_for_an_unknown_preset(#[case] context: Context) {
+        let result = evaluate(&preset_value("cold"), &context);
+
+        assert_eq!(result, Err(ExpressionError::PresetNotFound { id: "cold".to_string() }));
+    }
+
+    #[test]
+    fn preset_value_can_be_used_as_an_operand() {
+        let context = context_with_presets(vec![preset("dim", Value::Number(Number::PositiveInt(10)))]);
+        let expression = EqualTo {
+            lhs: Box::new(Add {
+                lhs: Box::new(preset_value("dim")),
+                rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(5)) }),
+            }),
+            rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(15)) }),
+        };
+
+        assert_eq!(evaluate(&expression, &context), Ok(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn preset_value_propagates_an_unknown_preset_from_an_operand() {
+        let expression = Not { expression: Box::new(preset_value("missing")) };
+
+        let result = evaluate(&expression, &Context::default());
+
+        assert_eq!(result, Err(ExpressionError::PresetNotFound { id: "missing".to_string() }));
+    }
+
+    #[test]
+    fn preset_value_deserializes_from_json() {
+        let expression: Expression = serde_json::from_value(json!({"type": "presetValue", "id": "warm"})).unwrap();
+
+        assert_eq!(expression, preset_value("warm"));
+    }
+
+    #[test]
+    fn preset_value_deserialization_requires_an_id() {
+        let result = serde_json::from_value::<Expression>(json!({"type": "presetValue"}));
+
+        assert_eq!(result.unwrap_err().to_string(), "missing field `id`");
+    }
+
+    #[rstest]
     #[case(Monday, false)]
     #[case(Tuesday, false)]
     #[case(Wednesday, false)]
@@ -1765,6 +1871,7 @@ mod tests {
         }, true)]
     #[case::property_value_only(PropertyValue{ device_id: "light".to_string(), property_id: "on".to_string() }, false)]
     #[case::literal_only(Literal{ value: Value::Boolean(true) }, false)]
+    #[case::preset_value_only(PresetValue{ id: "warm".to_string() }, false)]
     fn contains_property_changed_detects_it_anywhere_in_the_tree(
         #[case] expression: Expression,
         #[case] expected: bool,
@@ -1798,6 +1905,25 @@ mod tests {
         assert_eq!(visited, vec!["or", "gt", "number", "property", "not", "boolean"]);
     }
 
+    #[test]
+    fn walk_visits_a_preset_value_as_a_leaf() {
+        let expression = Add {
+            lhs: Box::new(preset_value("dim")),
+            rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }),
+        };
+
+        let visited: Vec<&str> = expression
+            .walk()
+            .map(|expression| match expression {
+                PresetValue { id } => id.as_str(),
+                Add { .. } => "add",
+                _ => "other",
+            })
+            .collect();
+
+        assert_eq!(visited, vec!["add", "dim", "other"]);
+    }
+
     #[rstest]
     #[case::add(Add{ lhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }), rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(2)) }) })]
     #[case::subtract(Subtract{ lhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }), rhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(2)) }) })]
@@ -1818,6 +1944,7 @@ mod tests {
         EqualTo{ lhs: Box::new(Literal { value: Value::Number(Number::PositiveInt(1)) }), rhs: Box::new(Literal{ value: Value::Number(Number::PositiveInt(1)) }) },
         None
     )]
+    #[case::preset_value(PresetValue{ id: "warm".to_string() }, None)]
     #[case::temporal(Temporal{ expression: IsDaytime }, None)]
     fn constant_value_is_only_known_for_a_literal(#[case] expression: Expression, #[case] expected: Option<Value>) {
         assert_eq!(expression.constant_value(), expected.as_ref());
@@ -1842,6 +1969,19 @@ mod tests {
             Box::new(PropertyValue { device_id: device_id.to_string(), property_id: property_id.to_string() })
         }
 
+        fn preset_value(id: &str) -> Box<Expression> {
+            Box::new(PresetValue { id: id.to_string() })
+        }
+
+        fn preset_registry() -> PresetRegistry {
+            PresetRegistry::new(vec![
+                preset("enabled", Value::Boolean(true)),
+                preset("count", Value::Number(Number::PositiveInt(10))),
+                preset("mode", Value::String("low".to_string())),
+                preset("warm", Value::Color(Color::Hex("#ff0000".to_string()))),
+            ])
+        }
+
         #[rstest]
         #[case::boolean(*literal(Value::Boolean(true)), ValueKind::Boolean)]
         #[case::color(*literal(Value::Color(Color::Hex("#ff0000".to_string()))), ValueKind::Color)]
@@ -1853,6 +1993,13 @@ mod tests {
         #[case::enum_property(*property_value(DEVICE_ID, "batteryState"), ValueKind::Enum)]
         #[case::property_changed(PropertyChanged{ device_id: DEVICE_ID.to_string(), property_id: "on".to_string() }, ValueKind::Boolean)]
         #[case::temporal(Temporal{ expression: IsDaytime }, ValueKind::Boolean)]
+        #[case::boolean_preset(*preset_value("enabled"), ValueKind::Boolean)]
+        #[case::number_preset(*preset_value("count"), ValueKind::Number)]
+        #[case::enum_preset(*preset_value("mode"), ValueKind::Enum)]
+        #[case::color_preset(*preset_value("warm"), ValueKind::Color)]
+        #[case::compare_number_preset(GreaterThan{ lhs: property_value(DEVICE_ID, "brightness"), rhs: preset_value("count") }, ValueKind::Boolean)]
+        #[case::equal_color_preset(EqualTo{ lhs: property_value(DEVICE_ID, "color"), rhs: preset_value("warm") }, ValueKind::Boolean)]
+        #[case::add_number_preset(Add{ lhs: preset_value("count"), rhs: literal(Value::Number(Number::PositiveInt(1))) }, ValueKind::Number)]
         #[case::compare_numbers(GreaterThan{ lhs: property_value(DEVICE_ID, "brightness"), rhs: literal(Value::Number(Number::PositiveInt(50))) }, ValueKind::Boolean)]
         #[case::compare_date_times(
             LessThan{ lhs: literal(Value::DateTime(utc_with_ymd(2000, 8, 4))), rhs: literal(Value::DateTime(utc_with_ymd(2000, 8, 5))) },
@@ -1870,7 +2017,7 @@ mod tests {
             ValueKind::Boolean
         )]
         fn infers_the_kind(#[case] expression: Expression, #[case] expected: ValueKind) {
-            assert_eq!(expression.value_kind(&snapshot()), Ok(expected));
+            assert_eq!(expression.value_kind(&snapshot(), &preset_registry()), Ok(expected));
         }
 
         #[rstest]
@@ -1914,6 +2061,23 @@ mod tests {
             Subtract{ lhs: literal(Value::DateTime(utc_with_ymd(2000, 8, 4))), rhs: literal(Value::Number(Number::PositiveInt(1))) },
             Problem::IncompatibleOperands{ operator: "Subtract", expected: "Number", actual: vec![ValueKind::DateTime, ValueKind::Number] }
         )]
+        #[case::and_with_a_number_preset(
+            And{ lhs: literal(Value::Boolean(true)), rhs: preset_value("count") },
+            Problem::IncompatibleOperands{ operator: "And", expected: "Boolean", actual: vec![ValueKind::Boolean, ValueKind::Number] }
+        )]
+        #[case::add_a_boolean_preset(
+            Add{ lhs: property_value(DEVICE_ID, "brightness"), rhs: preset_value("enabled") },
+            Problem::IncompatibleOperands{ operator: "Add", expected: "Number", actual: vec![ValueKind::Number, ValueKind::Boolean] }
+        )]
+        #[case::equal_preset_of_a_different_kind(
+            EqualTo{ lhs: property_value(DEVICE_ID, "on"), rhs: preset_value("count") },
+            Problem::IncompatibleOperands{ operator: "EqualTo", expected: "operands of the same kind", actual: vec![ValueKind::Boolean, ValueKind::Number] }
+        )]
+        #[case::unknown_preset(*preset_value("unknown"), Problem::PresetNotFound { id: "unknown".to_string() })]
+        #[case::unknown_preset_nested(
+            Not{ expression: preset_value("unknown") },
+            Problem::PresetNotFound { id: "unknown".to_string() }
+        )]
         #[case::unknown_device(
             *property_value("missing", "on"),
             Problem::UnknownDevice { device_id: "missing".to_string() }
@@ -1923,7 +2087,7 @@ mod tests {
             Problem::UnknownProperty{ device_id: DEVICE_ID.to_string(), property_id: "missing".to_string() }
         )]
         fn reports_a_problem(#[case] expression: Expression, #[case] expected: Problem) {
-            assert_eq!(expression.value_kind(&snapshot()), Err(expected));
+            assert_eq!(expression.value_kind(&snapshot(), &preset_registry()), Err(expected));
         }
 
         #[test]
@@ -1952,6 +2116,10 @@ mod tests {
             Box::new(PropertyValue { device_id: "lamp".to_string(), property_id: property_id.to_string() })
         }
 
+        fn preset_value(id: &str) -> Box<Expression> {
+            Box::new(PresetValue { id: id.to_string() })
+        }
+
         fn number(value: u64) -> Box<Expression> {
             literal(Value::Number(Number::PositiveInt(value)))
         }
@@ -1977,6 +2145,13 @@ mod tests {
         #[case::not_of_binary(Not{ expression: Box::new(And { lhs: property_value("on"), rhs: property_value("motion") }) }, "!(lamp.on && lamp.motion)")]
         #[case::not_of_not(Not{ expression: Box::new(Not { expression: property_value("on") }) }, "!!lamp.on")]
         #[case::property_changed(PropertyChanged{ device_id: "lamp".to_string(), property_id: "button".to_string() }, "changed(lamp.button)")]
+        #[case::preset_value(*preset_value("warm"), "preset(warm)")]
+        #[case::preset_value_as_an_operand(Add{ lhs: preset_value("count"), rhs: number(10) }, "preset(count) + 10")]
+        #[case::preset_value_in_a_comparison(
+            GreaterThan{ lhs: Box::new(Add { lhs: preset_value("count"), rhs: number(10) }), rhs: preset_value("limit") },
+            "(preset(count) + 10) > preset(limit)"
+        )]
+        #[case::not_of_preset_value(Not{ expression: preset_value("enabled") }, "!preset(enabled)")]
         #[case::rgb_color(*literal(Value::Color(Color::RGB(255, 0, 0))), "RGB(255, 0, 0)")]
         #[case::hex_color(*literal(Value::Color(Color::Hex("#ff0000".to_string()))), "#ff0000")]
         #[case::cie_color(*literal(Value::Color(Color::CIE_xyY { xy: CartesianCoordinate::new(0.675, 0.322), brightness: 0.2126 })), "xyY(0.675, 0.322, 0.2126)"

@@ -91,6 +91,7 @@ fn problem_code(problem: &Problem) -> &'static str {
         Problem::IncompatibleOperands { .. } => "incompatibleOperands",
         Problem::ValueTooSmall { .. } => "valueTooSmall",
         Problem::ValueTooLarge { .. } => "valueTooLarge",
+        Problem::PresetNotFound { .. } => "presetNotFound",
     }
 }
 
@@ -119,6 +120,7 @@ mod tests {
         Problem::ValueTooLarge{ device_id: "lamp".to_string(), property_id: "brightness".to_string(), value: Number::PositiveInt(101), maximum: Number::PositiveInt(100) },
         "valueTooLarge"
     )]
+    #[case::preset_not_found(Problem::PresetNotFound{ id: "warm".to_string() }, "presetNotFound")]
     fn problem_code_maps_each_problem(#[case] problem: Problem, #[case] expected: &str) {
         assert_eq!(problem_code(&problem), expected);
     }

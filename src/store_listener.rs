@@ -5,6 +5,7 @@ use crate::domain::{GeoLocation, InitiatedBy};
 use crate::execute_flows::execute_flows;
 use crate::flow_engine::VersionedFlow;
 use crate::flow_registry::FlowRegistry;
+use crate::preset_registry::PresetRegistry;
 use crate::scheduler::SchedulerCommand;
 use crate::store::{PropertyChange, ReactiveUpdate, StoreSnapshot};
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use tracing::instrument;
 pub async fn store_listener(
     mut rx: Receiver<ReactiveUpdate>,
     flow_registry: Arc<FlowRegistry>,
+    preset_registry: Arc<PresetRegistry>,
     scheduler_tx: Sender<SchedulerCommand>,
     geo_location: GeoLocation,
 ) {
@@ -24,7 +26,15 @@ pub async fn store_listener(
         }
 
         let flows = flow_registry.reactive_flows().into_iter().map(VersionedFlow::into_flow).collect::<Vec<_>>();
-        execute_flows(flows, update.snapshot, update.changed, scheduler_tx.clone(), geo_location.clone()).await;
+        execute_flows(
+            flows,
+            update.snapshot,
+            preset_registry.clone(),
+            update.changed,
+            scheduler_tx.clone(),
+            geo_location.clone(),
+        )
+        .await;
     }
 }
 

@@ -1,10 +1,12 @@
 use crate::domain::property::{NumberProperty, Property, PropertyError, ValidatedValue};
 use crate::domain::{ClaimMode, Problem, Value, find_device, find_property};
+use crate::flow_engine::Expression;
 use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::expression::evaluate;
 use crate::flow_engine::property_command::{PropertyCommand, ResolvedPropertyCommand};
 use crate::flow_engine::scope::Scope;
+use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
 use action_macros::register_action;
 use async_trait::async_trait;
@@ -20,7 +22,7 @@ pub trait Action: Debug + Send + Sync {
 
     async fn execute(&self, context: &Context, scope: &mut Scope);
 
-    fn validate(&self, _snapshot: &StoreSnapshot) -> Vec<Problem> {
+    fn validate(&self, _snapshot: &StoreSnapshot, _preset_registry: &PresetRegistry) -> Vec<Problem> {
         vec![]
     }
 
@@ -102,6 +104,7 @@ impl ControlDeviceAction {
     fn validate_command(
         &self,
         snapshot: &StoreSnapshot,
+        preset_registry: &PresetRegistry,
         property_id: &str,
         property: &dyn Property,
         command: &PropertyCommand,
@@ -113,14 +116,19 @@ impl ControlDeviceAction {
             return Err(Problem::ReadOnlyProperty { device_id, property_id });
         }
 
-        let actual = command.value.value_kind(snapshot)?;
+        let actual = command.value.value_kind(snapshot, preset_registry)?;
         let expected = property.value_kind();
 
         if expected != actual {
             return Err(Problem::IncompatibleValue { device_id, property_id, expected, actual });
         }
 
-        let Some(Value::Number(value)) = command.value.constant_value() else {
+        let preset = match &command.value {
+            Expression::PresetValue { id } => preset_registry.by_id(id),
+            _ => None,
+        };
+        let known_value = command.value.constant_value().or(preset.as_ref().map(|preset| &preset.value));
+        let Some(Value::Number(value)) = known_value else {
             return Ok(());
         };
         let Some(number_property) = property.as_any().downcast_ref::<NumberProperty>() else {
@@ -208,6 +216,16 @@ impl Action for ControlDeviceAction {
                 }
             };
             info!(device_id = self.device_id, property_id, "Evaluated '{}' → '{}'", property_command.value, value);
+            // Validation can't catch a preset that changed kind after the flow was stored
+            let (expected, actual) = (property.value_kind(), value.kind());
+            if expected != actual {
+                warn!(
+                    device_id = self.device_id,
+                    property_id, "⚠️ Expected a {expected} for property '{property_id}', got a {actual}, ignoring"
+                );
+                continue;
+            }
+
             let value = clamp_to_range(&self.device_id, property_id, property.as_ref(), value);
 
             let resolved_command = ResolvedPropertyCommand { value, transition: property_command.transition };
@@ -224,7 +242,7 @@ impl Action for ControlDeviceAction {
         }
     }
 
-    fn validate(&self, snapshot: &StoreSnapshot) -> Vec<Problem> {
+    fn validate(&self, snapshot: &StoreSnapshot, preset_registry: &PresetRegistry) -> Vec<Problem> {
         let device = match find_device(&self.device_id, snapshot) {
             Ok(device) => device,
             Err(problem) => return vec![problem],
@@ -234,7 +252,9 @@ impl Action for ControlDeviceAction {
             .iter()
             .filter_map(|(property_id, command)| {
                 find_property(device, property_id)
-                    .and_then(|property| self.validate_command(snapshot, property_id, property, command))
+                    .and_then(|property| {
+                        self.validate_command(snapshot, preset_registry, property_id, property, command)
+                    })
                     .err()
             })
             .collect()
@@ -250,6 +270,7 @@ mod tests {
     use super::*;
     use crate::domain::Color;
     use crate::domain::Number;
+    use crate::domain::Preset;
     use crate::domain::property::{
         BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind,
     };
@@ -287,6 +308,25 @@ mod tests {
             .build();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
         StoreSnapshot { devices: Arc::new(devices) }
+    }
+
+    fn preset_registry() -> Arc<PresetRegistry> {
+        Arc::new(PresetRegistry::new(vec![]))
+    }
+
+    fn preset_registry_with_presets() -> Arc<PresetRegistry> {
+        let preset = |id: &str, value| Preset { id: id.to_string(), name: id.to_string(), value };
+        Arc::new(PresetRegistry::new(vec![
+            preset("dim", Value::Number(number(10))),
+            preset("too_dark", Value::Number(number(0))),
+            preset("too_bright", Value::Number(number(101))),
+            preset("enabled", Value::Boolean(true)),
+            preset("warm", Value::Color(red())),
+        ]))
+    }
+
+    fn preset_command(id: &str) -> PropertyCommand {
+        PropertyCommand { value: Expression::PresetValue { id: id.to_string() }, transition: None }
     }
 
     fn control_device(device_id: &str, property_ids: &[&str]) -> ControlDeviceAction {
@@ -404,24 +444,24 @@ mod tests {
 
     #[test]
     fn log_action_has_nothing_to_validate() {
-        assert_eq!(LogAction::new("message".to_string()).validate(&StoreSnapshot::default()), []);
+        assert_eq!(LogAction::new("message".to_string()).validate(&StoreSnapshot::default(), &preset_registry()), []);
     }
 
     #[test]
     fn control_device_validate_accepts_a_known_device_and_property() {
-        assert_eq!(control_device("lamp", &["on"]).validate(&snapshot()), []);
+        assert_eq!(control_device("lamp", &["on"]).validate(&snapshot(), &preset_registry()), []);
     }
 
     #[test]
     fn control_device_validate_reports_an_unknown_device_once_for_all_properties() {
-        let problems = control_device("unknown", &["on", "brightness"]).validate(&snapshot());
+        let problems = control_device("unknown", &["on", "brightness"]).validate(&snapshot(), &preset_registry());
 
         assert_eq!(problems, [Problem::UnknownDevice { device_id: "unknown".to_string() }]);
     }
 
     #[test]
     fn control_device_validate_reports_only_the_unknown_property() {
-        let problems = control_device("lamp", &["on", "missing"]).validate(&snapshot());
+        let problems = control_device("lamp", &["on", "missing"]).validate(&snapshot(), &preset_registry());
 
         assert_eq!(
             problems,
@@ -431,7 +471,7 @@ mod tests {
 
     #[test]
     fn control_device_validate_reports_only_the_readonly_property() {
-        let problems = control_device("lamp", &["on", "motion"]).validate(&snapshot());
+        let problems = control_device("lamp", &["on", "motion"]).validate(&snapshot(), &preset_registry());
 
         assert_eq!(
             problems,
@@ -453,7 +493,7 @@ mod tests {
         #[case] property_id: &str,
         #[case] command: PropertyCommand,
     ) {
-        assert_eq!(control_device_with("lamp", property_id, command).validate(&snapshot()), []);
+        assert_eq!(control_device_with("lamp", property_id, command).validate(&snapshot(), &preset_registry()), []);
     }
 
     #[rstest]
@@ -476,7 +516,7 @@ mod tests {
         #[case] expected: ValueKind,
         #[case] actual: ValueKind,
     ) {
-        let problems = control_device_with("lamp", property_id, command).validate(&snapshot());
+        let problems = control_device_with("lamp", property_id, command).validate(&snapshot(), &preset_registry());
 
         assert_eq!(
             problems,
@@ -491,8 +531,8 @@ mod tests {
 
     #[test]
     fn control_device_validate_reports_a_readonly_property_instead_of_an_incompatible_value() {
-        let problems =
-            control_device_with("lamp", "motion", property_command(Value::Number(number(50)))).validate(&snapshot());
+        let problems = control_device_with("lamp", "motion", property_command(Value::Number(number(50))))
+            .validate(&snapshot(), &preset_registry());
 
         assert_eq!(
             problems,
@@ -505,8 +545,8 @@ mod tests {
     #[case::negative_int(Number::NegativeInt(-1))]
     #[case::float(Number::Float(0.5))]
     fn control_device_validate_reports_a_value_below_the_minimum(#[case] value: Number) {
-        let problems =
-            control_device_with("lamp", "brightness", property_command(Value::Number(value))).validate(&snapshot());
+        let problems = control_device_with("lamp", "brightness", property_command(Value::Number(value)))
+            .validate(&snapshot(), &preset_registry());
 
         assert_eq!(
             problems,
@@ -523,8 +563,8 @@ mod tests {
     #[case::positive_int(number(101))]
     #[case::float(Number::Float(100.5))]
     fn control_device_validate_reports_a_value_above_the_maximum(#[case] value: Number) {
-        let problems =
-            control_device_with("lamp", "brightness", property_command(Value::Number(value))).validate(&snapshot());
+        let problems = control_device_with("lamp", "brightness", property_command(Value::Number(value)))
+            .validate(&snapshot(), &preset_registry());
 
         assert_eq!(
             problems,
@@ -544,7 +584,88 @@ mod tests {
             transition: None,
         };
 
-        assert_eq!(control_device_with("lamp", "brightness", command).validate(&snapshot()), []);
+        assert_eq!(control_device_with("lamp", "brightness", command).validate(&snapshot(), &preset_registry()), []);
+    }
+
+    #[rstest]
+    #[case::number("brightness", "dim")]
+    #[case::boolean("on", "enabled")]
+    #[case::color("color", "warm")]
+    fn control_device_validate_accepts_a_preset_that_matches_the_property_type(
+        #[case] property_id: &str,
+        #[case] preset_id: &str,
+    ) {
+        let action = control_device_with("lamp", property_id, preset_command(preset_id));
+
+        assert_eq!(action.validate(&snapshot(), &preset_registry_with_presets()), []);
+    }
+
+    #[test]
+    fn control_device_validate_reports_an_unknown_preset() {
+        let action = control_device_with("lamp", "brightness", preset_command("missing"));
+
+        let problems = action.validate(&snapshot(), &preset_registry_with_presets());
+
+        assert_eq!(problems, [Problem::PresetNotFound { id: "missing".to_string() }]);
+    }
+
+    #[rstest]
+    #[case::number_for_boolean("on", "dim", ValueKind::Boolean, ValueKind::Number)]
+    #[case::boolean_for_number("brightness", "enabled", ValueKind::Number, ValueKind::Boolean)]
+    #[case::color_for_number("brightness", "warm", ValueKind::Number, ValueKind::Color)]
+    fn control_device_validate_reports_a_preset_of_the_wrong_kind(
+        #[case] property_id: &str,
+        #[case] preset_id: &str,
+        #[case] expected: ValueKind,
+        #[case] actual: ValueKind,
+    ) {
+        let action = control_device_with("lamp", property_id, preset_command(preset_id));
+
+        let problems = action.validate(&snapshot(), &preset_registry_with_presets());
+
+        assert_eq!(
+            problems,
+            [Problem::IncompatibleValue {
+                device_id: "lamp".to_string(),
+                property_id: property_id.to_string(),
+                expected,
+                actual
+            }]
+        );
+    }
+
+    #[test]
+    fn control_device_validate_reports_a_preset_below_the_minimum() {
+        let action = control_device_with("lamp", "brightness", preset_command("too_dark"));
+
+        let problems = action.validate(&snapshot(), &preset_registry_with_presets());
+
+        assert_eq!(
+            problems,
+            [Problem::ValueTooSmall {
+                device_id: "lamp".to_string(),
+                property_id: "brightness".to_string(),
+                value: number(0),
+                minimum: number(1)
+            }]
+        );
+    }
+
+    #[test]
+    fn control_device_validate_reports_a_preset_above_the_maximum() {
+        let action = control_device_with("lamp", "brightness", preset_command("too_bright"));
+
+        let problems = action.validate(&snapshot(), &preset_registry_with_presets());
+
+        assert_eq!(
+            problems,
+            [Problem::ValueTooLarge {
+                device_id: "lamp".to_string(),
+                property_id: "brightness".to_string(),
+                value: number(101),
+                maximum: number(100)
+            }]
+        );
     }
 
     #[test]
@@ -559,7 +680,7 @@ mod tests {
             ]),
         );
 
-        let mut problems = action.validate(&snapshot());
+        let mut problems = action.validate(&snapshot(), &preset_registry());
         problems.sort_by_key(|problem| problem.to_string());
 
         assert_eq!(
@@ -577,7 +698,14 @@ mod tests {
     }
 
     async fn execute(action: &ControlDeviceAction) -> Option<CommandMap> {
-        let context = Context::builder().snapshot(snapshot()).build();
+        execute_with_presets(action, preset_registry()).await
+    }
+
+    async fn execute_with_presets(
+        action: &ControlDeviceAction,
+        preset_registry: Arc<PresetRegistry>,
+    ) -> Option<CommandMap> {
+        let context = Context::builder().snapshot(snapshot()).preset_registry(preset_registry).build();
         let mut scope = Scope::new();
         action.execute(&context, &mut scope).await;
         scope.take().remove("command_map").and_then(|v| v.downcast::<CommandMap>().ok()).map(|boxed| *boxed)
@@ -648,6 +776,81 @@ mod tests {
                 DeviceCommand { claim: None, properties: HashMap::from([("brightness".to_string(), expected)]) }
             )]))
         );
+    }
+
+    fn lamp_command(properties: HashMap<String, ResolvedPropertyCommand>) -> Option<CommandMap> {
+        Some(HashMap::from([("lamp".to_string(), DeviceCommand { claim: None, properties })]))
+    }
+
+    #[rstest]
+    #[case::number("brightness", "dim", Value::Number(number(10)))]
+    #[case::boolean("on", "enabled", Value::Boolean(true))]
+    #[case::color("color", "warm", Value::Color(red()))]
+    #[tokio::test]
+    async fn execute_resolves_a_preset(#[case] property_id: &str, #[case] preset_id: &str, #[case] expected: Value) {
+        let transition = Some(Duration::from_secs(1));
+        let command = PropertyCommand { transition, ..preset_command(preset_id) };
+        let action = control_device_with("lamp", property_id, command);
+
+        let command_map = execute_with_presets(&action, preset_registry_with_presets()).await;
+
+        let expected = ResolvedPropertyCommand { value: expected, transition };
+        assert_eq!(command_map, lamp_command(HashMap::from([(property_id.to_string(), expected)])));
+    }
+
+    #[rstest]
+    #[case::too_large("too_bright", number(100))]
+    #[case::too_small("too_dark", number(1))]
+    #[tokio::test]
+    async fn execute_clamps_a_preset_to_the_property_range(#[case] preset_id: &str, #[case] expected: Number) {
+        let action = control_device_with("lamp", "brightness", preset_command(preset_id));
+
+        let command_map = execute_with_presets(&action, preset_registry_with_presets()).await;
+
+        let expected = ResolvedPropertyCommand { value: Value::Number(expected), transition: None };
+        assert_eq!(command_map, lamp_command(HashMap::from([("brightness".to_string(), expected)])));
+    }
+
+    #[tokio::test]
+    async fn execute_skips_an_unknown_preset() {
+        let action = control_device_with("lamp", "brightness", preset_command("missing"));
+
+        let command_map = execute_with_presets(&action, preset_registry_with_presets()).await;
+
+        assert_eq!(command_map, lamp_command(HashMap::new()));
+    }
+
+    #[rstest]
+    #[case::boolean_preset_for_a_number("brightness", "enabled")]
+    #[case::number_preset_for_a_boolean("on", "dim")]
+    #[case::color_preset_for_a_number("brightness", "warm")]
+    #[tokio::test]
+    async fn execute_skips_a_preset_that_no_longer_matches_the_property_kind(
+        #[case] property_id: &str,
+        #[case] preset_id: &str,
+    ) {
+        let action = control_device_with("lamp", property_id, preset_command(preset_id));
+
+        let command_map = execute_with_presets(&action, preset_registry_with_presets()).await;
+
+        assert_eq!(command_map, lamp_command(HashMap::new()));
+    }
+
+    #[tokio::test]
+    async fn execute_skips_only_the_properties_that_do_not_match() {
+        let action = ControlDeviceAction::new(
+            "lamp".to_string(),
+            None,
+            HashMap::from([
+                ("brightness".to_string(), preset_command("enabled")),
+                ("on".to_string(), preset_command("enabled")),
+            ]),
+        );
+
+        let command_map = execute_with_presets(&action, preset_registry_with_presets()).await;
+
+        let on = ResolvedPropertyCommand { value: Value::Boolean(true), transition: None };
+        assert_eq!(command_map, lamp_command(HashMap::from([("on".to_string(), on)])));
     }
 
     fn brightness() -> Box<Expression> {

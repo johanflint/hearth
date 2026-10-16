@@ -1,11 +1,14 @@
 use crate::api::ApiState;
 use crate::app_config::AppConfig;
+use crate::database::Database;
 use crate::domain::{Event, controller_registry};
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
 use crate::metrics_layer::MetricsLayer;
+use crate::preset_registry::PresetRegistry;
+use crate::preset_store::PresetStore;
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -21,6 +24,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod api;
 mod app_config;
 mod claim_registry;
+mod database;
 mod domain;
 mod execute_flows;
 mod extensions;
@@ -33,6 +37,9 @@ mod geo_location_deserializer;
 mod hue;
 mod metrics;
 mod metrics_layer;
+mod preset_loader;
+mod preset_registry;
+mod preset_store;
 mod property_changed_reducer;
 mod server;
 mod sse;
@@ -56,12 +63,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
 
-    let flow_store = Arc::new(FlowStore::open(Path::new(config.db().file_name()))?);
+    let database = Database::open(Path::new(config.db().file_name()))?;
     info!("✅  Started database");
 
+    let flow_store = Arc::new(FlowStore::new(database.clone()));
     let flows = flow_loader::load_flows_from_store(&flow_store).await?;
     let flow_registry = Arc::new(FlowRegistry::new(flows));
     info!("✅  Loaded flows");
+
+    let preset_store = Arc::new(PresetStore::new(database));
+    let presets = preset_loader::load_presets_from_store(&preset_store).await?;
+    let preset_registry = Arc::new(PresetRegistry::new(presets));
+    info!("✅  Loaded presets");
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
     let (mut store, store_reactive_rx) = Store::new(rx);
@@ -69,10 +82,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let scheduler_tx_clone = scheduler_tx.clone();
     let store_rx = store.notifier();
-    let registry_clone = flow_registry.clone();
+    let flow_registry_clone = flow_registry.clone();
+    let preset_registry_clone = preset_registry.clone();
     let geo_location_clone = config.geo_location().clone();
     task::spawn(async move {
-        scheduler(scheduler_tx_clone, scheduler_rx, store_rx, registry_clone, geo_location_clone).await;
+        scheduler(
+            scheduler_tx_clone,
+            scheduler_rx,
+            store_rx,
+            flow_registry_clone,
+            preset_registry_clone,
+            geo_location_clone,
+        )
+        .await;
     });
     info!("✅  Started scheduler");
 
@@ -94,9 +116,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let geo_location = config.geo_location().clone();
     let flow_registry_clone = flow_registry.clone();
+    let preset_registry_clone = preset_registry.clone();
     let scheduler_tx_clone = scheduler_tx.clone();
     task::spawn(async move {
-        store_listener(store_reactive_rx, flow_registry_clone, scheduler_tx_clone, geo_location).await;
+        store_listener(store_reactive_rx, flow_registry_clone, preset_registry_clone, scheduler_tx_clone, geo_location)
+            .await;
     });
     info!("✅  Initialized store listener");
 
@@ -107,7 +131,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store");
 
-    let flow_service = Arc::new(FlowService::new(flow_store, flow_registry, scheduler_tx, store_rx_clone));
+    let flow_service =
+        Arc::new(FlowService::new(flow_store, flow_registry, preset_registry, scheduler_tx, store_rx_clone));
     let api_state = ApiState::new(prometheus_handle, flow_service);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");

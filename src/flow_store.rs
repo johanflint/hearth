@@ -1,138 +1,123 @@
-use crate::flow_store::FlowStoreError::UnsupportedSchemaVersion;
+use crate::database::{Database, DatabaseError};
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, Row, params};
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use rusqlite::{OptionalExtension, Row, params};
 use thiserror::Error;
-use tokio::task;
-use tracing::{debug, info};
 
 #[derive(Debug)]
 pub struct FlowStore {
-    conn: Arc<Mutex<Connection>>,
+    database: Database,
 }
 
 impl FlowStore {
-    pub fn open(path: &Path) -> Result<Self, FlowStoreError> {
-        let mut conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", &"WAL")?;
-        conn.pragma_update(None, "foreign_keys", &"ON")?;
-        conn.pragma_update(None, "busy_timeout", 5000)?;
-        run_migrations(&mut conn)?;
-
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
     pub async fn list(&self) -> Result<Vec<StoredFlow>, FlowStoreError> {
-        let conn = Arc::clone(&self.conn);
-        task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
-            let mut statement =
-                conn.prepare("SELECT id, revision, document, created_at, updated_at FROM flows ORDER BY id")?;
-            let rows = statement.query_map([], row_to_stored_flow)?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(FlowStoreError::from)
-        })
-        .await?
+        self.database
+            .call(|conn| {
+                let mut statement =
+                    conn.prepare("SELECT id, revision, document, created_at, updated_at FROM flows ORDER BY id")?;
+                let rows = statement.query_map([], row_to_stored_flow)?;
+                Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
     }
 
     pub async fn by_id(&self, id: &str) -> Result<Option<StoredFlow>, FlowStoreError> {
-        let conn = Arc::clone(&self.conn);
         let id = id.to_string();
-        task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
-            conn.query_row(
-                "SELECT id, revision, document, created_at, updated_at FROM flows WHERE id = ?1",
-                [id],
-                row_to_stored_flow,
-            )
-            .optional()
-            .map_err(FlowStoreError::from)
-        })
-        .await?
+        self.database
+            .call(|conn| {
+                let result = conn
+                    .query_row(
+                        "SELECT id, revision, document, created_at, updated_at FROM flows WHERE id = ?1",
+                        [id],
+                        row_to_stored_flow,
+                    )
+                    .optional();
+                Ok(result?)
+            })
+            .await
     }
 
     pub async fn insert(&self, id: &str, document: serde_json::Value) -> Result<u64, InsertError> {
-        let conn = Arc::clone(&self.conn);
         let id = id.to_string();
-        task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
-            let now = Utc::now().to_rfc3339();
-            let result = conn.execute(
-                "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, 0, ?2, ?3, ?3)",
-                params![id, document, now],
-            );
+        self.database
+            .call(move |conn| {
+                let now = Utc::now().to_rfc3339();
+                let result = conn.execute(
+                    "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, 0, ?2, ?3, ?3)",
+                    params![id, document, now],
+                );
 
-            match result {
-                Ok(_) => Ok(0),
-                Err(rusqlite::Error::SqliteFailure(err, _))
-                    if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY =>
-                {
-                    Err(InsertError::AlreadyExists)
+                match result {
+                    Ok(_) => Ok(0),
+                    #[rustfmt::skip]
+                    Err(rusqlite::Error::SqliteFailure(err, _)) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY =>
+                    {
+                        Err(InsertError::AlreadyExists)
+                    }
+                    Err(err) => Err(err.into()),
                 }
-                Err(err) => Err(err.into()),
-            }
-        })
-        .await
-        .map_err(FlowStoreError::from)? // Handle the join JoinError
+            })
+            .await
     }
 
     pub async fn update(&self, id: &str, base_revision: u64, document: serde_json::Value) -> Result<u64, UpdateError> {
-        let conn = Arc::clone(&self.conn);
         let id = id.to_string();
-        task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
-            let now = Utc::now().to_rfc3339();
-            let updated: Option<i64> = conn
-                .query_row(
-                    "UPDATE flows SET document = ?3, revision = revision + 1, updated_at = ?4
-                WHERE id = ?1 AND revision = ?2
-                RETURNING revision",
-                    params![id, base_revision as i64, document, now],
-                    |row| row.get(0),
-                )
-                .optional()?;
+        self.database
+            .call(move |conn| {
+                let now = Utc::now().to_rfc3339();
+                let updated: Option<i64> = conn
+                    .query_row(
+                        "UPDATE flows SET document = ?3, revision = revision + 1, updated_at = ?4
+                        WHERE id = ?1 AND revision = ?2
+                        RETURNING revision",
+                        params![id, base_revision as i64, document, now],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
 
-            if let Some(revision) = updated {
-                return Ok(to_revision(revision)?);
-            }
-
-            // No row matched; either the flow doesn't exist or someone else updated it first
-            let current: Option<i64> =
-                conn.query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0)).optional()?;
-            match current {
-                None => Err(UpdateError::NotFound),
-                Some(current) => {
-                    Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                if let Some(revision) = updated {
+                    return Ok(to_revision(revision)?);
                 }
-            }
-        })
-        .await
-        .map_err(FlowStoreError::from)? // Handle the join JoinError
+
+                // No row matched; either the flow doesn't exist or someone else updated it first
+                let current: Option<i64> = conn
+                    .query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0))
+                    .optional()?;
+                match current {
+                    None => Err(UpdateError::NotFound),
+                    Some(current) => {
+                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                    }
+                }
+            })
+            .await
     }
 
     pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
-        let conn = Arc::clone(&self.conn);
         let id = id.to_string();
-        task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|_| FlowStoreError::PoisonedConnection)?;
-            let rows_deleted: usize =
-                conn.execute("DELETE FROM flows WHERE id = ?1 AND revision = ?2", params![id, base_revision as i64])?;
-            if rows_deleted == 1 {
-                return Ok(());
-            }
-
-            // No row matched: either the flow doesn't exist or someone else updated it first
-            let current: Option<i64> =
-                conn.query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0)).optional()?;
-            match current {
-                Some(current) => {
-                    Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+        self.database
+            .call(move |conn| {
+                let rows_deleted: usize = conn
+                    .execute("DELETE FROM flows WHERE id = ?1 AND revision = ?2", params![id, base_revision as i64])?;
+                if rows_deleted == 1 {
+                    return Ok(());
                 }
-                None => Err(DeleteError::NotFound),
-            }
-        })
-        .await
-        .map_err(FlowStoreError::from)? // Handle the join JoinError
+
+                // No row matched: either the flow doesn't exist or someone else updated it first
+                let current: Option<i64> = conn
+                    .query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0))
+                    .optional()?;
+                match current {
+                    Some(current) => {
+                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                    }
+                    None => Err(DeleteError::NotFound),
+                }
+            })
+            .await
     }
 }
 
@@ -143,26 +128,6 @@ pub struct StoredFlow {
     pub document: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
-}
-
-fn run_migrations(conn: &mut Connection) -> Result<(), FlowStoreError> {
-    let current_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    let current_version = current_version as usize;
-
-    if current_version > MIGRATIONS.len() {
-        return Err(UnsupportedSchemaVersion { found: current_version, supported: MIGRATIONS.len() });
-    }
-
-    debug!("Running migrations... current version {}, target version {}", current_version, MIGRATIONS.len());
-    for (index, migration) in MIGRATIONS.iter().enumerate().skip(current_version) {
-        let tx = conn.transaction()?;
-        tx.execute_batch(migration)?;
-        tx.pragma_update(None, "user_version", (index + 1) as i64)?;
-        tx.commit()?;
-    }
-    info!("Running migrations... OK, {} executed", MIGRATIONS.len() - current_version);
-
-    Ok(())
 }
 
 fn row_to_stored_flow(row: &Row) -> rusqlite::Result<StoredFlow> {
@@ -195,16 +160,12 @@ fn to_revision(revision: i64) -> Result<u64, FlowStoreError> {
 
 #[derive(Error, Debug)]
 pub enum FlowStoreError {
+    #[error(transparent)]
+    Database(#[from] DatabaseError),
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
-    #[error("flow store worker task failed: {0}")]
-    Join(#[from] task::JoinError),
-    #[error("flow store connection was poisoned")]
-    PoisonedConnection,
     #[error("stored revision {0} is out of range for u64")]
     InvalidRevision(i64),
-    #[error("database schema {found} is newer than the {supported} version(s) supported")]
-    UnsupportedSchemaVersion { found: usize, supported: usize },
 }
 
 #[derive(Error, Debug)]
@@ -215,7 +176,13 @@ pub enum InsertError {
     Store(#[from] FlowStoreError),
 }
 
-// `?` applies a single `From`, so `rusqlite::Error` can't reach `Store` via `FlowStoreError` on its own
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `FlowStoreError` on their own
+impl From<DatabaseError> for InsertError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
 impl From<rusqlite::Error> for InsertError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Store(err.into())
@@ -234,7 +201,13 @@ pub enum UpdateError {
     Store(#[from] FlowStoreError),
 }
 
-// `?` applies a single `From`, so `rusqlite::Error` can't reach `Store` via `FlowStoreError` on its own
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `FlowStoreError` on their own
+impl From<DatabaseError> for UpdateError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
 impl From<rusqlite::Error> for UpdateError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Store(err.into())
@@ -253,47 +226,55 @@ pub enum DeleteError {
     Store(#[from] FlowStoreError),
 }
 
-// `?` applies a single `From`, so `rusqlite::Error` can't reach `Store` via `FlowStoreError` on its own
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `FlowStoreError` on their own
+impl From<DatabaseError> for DeleteError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
 impl From<rusqlite::Error> for DeleteError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Store(err.into())
     }
 }
 
-const MIGRATIONS: &[&str] = &[
-    // v1: initial schema
-    "CREATE TABLE flows (
-        id TEXT PRIMARY KEY,
-        revision INTEGER NOT NULL,
-        document TEXT NOT NULL, -- SerializedFlow as JSON
-        created_at TEXT NOT NULL,
-        updated_at TEXT
-    )",
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use serde_json::json;
+    use std::path::Path;
 
     fn flow_document() -> serde_json::Value {
         json!({"id":"flow","name":"Test","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]})
     }
 
     fn open_in_memory() -> FlowStore {
-        FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store")
+        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
+        FlowStore::new(database)
     }
 
-    #[test]
-    fn open_creates_and_migrates_a_fresh_database() {
-        let store = open_in_memory();
-        // If migration failed, open would have returned Err
-        assert!(store.conn.lock().is_ok());
+    // Bypasses the store to write rows that `insert` would never produce
+    async fn insert_row(store: &FlowStore, id: &str, revision: i64, document: &str, updated_at: Option<String>) {
+        let (id, document) = (id.to_string(), document.to_string());
+        store
+            .database
+            .call(move |conn| {
+                let now = Utc::now().to_rfc3339();
+                conn.execute(
+                    "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![id, revision, document, now, updated_at],
+                )
+                .map_err(DatabaseError::from)
+            })
+            .await
+            .expect("insert row");
+    }
 
-        let conn = store.conn.lock().unwrap();
-        let current_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-
-        assert_eq!(current_version, MIGRATIONS.len() as i64);
+    // Bypasses the store to change rows in ways the store never would
+    async fn execute(store: &FlowStore, sql: &'static str) {
+        store.database.call(move |conn| conn.execute(sql, []).map_err(DatabaseError::from)).await.expect("execute");
     }
 
     #[tokio::test]
@@ -306,20 +287,8 @@ mod tests {
     #[tokio::test]
     async fn list_loads_a_valid_row_and_preserves_revision() {
         let store = open_in_memory();
-        let conn = store.conn.lock().unwrap();
-        let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            [
-                "1d3a9341-e462-4663-bb3d-5d977053cc0f",
-                "42",
-                r#"{"id":"1d3a9341-e462-4663-bb3d-5d977053cc0f","name":"Test","nodes":[],"triggers":[]}"#,
-                &now,
-                &now,
-            ],
-        )
-        .expect("insert");
-        drop(conn);
+        let document = r#"{"id":"1d3a9341-e462-4663-bb3d-5d977053cc0f","name":"Test","nodes":[],"triggers":[]}"#;
+        insert_row(&store, "1d3a9341-e462-4663-bb3d-5d977053cc0f", 42, document, Some(Utc::now().to_rfc3339())).await;
 
         let rows = store.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
@@ -331,14 +300,7 @@ mod tests {
     #[tokio::test]
     async fn list_fails_on_a_document_that_is_not_json() {
         let store = open_in_memory();
-        let conn = store.conn.lock().unwrap();
-        let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params!("badFlow", "1", "not valid json", &now, &now),
-        )
-        .expect("insert bad");
-        drop(conn);
+        insert_row(&store, "badFlow", 1, "not valid json", Some(Utc::now().to_rfc3339())).await;
 
         let result = store.list().await;
 
@@ -349,17 +311,40 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::created_at("UPDATE flows SET created_at = 'yesterday'", 3)]
+    #[case::updated_at("UPDATE flows SET updated_at = 'yesterday'", 4)]
+    #[tokio::test]
+    async fn list_fails_on_an_invalid_timestamp(#[case] sql: &'static str, #[case] column: usize) {
+        let store = open_in_memory();
+        store.insert("flow", flow_document()).await.expect("insert");
+        execute(&store, sql).await;
+
+        let result = store.list().await;
+
+        assert!(
+            matches!(result, Err(FlowStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
+            "got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_orders_the_flows_by_id() {
+        let store = open_in_memory();
+        for id in ["b", "c", "a"] {
+            store.insert(id, flow_document()).await.expect("insert");
+        }
+
+        let rows = store.list().await.expect("list succeeded");
+
+        let ids: Vec<_> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "c"]);
+    }
+
     #[tokio::test]
     async fn list_handles_null_updated_at() {
         let store = open_in_memory();
-        let conn = store.conn.lock().unwrap();
-        let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params!("flow", "0", r#"{"id":"flow","name":"Test","nodes":[]}"#, &now, None::<String>),
-        )
-        .expect("insert");
-        drop(conn);
+        insert_row(&store, "flow", 0, r#"{"id":"flow","name":"Test","nodes":[]}"#, None).await;
 
         let rows = store.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
@@ -369,20 +354,16 @@ mod tests {
     #[tokio::test]
     async fn list_rejects_invalid_revision_i64() {
         let store = open_in_memory();
-        let conn = store.conn.lock().unwrap();
-        let now = Utc::now().to_rfc3339();
-        // Insert with a negative revision (which u64::try_from will reject)
-        conn.execute(
-            "INSERT INTO flows (id, revision, document, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            ["flow", "-1", r#"{"id":"flow","name":"Test","nodes":[]}"#, &now, &now],
-        )
-        .expect("insert");
-        drop(conn);
+        let document = r#"{"id":"flow","name":"Test","nodes":[]}"#;
+        // A negative revision, which u64::try_from will reject
+        insert_row(&store, "flow", -1, document, Some(Utc::now().to_rfc3339())).await;
 
         let result = store.list().await;
-        // Should fail with InvalidRevision error
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), FlowStoreError::Sqlite(_)));
+
+        let Err(FlowStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(1, _, err))) = &result else {
+            panic!("got {result:?}");
+        };
+        assert!(matches!(err.downcast_ref(), Some(FlowStoreError::InvalidRevision(-1))), "got {err:?}");
     }
 
     #[tokio::test]
@@ -395,6 +376,19 @@ mod tests {
         assert_eq!(stored_flow.id, "flow");
         assert_eq!(stored_flow.revision, 0);
         assert_eq!(stored_flow.document, flow_document());
+    }
+
+    #[tokio::test]
+    async fn by_id_fails_on_a_document_that_is_not_json() {
+        let store = open_in_memory();
+        insert_row(&store, "badFlow", 1, "not valid json", Some(Utc::now().to_rfc3339())).await;
+
+        let result = store.by_id("badFlow").await;
+
+        assert!(
+            matches!(result, Err(FlowStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(2, _, _)))),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -441,7 +435,21 @@ mod tests {
         assert_eq!(revision, 1);
         let rows = store.list().await.expect("list succeeded");
         assert_eq!(rows[0].revision, 1);
-        assert!(rows[0].updated_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn update_keeps_created_at_and_changes_updated_at() {
+        let store = open_in_memory();
+        store.insert("flow", flow_document()).await.expect("insert");
+        execute(&store, "UPDATE flows SET created_at = '2000-01-01T00:00:00Z', updated_at = '2000-01-01T00:00:00Z'")
+            .await;
+        let long_ago = DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
+
+        store.update("flow", 0, flow_document()).await.expect("update succeeded");
+
+        let stored_flow = store.by_id("flow").await.unwrap().expect("flow exists");
+        assert_eq!(stored_flow.created_at, long_ago);
+        assert!(stored_flow.updated_at.is_some_and(|updated_at| updated_at > long_ago), "got {stored_flow:?}");
     }
 
     #[tokio::test]

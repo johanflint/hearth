@@ -28,12 +28,14 @@ pub async fn load_flows_from_store(flow_store: &FlowStore) -> Result<Vec<Version
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
     use serde_json::json;
     use std::path::Path;
 
     #[tokio::test]
     async fn load_flows_from_store_skips_invalid_flows_and_preserves_revisions() {
-        let flow_store = FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
+        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
+        let flow_store = FlowStore::new(database);
         let valid_flow = json!({"id": "validFlow", "name": "Valid", "nodes": [{"id": "startNode", "type": "startNode", "outgoingNode": "endNode"}, {"id": "endNode", "type": "endNode"}]});
         flow_store.insert("validFlow", valid_flow.clone()).await.expect("insert valid flow");
         flow_store.update("validFlow", 0, valid_flow).await.expect("update valid flow");

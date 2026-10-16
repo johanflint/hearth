@@ -5,6 +5,7 @@ use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
 use crate::flow_registry::{FlowRegistry, RegisterResult, UnregisterResult};
 use crate::flow_store::{DeleteError, FlowStore, FlowStoreError, InsertError, StoredFlow, UpdateError};
+use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use tracing::debug;
 pub struct FlowService {
     flow_store: Arc<FlowStore>,
     flow_registry: Arc<FlowRegistry>,
+    preset_registry: Arc<PresetRegistry>,
     scheduler_tx: Sender<SchedulerCommand>,
     snapshot_rx: Receiver<StoreSnapshot>,
 }
@@ -26,10 +28,11 @@ impl FlowService {
     pub fn new(
         flow_store: Arc<FlowStore>,
         flow_registry: Arc<FlowRegistry>,
+        preset_registry: Arc<PresetRegistry>,
         scheduler_tx: Sender<SchedulerCommand>,
         snapshot_rx: Receiver<StoreSnapshot>,
     ) -> Self {
-        FlowService { flow_store, flow_registry, scheduler_tx, snapshot_rx }
+        FlowService { flow_store, flow_registry, preset_registry, scheduler_tx, snapshot_rx }
     }
 
     pub async fn list(&self) -> Result<Vec<StoredFlow>, ListFlowsError> {
@@ -116,7 +119,7 @@ impl FlowService {
         let store_snapshot = self.snapshot_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
 
         // Semantic validation
-        validate(&flow, &store_snapshot).map_err(ValidateError::ValidationFailed)?;
+        validate(&flow, &store_snapshot, &self.preset_registry).map_err(ValidateError::ValidationFailed)?;
 
         Ok(())
     }
@@ -287,6 +290,8 @@ pub enum ValidateError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::Database;
+    use crate::domain::{Location, Preset, Problem, Value};
     use serde_json::json;
     use std::path::Path;
     use tokio::sync::{mpsc, watch};
@@ -315,12 +320,24 @@ mod tests {
     }
 
     fn create_service(flow_registry: FlowRegistry) -> Fixture {
-        let flow_store = Arc::new(FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store"));
+        create_service_with_presets(flow_registry, vec![])
+    }
+
+    fn create_service_with_presets(flow_registry: FlowRegistry, presets: Vec<Preset>) -> Fixture {
+        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
+        let flow_store = Arc::new(FlowStore::new(database));
         let flow_registry = Arc::new(flow_registry);
+        let preset_registry = Arc::new(PresetRegistry::new(presets));
         let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
         let (_, snapshot_rx) = watch::channel(StoreSnapshot::default());
 
-        let service = FlowService::new(Arc::clone(&flow_store), Arc::clone(&flow_registry), scheduler_tx, snapshot_rx);
+        let service = FlowService::new(
+            Arc::clone(&flow_store),
+            Arc::clone(&flow_registry),
+            preset_registry,
+            scheduler_tx,
+            snapshot_rx,
+        );
         Fixture { service, flow_store, flow_registry, scheduler_rx }
     }
 
@@ -376,6 +393,57 @@ mod tests {
             let result = service.retrieve_flow("flow").await;
 
             assert!(matches!(result, Err(RetrieveFlowError::NotFound)), "got {result:?}");
+        }
+    }
+
+    mod validate {
+        use super::*;
+
+        fn flow_document_with_preset_trigger(preset_id: &str) -> serde_json::Value {
+            let mut document = flow_document();
+            document["trigger"] = json!({"type":"presetValue","id":preset_id});
+            document
+        }
+
+        fn presets() -> Vec<Preset> {
+            vec![Preset { id: "known".to_string(), name: "Known".to_string(), value: Value::Boolean(true) }]
+        }
+
+        #[tokio::test]
+        async fn accepts_a_valid_flow() {
+            let Fixture { service, .. } = create_service(FlowRegistry::new(vec![]));
+
+            let result = service.validate(flow_document()).await;
+
+            assert!(result.is_ok(), "got {result:?}");
+        }
+
+        #[tokio::test]
+        async fn accepts_a_known_preset() {
+            let Fixture { service, .. } = create_service_with_presets(FlowRegistry::new(vec![]), presets());
+
+            let result = service.validate(flow_document_with_preset_trigger("known")).await;
+
+            assert!(result.is_ok(), "got {result:?}");
+        }
+
+        #[tokio::test]
+        async fn reports_an_unknown_preset() {
+            let Fixture { service, .. } = create_service_with_presets(FlowRegistry::new(vec![]), presets());
+
+            let result = service.validate(flow_document_with_preset_trigger("unknown")).await;
+
+            let Err(ValidateError::ValidationFailed(error)) = result else { panic!("got {result:?}") };
+            assert_eq!(error.issues(), [Problem::PresetNotFound { id: "unknown".to_string() }.at(Location::Trigger)]);
+        }
+
+        #[tokio::test]
+        async fn rejects_a_structurally_invalid_flow() {
+            let Fixture { service, .. } = create_service(FlowRegistry::new(vec![]));
+
+            let result = service.validate(invalid_flow_document()).await;
+
+            assert!(matches!(result, Err(ValidateError::InvalidFlow(_))), "got {result:?}");
         }
     }
 

@@ -1,8 +1,10 @@
 use crate::api::ApiState;
+use crate::database::Database;
 use crate::flow_engine::SchedulerCommand;
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
+use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
 use axum::response::Response;
 use http_body_util::BodyExt;
@@ -33,11 +35,18 @@ pub(super) struct Fixture {
 pub(super) fn create_state(flow_registry: FlowRegistry) -> Fixture {
     let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
     let handle = PrometheusBuilder::new().build_recorder().handle();
-    let flow_store = Arc::new(FlowStore::open(Path::new(":memory:")).expect("failed to open in-memory flow store"));
+    let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
+    let flow_store = Arc::new(FlowStore::new(database));
     let flow_registry = Arc::new(flow_registry);
+    let preset_registry = Arc::new(PresetRegistry::new(vec![]));
     let (_, snapshot_rx) = watch::channel(StoreSnapshot::default());
-    let flow_service =
-        Arc::new(FlowService::new(Arc::clone(&flow_store), Arc::clone(&flow_registry), scheduler_tx, snapshot_rx));
+    let flow_service = Arc::new(FlowService::new(
+        Arc::clone(&flow_store),
+        Arc::clone(&flow_registry),
+        preset_registry,
+        scheduler_tx,
+        snapshot_rx,
+    ));
     Fixture { state: ApiState::new(handle, flow_service), flow_store, flow_registry, scheduler_rx }
 }
 
