@@ -1,5 +1,4 @@
 use crate::api::error::ErrorResponse;
-use crate::flow_loader::FlowFactoryError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::http::StatusCode;
@@ -14,26 +13,6 @@ pub(super) fn parse_request<T: DeserializeOwned>(body: &Bytes) -> Result<T, Resp
 
 pub(super) fn invalid_json(err: serde_json::Error) -> Response {
     (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("invalidJson", err.to_string()))).into_response()
-}
-
-pub(super) fn flow_factory_error_response(err: FlowFactoryError) -> Response {
-    let message = err.to_string();
-    let error_response = match err {
-        FlowFactoryError::Deserialization(_) => unreachable!("payload is already deserialized into a SerializedFlow"),
-        FlowFactoryError::MissingStartNode => ErrorResponse::new("missingStartNode", message),
-        FlowFactoryError::TooManyStartNodes(_) => ErrorResponse::new("tooManyStartNodes", message),
-        FlowFactoryError::MissingEndNode => ErrorResponse::new("missingEndNode", message),
-        FlowFactoryError::NoConnectingNode { .. } => ErrorResponse::new("noConnectingNode", message),
-        FlowFactoryError::MissingNode { .. } => ErrorResponse::new("missingNode", message),
-        FlowFactoryError::TooManyParentNodes { .. } => ErrorResponse::new("tooManyParentNodes", message),
-        FlowFactoryError::UnusedNodes { .. } => ErrorResponse::new("unusedNodes", message),
-        FlowFactoryError::DuplicateLinkValues { .. } => ErrorResponse::new("duplicateLinkValues", message),
-        FlowFactoryError::PropertyChangedInScheduledFlow => {
-            ErrorResponse::new("propertyChangedInScheduledFlow", message)
-        }
-    };
-
-    (StatusCode::UNPROCESSABLE_ENTITY, Json(error_response)).into_response()
 }
 
 #[cfg(test)]

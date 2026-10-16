@@ -1,6 +1,6 @@
 use crate::database::{Database, DatabaseError};
 use chrono::{DateTime, Utc};
-use rusqlite::{OptionalExtension, Row};
+use rusqlite::{OptionalExtension, Row, params};
 use thiserror::Error;
 
 #[derive(Debug)]
@@ -36,6 +36,25 @@ impl PresetStore {
                     )
                     .optional();
                 Ok(result?)
+            })
+            .await
+    }
+
+    pub async fn update(&self, id: &str, name: &str, value: serde_json::Value) -> Result<StoredPreset, UpdateError> {
+        let id = id.to_string();
+        let name = name.to_string();
+        self.database
+            .call(move |conn| {
+                let now = Utc::now().to_rfc3339();
+                conn.query_row(
+                    "UPDATE presets SET name = ?2, value = ?3, updated_at = ?4
+                    WHERE id = ?1
+                    RETURNING id, name, value, created_at, updated_at",
+                    params![id, name, value, now],
+                    row_to_stored_preset,
+                )
+                .optional()?
+                .ok_or(UpdateError::NotFound)
             })
             .await
     }
@@ -78,6 +97,27 @@ pub enum PresetStoreError {
     Database(#[from] DatabaseError),
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum UpdateError {
+    #[error("preset not found")]
+    NotFound,
+    #[error(transparent)]
+    Store(#[from] PresetStoreError),
+}
+
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `PresetStoreError` on their own
+impl From<DatabaseError> for UpdateError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+impl From<rusqlite::Error> for UpdateError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
 }
 
 #[cfg(test)]
@@ -259,6 +299,83 @@ mod tests {
 
         assert!(
             matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
+            "got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_replaces_the_name_and_value_and_returns_the_stored_preset() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+
+        let updated = store.update("preset", "Blue", json!({ "type": "color", "value": "#0000ff" })).await;
+
+        let updated = updated.expect("update succeeded");
+        assert_eq!(updated.id, "preset");
+        assert_eq!(updated.name, "Blue");
+        assert_eq!(updated.value, json!({ "type": "color", "value": "#0000ff" }));
+        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        assert_eq!(stored.name, "Blue");
+        assert_eq!(stored.value, json!({ "type": "color", "value": "#0000ff" }));
+    }
+
+    #[tokio::test]
+    async fn update_sets_updated_at_and_keeps_created_at() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET created_at = '2000-01-01T00:00:00Z'").await;
+        let before = Utc::now();
+
+        let updated = store.update("preset", "Red", json!(false)).await.expect("update succeeded");
+
+        let long_ago = DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(updated.created_at, long_ago);
+        assert!(updated.updated_at.expect("updated_at is set") >= before, "got {updated:?}");
+    }
+
+    #[tokio::test]
+    async fn update_leaves_other_presets_untouched() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        insert_row(&store, "other", "Other", "10", None).await;
+
+        store.update("preset", "Blue", json!(false)).await.expect("update succeeded");
+
+        let other = store.by_id("other").await.expect("by_id succeeded").expect("preset exists");
+        assert_eq!(other.name, "Other");
+        assert_eq!(other.value, json!(10));
+        assert_eq!(other.updated_at, None);
+    }
+
+    #[rstest]
+    #[case::fresh_database(&[])]
+    #[case::other_presets(&["other"])]
+    #[tokio::test]
+    async fn update_returns_not_found_for_an_unknown_id(#[case] existing_ids: &[&str]) {
+        let store = open_in_memory();
+        for id in existing_ids {
+            insert_row(&store, id, "Preset", "true", None).await;
+        }
+
+        let result = store.update("preset", "Blue", json!(false)).await;
+
+        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
+        assert!(store.by_id("preset").await.expect("by_id succeeded").is_none(), "update must not create the preset");
+    }
+
+    #[tokio::test]
+    async fn update_fails_when_the_stored_row_is_corrupt() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET created_at = 'yesterday'").await;
+
+        let result = store.update("preset", "Blue", json!(false)).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(UpdateError::Store(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _))))
+            ),
             "got {result:?}"
         );
     }

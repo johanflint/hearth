@@ -17,6 +17,20 @@ impl PresetRegistry {
     pub fn by_id(&self, id: &str) -> Option<Arc<Preset>> {
         self.presets.read().expect("preset registry lock poisoned").get(id).cloned()
     }
+
+    pub fn register(&self, preset: Preset) -> RegisterResult {
+        let mut entries = self.presets.write().expect("preset registry lock poisoned");
+        match entries.insert(preset.id.clone(), Arc::new(preset)) {
+            None => RegisterResult::Added,
+            Some(_) => RegisterResult::Replaced,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RegisterResult {
+    Added,
+    Replaced,
 }
 
 #[cfg(test)]
@@ -72,5 +86,51 @@ mod tests {
         ]);
 
         assert_eq!(registry.by_id("dim").expect("preset exists").name, "Second");
+    }
+
+    #[test]
+    fn register_returns_added_for_an_unknown_preset() {
+        let registry = PresetRegistry::default();
+
+        let result = registry.register(preset("dim", "Dim", Value::Boolean(true)));
+
+        assert_eq!(result, RegisterResult::Added);
+        assert_eq!(registry.by_id("dim").expect("preset exists").name, "Dim");
+    }
+
+    #[test]
+    fn register_returns_replaced_and_stores_the_new_preset_for_a_known_id() {
+        let registry = PresetRegistry::new(vec![preset("dim", "Dim", Value::Boolean(true))]);
+
+        let result = registry.register(preset("dim", "Dimmer", Value::Boolean(false)));
+
+        let stored = registry.by_id("dim").expect("preset exists");
+        assert_eq!(result, RegisterResult::Replaced);
+        assert_eq!(stored.name, "Dimmer");
+        assert_eq!(stored.value, Value::Boolean(false));
+    }
+
+    #[test]
+    fn register_leaves_other_presets_untouched() {
+        let registry = PresetRegistry::new(vec![
+            preset("dim", "Dim", Value::Boolean(true)),
+            preset("enabled", "Enabled", Value::Boolean(true)),
+        ]);
+
+        registry.register(preset("dim", "Dimmer", Value::Boolean(false)));
+
+        assert_eq!(registry.by_id("enabled").expect("preset exists").name, "Enabled");
+    }
+
+    #[test]
+    fn register_does_not_change_a_preset_a_caller_already_holds() {
+        let registry = PresetRegistry::new(vec![preset("dim", "Dim", Value::Boolean(true))]);
+        let before = registry.by_id("dim").expect("preset exists");
+
+        registry.register(preset("dim", "Dimmer", Value::Boolean(false)));
+
+        assert_eq!(before.name, "Dim");
+        assert_eq!(before.value, Value::Boolean(true));
+        assert!(!Arc::ptr_eq(&before, &registry.by_id("dim").expect("preset exists")));
     }
 }

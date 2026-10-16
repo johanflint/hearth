@@ -1,5 +1,6 @@
+use crate::domain::{Preset, Value};
 use crate::preset_registry::PresetRegistry;
-use crate::preset_store::{PresetStore, PresetStoreError, StoredPreset};
+use crate::preset_store::{PresetStore, PresetStoreError, StoredPreset, UpdateError};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -21,6 +22,14 @@ impl PresetService {
     pub async fn retrieve_preset(&self, id: &str) -> Result<StoredPreset, RetrievePresetError> {
         self.preset_store.by_id(id).await?.ok_or(RetrievePresetError::NotFound)
     }
+
+    pub async fn update_preset(&self, id: &str, name: &str, value: Value) -> Result<StoredPreset, UpdatePresetError> {
+        let json = serde_json::to_value(&value).map_err(UpdatePresetError::UnsupportedValue)?;
+        let stored = self.preset_store.update(id, name, json).await?;
+        // Registry last, so a failed store write leaves it untouched
+        self.preset_registry.register(Preset { id: stored.id.clone(), name: name.to_string(), value });
+        Ok(stored)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -37,19 +46,49 @@ pub enum RetrievePresetError {
     Internal(#[from] PresetStoreError),
 }
 
+#[derive(Debug, Error)]
+pub enum UpdatePresetError {
+    #[error("Unsupported value: {0}")]
+    UnsupportedValue(serde_json::Error),
+    #[error("preset not found")]
+    NotFound,
+    #[error(transparent)]
+    Internal(#[from] PresetStoreError),
+}
+
+impl From<UpdateError> for UpdatePresetError {
+    fn from(err: UpdateError) -> Self {
+        match err {
+            UpdateError::NotFound => Self::NotFound,
+            UpdateError::Store(err) => Self::Internal(err),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::database::{Database, DatabaseError};
+    use crate::domain::Number;
     use chrono::Utc;
+    use rstest::rstest;
     use rusqlite::params;
     use std::path::Path;
 
     fn create_service() -> (PresetService, Database) {
+        let (service, database, _) = create_service_with_registry(vec![]);
+        (service, database)
+    }
+
+    fn create_service_with_registry(presets: Vec<Preset>) -> (PresetService, Database, Arc<PresetRegistry>) {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let preset_store = Arc::new(PresetStore::new(database.clone()));
-        let preset_registry = Arc::new(PresetRegistry::new(vec![]));
-        (PresetService::new(preset_store, preset_registry), database)
+        let preset_registry = Arc::new(PresetRegistry::new(presets));
+        (PresetService::new(preset_store, Arc::clone(&preset_registry)), database, preset_registry)
+    }
+
+    fn preset(id: &str, name: &str, value: Value) -> Preset {
+        Preset { id: id.to_string(), name: name.to_string(), value }
     }
 
     // PresetStore can't write presets yet, so write the rows directly
@@ -128,5 +167,90 @@ mod tests {
         let result = service.retrieve_preset("preset").await;
 
         assert!(matches!(result, Err(RetrievePresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn update_preset_stores_the_canonical_value_and_returns_the_stored_preset() {
+        let (service, database, _) = create_service_with_registry(vec![]);
+        insert_row(&database, "preset", "true").await;
+
+        let updated = service.update_preset("preset", "Dim", Value::Number(Number::PositiveInt(10))).await;
+
+        let updated = updated.expect("update succeeded");
+        assert_eq!(updated.id, "preset");
+        assert_eq!(updated.name, "Dim");
+        assert_eq!(updated.value, serde_json::json!(10));
+        assert!(updated.updated_at.is_some(), "got {updated:?}");
+        let stored = service.retrieve_preset("preset").await.expect("retrieve succeeded");
+        assert_eq!(stored.name, "Dim");
+        assert_eq!(stored.value, serde_json::json!(10));
+    }
+
+    #[tokio::test]
+    async fn update_preset_replaces_the_preset_in_the_registry() {
+        let old = preset("preset", "Old", Value::Boolean(true));
+        let (service, database, registry) = create_service_with_registry(vec![old]);
+        insert_row(&database, "preset", "true").await;
+
+        service.update_preset("preset", "Dim", Value::Number(Number::PositiveInt(10))).await.expect("update succeeded");
+
+        let registered = registry.by_id("preset").expect("preset is registered");
+        assert_eq!(registered.name, "Dim");
+        assert_eq!(registered.value, Value::Number(Number::PositiveInt(10)));
+    }
+
+    #[tokio::test]
+    async fn update_preset_registers_a_stored_preset_that_is_missing_from_the_registry() {
+        let (service, database, registry) = create_service_with_registry(vec![]);
+        insert_row(&database, "preset", "true").await;
+
+        service.update_preset("preset", "Dim", Value::Boolean(false)).await.expect("update succeeded");
+
+        assert_eq!(registry.by_id("preset").expect("preset is registered").value, Value::Boolean(false));
+    }
+
+    #[tokio::test]
+    async fn update_preset_returns_not_found_for_an_unknown_id_and_leaves_the_registry_unchanged() {
+        let (service, _, registry) = create_service_with_registry(vec![]);
+
+        let result = service.update_preset("preset", "Dim", Value::Boolean(false)).await;
+
+        assert!(matches!(result, Err(UpdatePresetError::NotFound)), "got {result:?}");
+        assert!(registry.by_id("preset").is_none());
+    }
+
+    #[rstest]
+    #[case::date_time(Value::DateTime(Utc::now()))]
+    #[case::none(Value::None)]
+    #[tokio::test]
+    async fn update_preset_rejects_a_value_that_cannot_be_stored(#[case] value: Value) {
+        let old = preset("preset", "Old", Value::Boolean(true));
+        let (service, database, registry) = create_service_with_registry(vec![old]);
+        insert_row(&database, "preset", "true").await;
+
+        let result = service.update_preset("preset", "Dim", value).await;
+
+        assert!(matches!(result, Err(UpdatePresetError::UnsupportedValue(_))), "got {result:?}");
+        let stored = service.retrieve_preset("preset").await.expect("retrieve succeeded");
+        assert_eq!(stored.name, "preset", "the store must be unchanged");
+        assert_eq!(stored.value, serde_json::json!(true));
+        let registered = registry.by_id("preset").expect("preset is registered");
+        assert_eq!(registered.name, "Old", "the registry must be unchanged");
+    }
+
+    #[tokio::test]
+    async fn update_preset_fails_and_leaves_the_registry_unchanged_when_the_store_fails() {
+        let old = preset("preset", "Old", Value::Boolean(true));
+        let (service, database, registry) = create_service_with_registry(vec![old]);
+        insert_row(&database, "preset", "true").await;
+        database
+            .call(|conn| conn.execute("UPDATE presets SET created_at = 'yesterday'", []).map_err(DatabaseError::from))
+            .await
+            .expect("corrupt the row");
+
+        let result = service.update_preset("preset", "Dim", Value::Boolean(false)).await;
+
+        assert!(matches!(result, Err(UpdatePresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
+        assert_eq!(registry.by_id("preset").expect("preset is registered").name, "Old");
     }
 }
