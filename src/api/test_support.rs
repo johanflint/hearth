@@ -72,11 +72,23 @@ pub(super) async fn insert_preset_row(database: &Database, id: &str, name: &str,
     database
         .call(move |conn| {
             conn.execute(
-                "INSERT INTO presets (id, name, value, created_at) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO presets (id, revision, name, value, created_at) VALUES (?1, 0, ?2, ?3, ?4)",
                 params![id, name, value, Utc::now().to_rfc3339()],
             )
             .map_err(DatabaseError::from)
         })
         .await
         .expect("insert preset row");
+}
+
+/// Writes a preset's revision directly, `PresetStore` can't write presets yet
+pub(super) async fn set_preset_revision(database: &Database, id: &str, revision: i64) {
+    let id = id.to_string();
+    database
+        .call(move |conn| {
+            conn.execute("UPDATE presets SET revision = ?2 WHERE id = ?1", params![id, revision])
+                .map_err(DatabaseError::from)
+        })
+        .await
+        .expect("set preset revision");
 }

@@ -17,6 +17,7 @@ pub(super) async fn retrieve_preset(
 
     let response = PresetResponse {
         id: stored_preset.id,
+        revision: stored_preset.revision,
         name: stored_preset.name,
         value: stored_preset.value,
         created_at: stored_preset.created_at,
@@ -40,7 +41,9 @@ fn retrieve_error_response(id: &str, err: RetrievePresetError) -> Response {
 mod tests {
     use super::*;
     use crate::api::presets::router;
-    use crate::api::test_support::{Fixture, body_json, create_state_with_database, insert_preset_row};
+    use crate::api::test_support::{
+        Fixture, body_json, create_state_with_database, insert_preset_row, set_preset_revision,
+    };
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
     use axum::http::Request;
@@ -58,12 +61,14 @@ mod tests {
         let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
         insert_preset_row(&database, "other", "Other", "10").await;
         insert_preset_row(&database, "warm", "Warm", r##"{"type":"color","value":"#ff0000"}"##).await;
+        set_preset_revision(&database, "warm", 3).await;
 
         let response = call_retrieve_preset(state, "warm").await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_json(response).await;
         assert_eq!(body["id"], "warm");
+        assert_eq!(body["revision"], 3);
         assert_eq!(body["name"], "Warm");
         assert_eq!(body["value"], json!({ "type": "color", "value": "#ff0000" }));
         assert!(body["createdAt"].is_string(), "got {body}");

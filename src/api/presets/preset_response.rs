@@ -5,6 +5,7 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub(super) struct PresetResponse {
     pub id: String,
+    pub revision: u64,
     pub name: String,
     pub value: serde_json::Value,
     pub created_at: DateTime<Utc>,

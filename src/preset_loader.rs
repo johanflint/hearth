@@ -1,9 +1,10 @@
-use crate::domain::Preset;
+use crate::domain::{Preset, VersionedPreset};
 use crate::preset_store::{PresetStore, PresetStoreError};
+use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
 #[instrument(skip_all)]
-pub async fn load_presets_from_store(preset_store: &PresetStore) -> Result<Vec<Preset>, PresetStoreError> {
+pub async fn load_presets_from_store(preset_store: &PresetStore) -> Result<Vec<VersionedPreset>, PresetStoreError> {
     info!("🗄️ Loading presets...");
     let stored_presets = preset_store.list().await?;
     let mut presets = Vec::with_capacity(stored_presets.len());
@@ -11,7 +12,10 @@ pub async fn load_presets_from_store(preset_store: &PresetStore) -> Result<Vec<P
 
     for stored_preset in stored_presets {
         match serde_json::from_value(stored_preset.value) {
-            Ok(value) => presets.push(Preset { id: stored_preset.id, name: stored_preset.name, value }),
+            Ok(value) => presets.push(VersionedPreset {
+                preset: Arc::new(Preset { id: stored_preset.id, name: stored_preset.name, value }),
+                revision: stored_preset.revision,
+            }),
             Err(err) => {
                 failed += 1;
                 warn!("⚠️ Failed to load preset '{}': {}", stored_preset.id, err);
@@ -44,7 +48,7 @@ mod tests {
             .call(move |conn| {
                 let now = Utc::now().to_rfc3339();
                 conn.execute(
-                    "INSERT INTO presets (id, name, value, created_at) VALUES (?1, ?1, ?2, ?3)",
+                    "INSERT INTO presets (id, revision, name, value, created_at) VALUES (?1, 0, ?1, ?2, ?3)",
                     params![id, value, now],
                 )
                 .map_err(DatabaseError::from)
@@ -65,8 +69,23 @@ mod tests {
         assert_eq!(presets[0].id, "brightness");
         assert_eq!(presets[0].name, "brightness");
         assert_eq!(presets[0].value, Value::Number(Number::PositiveInt(42)));
+        assert_eq!(presets[0].revision, 0);
         assert_eq!(presets[1].id, "red");
         assert_eq!(presets[1].value, Value::Color(Color::Hex("#ff0000".to_string())));
+    }
+
+    #[tokio::test]
+    async fn load_presets_from_store_keeps_the_stored_revision() {
+        let (database, preset_store) = open_in_memory();
+        insert_row(&database, "brightness", "42").await;
+        database
+            .call(|conn| conn.execute("UPDATE presets SET revision = 7", []).map_err(DatabaseError::from))
+            .await
+            .expect("set revision");
+
+        let presets = load_presets_from_store(&preset_store).await.expect("load succeeded");
+
+        assert_eq!(presets[0].revision, 7);
     }
 
     #[tokio::test]

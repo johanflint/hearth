@@ -17,7 +17,7 @@ impl PresetStore {
         self.database
             .call(|conn| {
                 let mut statement =
-                    conn.prepare("SELECT id, name, value, created_at, updated_at FROM presets ORDER BY id")?;
+                    conn.prepare("SELECT id, revision, name, value, created_at, updated_at FROM presets ORDER BY id")?;
                 let rows = statement.query_map([], row_to_stored_preset)?;
                 Ok(rows.collect::<Result<Vec<_>, _>>()?)
             })
@@ -30,7 +30,7 @@ impl PresetStore {
             .call(|conn| {
                 let result = conn
                     .query_row(
-                        "SELECT id, name, value, created_at, updated_at FROM presets WHERE id = ?1",
+                        "SELECT id, revision, name, value, created_at, updated_at FROM presets WHERE id = ?1",
                         [id],
                         row_to_stored_preset,
                     )
@@ -40,21 +40,42 @@ impl PresetStore {
             .await
     }
 
-    pub async fn update(&self, id: &str, name: &str, value: serde_json::Value) -> Result<StoredPreset, UpdateError> {
+    pub async fn update(
+        &self,
+        id: &str,
+        base_revision: u64,
+        name: &str,
+        value: serde_json::Value,
+    ) -> Result<StoredPreset, UpdateError> {
         let id = id.to_string();
         let name = name.to_string();
         self.database
             .call(move |conn| {
                 let now = Utc::now().to_rfc3339();
-                conn.query_row(
-                    "UPDATE presets SET name = ?2, value = ?3, updated_at = ?4
-                    WHERE id = ?1
-                    RETURNING id, name, value, created_at, updated_at",
-                    params![id, name, value, now],
-                    row_to_stored_preset,
-                )
-                .optional()?
-                .ok_or(UpdateError::NotFound)
+                let updated = conn
+                    .query_row(
+                        "UPDATE presets SET name = ?3, value = ?4, revision = revision + 1, updated_at = ?5
+                        WHERE id = ?1 AND revision = ?2
+                        RETURNING id, revision, name, value, created_at, updated_at",
+                        params![id, base_revision as i64, name, value, now],
+                        row_to_stored_preset,
+                    )
+                    .optional()?;
+
+                if let Some(updated) = updated {
+                    return Ok(updated);
+                }
+
+                // No row matched; either the preset doesn't exist or someone else updated it first
+                let current: Option<i64> = conn
+                    .query_row("SELECT revision FROM presets WHERE id = ?1", params![id], |row| row.get(0))
+                    .optional()?;
+                match current {
+                    None => Err(UpdateError::NotFound),
+                    Some(current) => {
+                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                    }
+                }
             })
             .await
     }
@@ -62,29 +83,36 @@ impl PresetStore {
 
 fn row_to_stored_preset(row: &Row) -> rusqlite::Result<StoredPreset> {
     let id = row.get(0)?;
-    let name = row.get(1)?;
-    let value: serde_json::Value = row.get(2)?;
+    let revision = to_revision(row.get(1)?)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Integer, Box::new(err)))?;
+    let name = row.get(2)?;
+    let value: serde_json::Value = row.get(3)?;
 
-    let created_at: String = row.get(3)?;
+    let created_at: String = row.get(4)?;
     let created_at = DateTime::parse_from_rfc3339(&created_at)
         .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(err)))?;
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err)))?;
 
-    let updated_at: Option<String> = row.get(4)?;
+    let updated_at: Option<String> = row.get(5)?;
     let updated_at = updated_at
         .map(|updated_at| {
             DateTime::parse_from_rfc3339(&updated_at)
                 .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|err| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err)))
+                .map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err)))
         })
         .transpose()?;
 
-    Ok(StoredPreset { id, name, value, created_at, updated_at })
+    Ok(StoredPreset { id, revision, name, value, created_at, updated_at })
+}
+
+fn to_revision(revision: i64) -> Result<u64, PresetStoreError> {
+    u64::try_from(revision).map_err(|_| PresetStoreError::InvalidRevision(revision))
 }
 
 #[derive(Debug)]
 pub struct StoredPreset {
     pub id: String,
+    pub revision: u64,
     pub name: String,
     pub value: serde_json::Value,
     pub created_at: DateTime<Utc>,
@@ -97,12 +125,18 @@ pub enum PresetStoreError {
     Database(#[from] DatabaseError),
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("stored revision {0} is out of range for u64")]
+    InvalidRevision(i64),
 }
 
 #[derive(Error, Debug)]
 pub enum UpdateError {
     #[error("preset not found")]
     NotFound,
+    #[error(
+        "revision conflict: update is based on revision {base_revision}, but the current revision is {current_revision}"
+    )]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
     #[error(transparent)]
     Store(#[from] PresetStoreError),
 }
@@ -141,7 +175,7 @@ mod tests {
             .call(move |conn| {
                 let now = Utc::now().to_rfc3339();
                 conn.execute(
-                    "INSERT INTO presets (id, name, value, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO presets (id, revision, name, value, created_at, updated_at) VALUES (?1, 0, ?2, ?3, ?4, ?5)",
                     params![id, name, value, now, updated_at],
                 )
                 .map_err(DatabaseError::from)
@@ -179,6 +213,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_loads_the_revision() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET revision = 7").await;
+
+        let rows = store.list().await.expect("list succeeded");
+
+        assert_eq!(rows[0].revision, 7);
+    }
+
+    #[tokio::test]
     async fn list_fails_on_a_value_that_is_not_json() {
         let store = open_in_memory();
         insert_row(&store, "badPreset", "Bad", "not valid json", Some(Utc::now().to_rfc3339())).await;
@@ -187,14 +232,14 @@ mod tests {
 
         // Invalid JSON means the database is corrupt
         assert!(
-            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(2, _, _)))),
+            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _)))),
             "got {result:?}"
         );
     }
 
     #[rstest]
-    #[case::created_at("UPDATE presets SET created_at = 'yesterday'", 3)]
-    #[case::updated_at("UPDATE presets SET updated_at = 'yesterday'", 4)]
+    #[case::created_at("UPDATE presets SET created_at = 'yesterday'", 4)]
+    #[case::updated_at("UPDATE presets SET updated_at = 'yesterday'", 5)]
     #[tokio::test]
     async fn list_fails_on_an_invalid_timestamp(#[case] sql: &'static str, #[case] column: usize) {
         let store = open_in_memory();
@@ -281,14 +326,14 @@ mod tests {
         let result = store.by_id("preset").await;
 
         assert!(
-            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(2, _, _)))),
+            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _)))),
             "got {result:?}"
         );
     }
 
     #[rstest]
-    #[case::created_at("UPDATE presets SET created_at = 'yesterday'", 3)]
-    #[case::updated_at("UPDATE presets SET updated_at = 'yesterday'", 4)]
+    #[case::created_at("UPDATE presets SET created_at = 'yesterday'", 4)]
+    #[case::updated_at("UPDATE presets SET updated_at = 'yesterday'", 5)]
     #[tokio::test]
     async fn by_id_fails_on_an_invalid_timestamp(#[case] sql: &'static str, #[case] column: usize) {
         let store = open_in_memory();
@@ -308,7 +353,7 @@ mod tests {
         let store = open_in_memory();
         insert_row(&store, "preset", "Red", "true", None).await;
 
-        let updated = store.update("preset", "Blue", json!({ "type": "color", "value": "#0000ff" })).await;
+        let updated = store.update("preset", 0, "Blue", json!({ "type": "color", "value": "#0000ff" })).await;
 
         let updated = updated.expect("update succeeded");
         assert_eq!(updated.id, "preset");
@@ -320,13 +365,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_increments_the_revision() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+
+        let first = store.update("preset", 0, "Red", json!(false)).await.expect("first update succeeded");
+        let second = store.update("preset", 1, "Red", json!(true)).await.expect("second update succeeded");
+
+        assert_eq!(first.revision, 1);
+        assert_eq!(second.revision, 2);
+        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        assert_eq!(stored.revision, 2);
+    }
+
+    #[tokio::test]
     async fn update_sets_updated_at_and_keeps_created_at() {
         let store = open_in_memory();
         insert_row(&store, "preset", "Red", "true", None).await;
         execute(&store, "UPDATE presets SET created_at = '2000-01-01T00:00:00Z'").await;
         let before = Utc::now();
 
-        let updated = store.update("preset", "Red", json!(false)).await.expect("update succeeded");
+        let updated = store.update("preset", 0, "Red", json!(false)).await.expect("update succeeded");
 
         let long_ago = DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
         assert_eq!(updated.created_at, long_ago);
@@ -339,11 +398,12 @@ mod tests {
         insert_row(&store, "preset", "Red", "true", None).await;
         insert_row(&store, "other", "Other", "10", None).await;
 
-        store.update("preset", "Blue", json!(false)).await.expect("update succeeded");
+        store.update("preset", 0, "Blue", json!(false)).await.expect("update succeeded");
 
         let other = store.by_id("other").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(other.name, "Other");
         assert_eq!(other.value, json!(10));
+        assert_eq!(other.revision, 0);
         assert_eq!(other.updated_at, None);
     }
 
@@ -357,10 +417,39 @@ mod tests {
             insert_row(&store, id, "Preset", "true", None).await;
         }
 
-        let result = store.update("preset", "Blue", json!(false)).await;
+        let result = store.update("preset", 0, "Blue", json!(false)).await;
 
         assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
         assert!(store.by_id("preset").await.expect("by_id succeeded").is_none(), "update must not create the preset");
+    }
+
+    #[rstest]
+    #[case::behind(1, 2)]
+    #[case::ahead(5, 2)]
+    #[tokio::test]
+    async fn update_returns_a_revision_conflict_for_a_mismatching_base_revision(
+        #[case] base_revision: u64,
+        #[case] current_revision: u64,
+    ) {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET revision = 2").await;
+
+        let result = store.update("preset", base_revision, "Blue", json!(false)).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(UpdateError::RevisionConflict { base_revision: b, current_revision: c })
+                    if b == base_revision && c == current_revision
+            ),
+            "got {result:?}"
+        );
+        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        assert_eq!(stored.name, "Red", "a conflicting update must not change the preset");
+        assert_eq!(stored.value, json!(true));
+        assert_eq!(stored.revision, 2);
+        assert_eq!(stored.updated_at, None);
     }
 
     #[tokio::test]
@@ -369,14 +458,50 @@ mod tests {
         insert_row(&store, "preset", "Red", "true", None).await;
         execute(&store, "UPDATE presets SET created_at = 'yesterday'").await;
 
-        let result = store.update("preset", "Blue", json!(false)).await;
+        let result = store.update("preset", 0, "Blue", json!(false)).await;
 
         assert!(
             matches!(
                 result,
-                Err(UpdateError::Store(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _))))
+                Err(UpdateError::Store(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(4, _, _))))
             ),
             "got {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn update_fails_when_the_stored_revision_is_negative() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET revision = -1").await;
+
+        let result = store.update("preset", 0, "Blue", json!(false)).await;
+
+        assert!(matches!(result, Err(UpdateError::Store(PresetStoreError::InvalidRevision(-1)))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn list_fails_when_the_stored_revision_is_negative() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET revision = -1").await;
+
+        let result = store.list().await;
+
+        assert!(
+            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(1, _, _)))),
+            "got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn by_id_loads_the_revision() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET revision = 7").await;
+
+        let row = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+
+        assert_eq!(row.revision, 7);
     }
 }

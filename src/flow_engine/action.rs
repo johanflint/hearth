@@ -271,6 +271,7 @@ mod tests {
     use crate::domain::Color;
     use crate::domain::Number;
     use crate::domain::Preset;
+    use crate::domain::VersionedPreset;
     use crate::domain::property::{
         BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind,
     };
@@ -315,7 +316,10 @@ mod tests {
     }
 
     fn preset_registry_with_presets() -> Arc<PresetRegistry> {
-        let preset = |id: &str, value| Preset { id: id.to_string(), name: id.to_string(), value };
+        let preset = |id: &str, value| VersionedPreset {
+            preset: Arc::new(Preset { id: id.to_string(), name: id.to_string(), value }),
+            revision: 0,
+        };
         Arc::new(PresetRegistry::new(vec![
             preset("dim", Value::Number(number(10))),
             preset("too_dark", Value::Number(number(0))),

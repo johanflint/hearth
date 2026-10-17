@@ -19,11 +19,15 @@ pub(super) async fn update_preset(
 ) -> Result<Response, Response> {
     let request: UpdatePresetRequest = parse_request(&body)?;
 
-    let stored_preset =
-        state.preset_service.update_preset(&id, &request.name, request.value).await.map_err(update_error_response)?;
+    let stored_preset = state
+        .preset_service
+        .update_preset(&id, request.base_revision, &request.name, request.value)
+        .await
+        .map_err(update_error_response)?;
 
     let response = PresetResponse {
         id: stored_preset.id,
+        revision: stored_preset.revision,
         name: stored_preset.name,
         value: stored_preset.value,
         created_at: stored_preset.created_at,
@@ -38,6 +42,9 @@ fn update_error_response(err: UpdatePresetError) -> Response {
         UpdatePresetError::NotFound => {
             (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("presetNotFound"))).into_response()
         }
+        UpdatePresetError::RevisionConflict { .. } => {
+            (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response()
+        }
         UpdatePresetError::Internal(err) => {
             error!("❌ Failed to persist preset to store: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
@@ -46,7 +53,9 @@ fn update_error_response(err: UpdatePresetError) -> Response {
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct UpdatePresetRequest {
+    base_revision: u64,
     name: String,
     value: Value, // Rejects unknown types at parse time
 }
@@ -55,7 +64,9 @@ struct UpdatePresetRequest {
 mod tests {
     use super::*;
     use crate::api::presets::router;
-    use crate::api::test_support::{Fixture, body_json, create_state_with_database, insert_preset_row};
+    use crate::api::test_support::{
+        Fixture, body_json, create_state_with_database, insert_preset_row, set_preset_revision,
+    };
     use crate::database::DatabaseError;
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
@@ -64,12 +75,12 @@ mod tests {
     use serde_json::json;
     use tower::ServiceExt;
 
-    async fn call_update_preset(state: ApiState, id: &str, body: &'static str) -> Response {
+    async fn call_update_preset(state: ApiState, id: &str, body: &str) -> Response {
         let request = Request::builder()
             .method("PUT")
             .uri(format!("/api/presets/{id}"))
             .header("content-type", "application/json")
-            .body(Body::from(body))
+            .body(Body::from(body.to_string()))
             .unwrap();
 
         router().with_state(state).oneshot(request).await.unwrap()
@@ -85,12 +96,17 @@ mod tests {
         let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
         insert_preset_row(&database, "warm", "Warm", "true").await;
 
-        let response =
-            call_update_preset(state, "warm", r##"{"name":"Red","value":{"type":"color","value":"#ff0000"}}"##).await;
+        let response = call_update_preset(
+            state,
+            "warm",
+            r##"{"baseRevision":0,"name":"Red","value":{"type":"color","value":"#ff0000"}}"##,
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_json(response).await;
         assert_eq!(body["id"], "warm");
+        assert_eq!(body["revision"], 1);
         assert_eq!(body["name"], "Red");
         assert_eq!(body["value"], json!({ "type": "color", "value": "#ff0000" }));
         assert!(body["createdAt"].is_string(), "got {body}");
@@ -104,15 +120,17 @@ mod tests {
         insert_preset_row(&database, "other", "Other", "10").await;
         let preset_service = state.preset_service.clone();
 
-        let response = call_update_preset(state, "warm", r#"{"name":"Cold","value":false}"#).await;
+        let response = call_update_preset(state, "warm", r#"{"baseRevision":0,"name":"Cold","value":false}"#).await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let warm = preset_service.retrieve_preset("warm").await.expect("retrieve succeeded");
         assert_eq!(warm.name, "Cold");
         assert_eq!(warm.value, json!(false));
+        assert_eq!(warm.revision, 1);
         let other = preset_service.retrieve_preset("other").await.expect("retrieve succeeded");
         assert_eq!(other.name, "Other");
         assert_eq!(other.value, json!(10));
+        assert_eq!(other.revision, 0);
     }
 
     #[tokio::test]
@@ -120,20 +138,50 @@ mod tests {
         let (Fixture { state, .. }, _) = create_state_with_database(FlowRegistry::new(vec![]));
         let preset_service = state.preset_service.clone();
 
-        let response = call_update_preset(state, "warm", r#"{"name":"Warm","value":true}"#).await;
+        let response = call_update_preset(state, "warm", r#"{"baseRevision":0,"name":"Warm","value":true}"#).await;
 
         assert_error(response, StatusCode::NOT_FOUND, "presetNotFound").await;
         assert!(preset_service.list().await.expect("list succeeded").is_empty(), "update must not create the preset");
     }
 
     #[rstest]
+    #[case::behind(0, 2)]
+    #[case::ahead(5, 2)]
+    #[tokio::test]
+    async fn update_preset_returns_a_revision_conflict_for_a_mismatching_base_revision(
+        #[case] base_revision: u64,
+        #[case] current_revision: u64,
+    ) {
+        let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
+        insert_preset_row(&database, "warm", "Warm", "true").await;
+        set_preset_revision(&database, "warm", 2).await;
+        let preset_service = state.preset_service.clone();
+        let body = format!(r#"{{"baseRevision":{base_revision},"name":"Cold","value":false}}"#);
+
+        let response = call_update_preset(state, "warm", &body).await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "revisionConflict");
+        let message = body["message"].as_str().expect("message is a string");
+        assert!(message.contains(&base_revision.to_string()) && message.contains(&current_revision.to_string()));
+        let warm = preset_service.retrieve_preset("warm").await.expect("retrieve succeeded");
+        assert_eq!(warm.name, "Warm");
+        assert_eq!(warm.value, json!(true));
+        assert_eq!(warm.revision, 2);
+    }
+
+    #[rstest]
     #[case::not_json("not json")]
-    #[case::missing_name(r#"{"value":true}"#)]
-    #[case::missing_value(r#"{"name":"Warm"}"#)]
-    #[case::name_is_not_a_string(r#"{"name":1,"value":true}"#)]
-    #[case::value_is_null(r#"{"name":"Warm","value":null}"#)]
-    #[case::value_is_an_array(r#"{"name":"Warm","value":[1]}"#)]
-    #[case::unknown_value_type(r#"{"name":"Warm","value":{"type":"hologram","value":1}}"#)]
+    #[case::missing_base_revision(r#"{"name":"Warm","value":true}"#)]
+    #[case::negative_base_revision(r#"{"baseRevision":-1,"name":"Warm","value":true}"#)]
+    #[case::base_revision_is_not_a_number(r#"{"baseRevision":"0","name":"Warm","value":true}"#)]
+    #[case::missing_name(r#"{"baseRevision":0,"value":true}"#)]
+    #[case::missing_value(r#"{"baseRevision":0,"name":"Warm"}"#)]
+    #[case::name_is_not_a_string(r#"{"baseRevision":0,"name":1,"value":true}"#)]
+    #[case::value_is_null(r#"{"baseRevision":0,"name":"Warm","value":null}"#)]
+    #[case::value_is_an_array(r#"{"baseRevision":0,"name":"Warm","value":[1]}"#)]
+    #[case::unknown_value_type(r#"{"baseRevision":0,"name":"Warm","value":{"type":"hologram","value":1}}"#)]
     #[tokio::test]
     async fn update_preset_returns_invalid_json_for_an_invalid_body_and_leaves_the_preset_unchanged(
         #[case] body: &'static str,
@@ -159,7 +207,7 @@ mod tests {
             .await
             .expect("corrupt the row");
 
-        let response = call_update_preset(state, "corrupt", r#"{"name":"Fixed","value":true}"#).await;
+        let response = call_update_preset(state, "corrupt", r#"{"baseRevision":0,"name":"Fixed","value":true}"#).await;
 
         assert_error(response, StatusCode::INTERNAL_SERVER_ERROR, "storageError").await;
     }

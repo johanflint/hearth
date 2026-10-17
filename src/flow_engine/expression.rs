@@ -577,7 +577,9 @@ fn join_kinds(kinds: &[ValueKind]) -> String {
 mod tests {
     use super::*;
     use crate::domain::property::{CartesianCoordinate, Gamut, Property, Unit};
-    use crate::domain::{Color, Device, GeoLocation, InitiatedBy, Number, Preset, Weekday, Weekday::*};
+    use crate::domain::{
+        Color, Device, GeoLocation, InitiatedBy, Number, Preset, VersionedPreset, Weekday, Weekday::*,
+    };
     use crate::flow_engine::context::ContextBuilder;
     use crate::flow_engine::expression::Expression::*;
     use crate::flow_engine::expression::ExpressionError::{OperandTypeMismatch, UnaryOperandTypeMismatch};
@@ -603,11 +605,11 @@ mod tests {
         Context::builder().location(GeoLocation { latitude: 78.2232, longitude: 15.6267, altitude: 0.0 })
     }
 
-    fn preset(id: &str, value: Value) -> Preset {
-        Preset { id: id.to_string(), name: id.to_string(), value }
+    fn preset(id: &str, value: Value) -> VersionedPreset {
+        VersionedPreset { preset: Arc::new(Preset { id: id.to_string(), name: id.to_string(), value }), revision: 0 }
     }
 
-    fn context_with_presets(presets: Vec<Preset>) -> Context {
+    fn context_with_presets(presets: Vec<VersionedPreset>) -> Context {
         Context::builder().preset_registry(Arc::new(PresetRegistry::new(presets))).build()
     }
 

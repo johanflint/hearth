@@ -16,6 +16,7 @@ pub(super) async fn list_presets(State(state): State<ApiState>) -> Result<Respon
         .into_iter()
         .map(|preset| PresetResponse {
             id: preset.id,
+            revision: preset.revision,
             name: preset.name,
             value: preset.value,
             created_at: preset.created_at,
@@ -44,7 +45,9 @@ fn list_error_response(err: ListPresetError) -> Response {
 mod tests {
     use super::*;
     use crate::api::presets::router;
-    use crate::api::test_support::{Fixture, body_json, create_state, create_state_with_database, insert_preset_row};
+    use crate::api::test_support::{
+        Fixture, body_json, create_state, create_state_with_database, insert_preset_row, set_preset_revision,
+    };
     use crate::flow_registry::FlowRegistry;
     use axum::body::Body;
     use axum::http::Request;
@@ -72,6 +75,7 @@ mod tests {
         let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
         insert_preset_row(&database, "warm", "Warm", r##"{"type":"color","value":"#ff0000"}"##).await;
         insert_preset_row(&database, "dim", "Dim", "10").await;
+        set_preset_revision(&database, "dim", 4).await;
 
         let response = call_list_presets(state).await;
 
@@ -80,11 +84,13 @@ mod tests {
         let presets = body["presets"].as_array().expect("presets array");
         assert_eq!(presets.len(), 2);
         assert_eq!(presets[0]["id"], "dim");
+        assert_eq!(presets[0]["revision"], 4);
         assert_eq!(presets[0]["name"], "Dim");
         assert_eq!(presets[0]["value"], 10);
         assert!(presets[0]["createdAt"].is_string(), "got {body}");
         assert!(presets[0]["updatedAt"].is_null(), "got {body}");
         assert_eq!(presets[1]["id"], "warm");
+        assert_eq!(presets[1]["revision"], 0);
         assert_eq!(presets[1]["value"], json!({ "type": "color", "value": "#ff0000" }));
     }
 
