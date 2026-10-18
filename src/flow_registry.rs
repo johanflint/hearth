@@ -1,4 +1,4 @@
-use crate::flow_engine::VersionedFlow;
+use crate::flow_engine::{Expression, VersionedFlow};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -68,6 +68,25 @@ impl FlowRegistry {
         entries.remove(id);
         UnregisterResult::Deleted
     }
+
+    pub fn flows_referencing_preset(&self, id: &str) -> Vec<FlowSummary> {
+        let entries = self.entries.read().expect("flow registry lock poisoned");
+        let mut flows: Vec<FlowSummary> = entries
+            .values()
+            .filter(|versioned_flow| {
+                versioned_flow
+                    .walk_expressions()
+                    .any(|e| matches!(e, Expression::PresetValue { id: preset_id } if preset_id == id))
+            })
+            .map(|versioned_flow| FlowSummary {
+                id: versioned_flow.id().to_string(),
+                name: versioned_flow.name().to_string(),
+                revision: versioned_flow.revision,
+            })
+            .collect();
+        flows.sort_by(|a, b| a.id.cmp(&b.id));
+        flows
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -86,11 +105,19 @@ pub enum UnregisterResult {
     Stale { current_revision: u64 },
 }
 
+#[derive(Debug)]
+pub struct FlowSummary {
+    pub id: String,
+    pub name: String,
+    pub revision: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::flow_engine::Schedule;
     use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
+    use crate::test_support::flow_using_preset;
     use std::sync::Arc;
 
     fn reactive_flow(id: &str) -> VersionedFlow {
@@ -239,5 +266,27 @@ mod tests {
         assert_eq!(result, UnregisterResult::Deleted);
         let entry = registry.by_id("flow");
         assert!(entry.is_none(), "expected the flow to be unregistered");
+    }
+
+    #[test]
+    fn flows_referencing_preset_returns_the_summaries_of_the_flows_using_the_preset_ordered_by_id() {
+        let registry = FlowRegistry::new(vec![
+            flow_using_preset("b", "Flow B", 2, "warm"),
+            flow_using_preset("a", "Flow A", 0, "warm"),
+            flow_using_preset("c", "Flow C", 1, "cold"),
+            reactive_flow("d"),
+        ]);
+
+        let flows = registry.flows_referencing_preset("warm");
+
+        let summaries: Vec<_> = flows.iter().map(|f| (f.id.as_str(), f.name.as_str(), f.revision)).collect();
+        assert_eq!(summaries, vec![("a", "Flow A", 0), ("b", "Flow B", 2)]);
+    }
+
+    #[test]
+    fn flows_referencing_preset_returns_nothing_when_no_flow_uses_the_preset() {
+        let registry = FlowRegistry::new(vec![flow_using_preset("a", "Flow A", 0, "cold"), reactive_flow("b")]);
+
+        assert!(registry.flows_referencing_preset("warm").is_empty());
     }
 }

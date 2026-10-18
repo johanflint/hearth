@@ -56,7 +56,7 @@ pub(super) fn create_state_with_database(flow_registry: FlowRegistry) -> (Fixtur
         scheduler_tx,
         snapshot_rx,
     ));
-    let preset_service = Arc::new(PresetService::new(preset_store, preset_registry));
+    let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, Arc::clone(&flow_registry)));
     let state = ApiState::new(handle, flow_service, preset_service);
     (Fixture { state, flow_store, flow_registry, scheduler_rx }, database)
 }

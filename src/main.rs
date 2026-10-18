@@ -133,9 +133,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("✅  Initialized store");
 
-    let flow_service =
-        Arc::new(FlowService::new(flow_store, flow_registry, preset_registry.clone(), scheduler_tx, store_rx_clone));
-    let preset_service = Arc::new(PresetService::new(preset_store, preset_registry));
+    let flow_service = Arc::new(FlowService::new(
+        flow_store,
+        flow_registry.clone(),
+        preset_registry.clone(),
+        scheduler_tx,
+        store_rx_clone,
+    ));
+    let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, flow_registry));
     let api_state = ApiState::new(prometheus_handle, flow_service, preset_service);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");

@@ -1,4 +1,5 @@
 use crate::domain::{Preset, Value, VersionedPreset};
+use crate::flow_registry::{FlowRegistry, FlowSummary};
 use crate::preset_registry::{PresetRegistry, RegisterResult, UnregisterResult};
 use crate::preset_store::{DeleteError, InsertError, PresetStore, PresetStoreError, StoredPreset, UpdateError};
 use std::sync::Arc;
@@ -10,11 +11,16 @@ use uuid::Uuid;
 pub struct PresetService {
     preset_store: Arc<PresetStore>,
     preset_registry: Arc<PresetRegistry>,
+    flow_registry: Arc<FlowRegistry>,
 }
 
 impl PresetService {
-    pub fn new(preset_store: Arc<PresetStore>, preset_registry: Arc<PresetRegistry>) -> Self {
-        PresetService { preset_store, preset_registry }
+    pub fn new(
+        preset_store: Arc<PresetStore>,
+        preset_registry: Arc<PresetRegistry>,
+        flow_registry: Arc<FlowRegistry>,
+    ) -> Self {
+        PresetService { preset_store, preset_registry, flow_registry }
     }
 
     pub async fn list(&self) -> Result<Vec<StoredPreset>, ListPresetError> {
@@ -60,6 +66,16 @@ impl PresetService {
     }
 
     pub async fn delete_preset(&self, id: &str, base_revision: u64) -> Result<(), DeletePresetError> {
+        let stored = self.preset_store.by_id(id).await?.ok_or(DeletePresetError::NotFound)?;
+        if stored.revision != base_revision {
+            return Err(DeletePresetError::RevisionConflict { base_revision, current_revision: stored.revision });
+        }
+
+        let flows = self.flow_registry.flows_referencing_preset(id);
+        if !flows.is_empty() {
+            return Err(DeletePresetError::InUse(flows));
+        }
+
         self.preset_store.delete(id, base_revision).await?;
 
         // The store is authoritative, so the preset is deleted no matter the registry
@@ -140,6 +156,8 @@ impl From<UpdateError> for UpdatePresetError {
 
 #[derive(Debug, Error)]
 pub enum DeletePresetError {
+    #[error("preset in use by {} flow(s)", .0.len())]
+    InUse(Vec<FlowSummary>),
     #[error("preset not found")]
     NotFound,
     #[error(
@@ -167,6 +185,8 @@ mod tests {
     use super::*;
     use crate::database::{Database, DatabaseError};
     use crate::domain::Number;
+    use crate::flow_engine::VersionedFlow;
+    use crate::test_support::flow_using_preset;
     use chrono::Utc;
     use rstest::rstest;
     use rusqlite::params;
@@ -178,10 +198,18 @@ mod tests {
     }
 
     fn create_service_with_registry(presets: Vec<VersionedPreset>) -> (PresetService, Database, Arc<PresetRegistry>) {
+        create_service_with_flows(presets, vec![])
+    }
+
+    fn create_service_with_flows(
+        presets: Vec<VersionedPreset>,
+        flows: Vec<VersionedFlow>,
+    ) -> (PresetService, Database, Arc<PresetRegistry>) {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let preset_store = Arc::new(PresetStore::new(database.clone()));
         let preset_registry = Arc::new(PresetRegistry::new(presets));
-        (PresetService::new(preset_store, Arc::clone(&preset_registry)), database, preset_registry)
+        let flow_registry = Arc::new(FlowRegistry::new(flows));
+        (PresetService::new(preset_store, Arc::clone(&preset_registry), flow_registry), database, preset_registry)
     }
 
     fn preset(id: &str, name: &str, value: Value, revision: u64) -> VersionedPreset {
@@ -644,5 +672,84 @@ mod tests {
 
         assert!(matches!(result, Err(DeletePresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
         assert!(registry.by_id("preset").is_some(), "the registry must be unchanged");
+    }
+
+    #[tokio::test]
+    async fn delete_preset_returns_in_use_with_the_flows_using_the_preset_and_leaves_everything_unchanged() {
+        let (service, database, registry) = create_service_with_flows(
+            vec![preset("preset", "preset", Value::Boolean(true), 0)],
+            vec![flow_using_preset("flow", "Flow", 3, "preset"), flow_using_preset("other", "Other", 0, "unused")],
+        );
+        insert_row(&database, "preset", "true").await;
+
+        let result = service.delete_preset("preset", 0).await;
+
+        let Err(DeletePresetError::InUse(flows)) = result else { panic!("expected InUse, got {result:?}") };
+        let summaries: Vec<_> = flows.iter().map(|f| (f.id.as_str(), f.name.as_str(), f.revision)).collect();
+        assert_eq!(summaries, vec![("flow", "Flow", 3)]);
+        service.retrieve_preset("preset").await.expect("the preset must not be deleted from the store");
+        assert!(registry.by_id("preset").is_some(), "the preset must not be deleted from the registry");
+    }
+
+    #[tokio::test]
+    async fn delete_preset_returns_not_found_before_in_use_for_an_unknown_id_referenced_by_a_flow() {
+        let (service, _, _) = create_service_with_flows(vec![], vec![flow_using_preset("flow", "Flow", 0, "preset")]);
+
+        let result = service.delete_preset("preset", 0).await;
+
+        assert!(matches!(result, Err(DeletePresetError::NotFound)), "got {result:?}");
+    }
+
+    #[rstest]
+    #[case::behind(1, 2)]
+    #[case::ahead(5, 2)]
+    #[tokio::test]
+    async fn delete_preset_returns_a_revision_conflict_before_in_use_for_a_mismatching_base_revision(
+        #[case] base_revision: u64,
+        #[case] current_revision: u64,
+    ) {
+        let (service, database, registry) = create_service_with_flows(
+            vec![preset("preset", "preset", Value::Boolean(true), 2)],
+            vec![flow_using_preset("flow", "Flow", 0, "preset")],
+        );
+        insert_row(&database, "preset", "true").await;
+        set_revision(&database, 2).await;
+
+        let result = service.delete_preset("preset", base_revision).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(DeletePresetError::RevisionConflict { base_revision: b, current_revision: c })
+                    if b == base_revision && c == current_revision
+            ),
+            "got {result:?}"
+        );
+        assert!(registry.by_id("preset").is_some(), "the preset must not be deleted from the registry");
+    }
+
+    #[tokio::test]
+    async fn delete_preset_returns_in_use_for_a_stored_preset_that_is_not_registered() {
+        let (service, database, _) =
+            create_service_with_flows(vec![], vec![flow_using_preset("flow", "Flow", 0, "preset")]);
+        insert_row(&database, "preset", "true").await;
+
+        let result = service.delete_preset("preset", 0).await;
+
+        assert!(matches!(result, Err(DeletePresetError::InUse(_))), "got {result:?}");
+        service.retrieve_preset("preset").await.expect("the preset must not be deleted from the store");
+    }
+
+    #[tokio::test]
+    async fn delete_preset_deletes_a_preset_that_no_flow_uses() {
+        let (service, database, registry) = create_service_with_flows(
+            vec![preset("preset", "preset", Value::Boolean(true), 0)],
+            vec![flow_using_preset("flow", "Flow", 0, "other")],
+        );
+        insert_row(&database, "preset", "true").await;
+
+        service.delete_preset("preset", 0).await.expect("delete succeeded");
+
+        assert!(registry.by_id("preset").is_none(), "the preset must be deleted from the registry");
     }
 }

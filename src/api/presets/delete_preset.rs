@@ -6,7 +6,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 pub(super) async fn delete_preset(
@@ -32,7 +32,16 @@ fn invalid_query(err: QueryRejection) -> Response {
 }
 
 fn delete_error_response(err: DeletePresetError) -> Response {
+    let error_message = err.to_string();
     match err {
+        DeletePresetError::InUse(flows) => {
+            let flows = flows
+                .into_iter()
+                .map(|summary| FlowReference { id: summary.id, name: summary.name, revision: summary.revision })
+                .collect();
+            let body = InUseErrorResponse { code: "presetInUse", message: error_message, flows };
+            (StatusCode::CONFLICT, Json(body)).into_response()
+        }
         DeletePresetError::NotFound => {
             (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("presetNotFound"))).into_response()
         }
@@ -46,6 +55,21 @@ fn delete_error_response(err: DeletePresetError) -> Response {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct InUseErrorResponse {
+    pub code: &'static str,
+    pub message: String,
+    pub flows: Vec<FlowReference>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlowReference {
+    id: String,
+    name: String,
+    revision: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,6 +79,7 @@ mod tests {
     };
     use crate::database::DatabaseError;
     use crate::flow_registry::FlowRegistry;
+    use crate::test_support::flow_using_preset;
     use axum::body::Body;
     use axum::http::Request;
     use rstest::rstest;
@@ -165,5 +190,32 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body_json(response).await["code"], "storageError");
+    }
+
+    #[tokio::test]
+    async fn delete_preset_returns_409_conflict_with_the_flows_using_the_preset() {
+        let flow_registry = FlowRegistry::new(vec![
+            flow_using_preset("b", "Flow B", 2, "warm"),
+            flow_using_preset("a", "Flow A", 0, "warm"),
+            flow_using_preset("c", "Flow C", 1, "cold"),
+        ]);
+        let (Fixture { state, .. }, database) = create_state_with_database(flow_registry);
+        insert_preset_row(&database, "warm", "Warm", "true").await;
+        let preset_service = state.preset_service.clone();
+
+        let response = call_delete_preset(state, &delete_uri("warm", 0)).await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "presetInUse");
+        assert_eq!(body["message"], "preset in use by 2 flow(s)");
+        assert_eq!(
+            body["flows"],
+            serde_json::json!([
+                {"id": "a", "name": "Flow A", "revision": 0},
+                {"id": "b", "name": "Flow B", "revision": 2},
+            ])
+        );
+        preset_service.retrieve_preset("warm").await.expect("preset must not be deleted");
     }
 }
