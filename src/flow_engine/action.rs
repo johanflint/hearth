@@ -26,6 +26,8 @@ pub trait Action: Debug + Send + Sync {
         vec![]
     }
 
+    fn expressions(&self) -> Vec<&Expression>;
+
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -75,6 +77,10 @@ impl Action for LogAction {
     #[instrument(fields(action = self.kind()), skip_all)]
     async fn execute(&self, _context: &Context, _scope: &mut Scope) {
         info!(target: "hearth::flow_log", "{}", self.message);
+    }
+
+    fn expressions(&self) -> Vec<&Expression> {
+        vec![]
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -260,6 +266,11 @@ impl Action for ControlDeviceAction {
             .collect()
     }
 
+    fn expressions(&self) -> Vec<&Expression> {
+        let expressions: Vec<&Expression> = self.property.values().map(|property| &property.value).collect();
+        expressions
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -271,6 +282,7 @@ mod tests {
     use crate::domain::Color;
     use crate::domain::Number;
     use crate::domain::Preset;
+    use crate::domain::VersionedPreset;
     use crate::domain::property::{
         BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind,
     };
@@ -315,7 +327,10 @@ mod tests {
     }
 
     fn preset_registry_with_presets() -> Arc<PresetRegistry> {
-        let preset = |id: &str, value| Preset { id: id.to_string(), name: id.to_string(), value };
+        let preset = |id: &str, value| VersionedPreset {
+            preset: Arc::new(Preset { id: id.to_string(), name: id.to_string(), value }),
+            revision: 0,
+        };
         Arc::new(PresetRegistry::new(vec![
             preset("dim", Value::Number(number(10))),
             preset("too_dark", Value::Number(number(0))),
@@ -908,5 +923,26 @@ mod tests {
             error.to_string(),
             "property.on.value: invalid type: boolean `true`, expected internally tagged enum Expression"
         );
+    }
+
+    #[test]
+    fn control_device_expressions_returns_the_expression_of_every_property() {
+        let property = HashMap::from([
+            ("on".to_string(), preset_command("enabled")),
+            ("color".to_string(), preset_command("warm")),
+        ]);
+        let action = ControlDeviceAction::new("device".to_string(), None, property);
+
+        let mut ids: Vec<&str> = action
+            .expressions()
+            .into_iter()
+            .map(|e| match e {
+                Expression::PresetValue { id } => id.as_str(),
+                other => panic!("unexpected expression {other:?}"),
+            })
+            .collect();
+        ids.sort();
+
+        assert_eq!(ids, ["enabled", "warm"]);
     }
 }

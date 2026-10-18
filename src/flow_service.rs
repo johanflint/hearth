@@ -291,7 +291,7 @@ pub enum ValidateError {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use crate::domain::{Location, Preset, Problem, Value};
+    use crate::domain::{Location, Preset, Problem, Value, VersionedPreset};
     use serde_json::json;
     use std::path::Path;
     use tokio::sync::{mpsc, watch};
@@ -323,7 +323,7 @@ mod tests {
         create_service_with_presets(flow_registry, vec![])
     }
 
-    fn create_service_with_presets(flow_registry: FlowRegistry, presets: Vec<Preset>) -> Fixture {
+    fn create_service_with_presets(flow_registry: FlowRegistry, presets: Vec<VersionedPreset>) -> Fixture {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
         let flow_store = Arc::new(FlowStore::new(database));
         let flow_registry = Arc::new(flow_registry);
@@ -405,8 +405,9 @@ mod tests {
             document
         }
 
-        fn presets() -> Vec<Preset> {
-            vec![Preset { id: "known".to_string(), name: "Known".to_string(), value: Value::Boolean(true) }]
+        fn presets() -> Vec<VersionedPreset> {
+            let preset = Preset { id: "known".to_string(), name: "Known".to_string(), value: Value::Boolean(true) };
+            vec![VersionedPreset { preset: Arc::new(preset), revision: 0 }]
         }
 
         #[tokio::test]

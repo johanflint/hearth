@@ -96,10 +96,13 @@ impl ContextBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Preset, Value};
+    use crate::domain::{Preset, Value, VersionedPreset};
 
     fn registry_with_preset() -> Arc<PresetRegistry> {
-        let preset = Preset { id: "warm".to_string(), name: "Warm".to_string(), value: Value::Boolean(true) };
+        let preset = VersionedPreset {
+            preset: Arc::new(Preset { id: "warm".to_string(), name: "Warm".to_string(), value: Value::Boolean(true) }),
+            revision: 0,
+        };
         Arc::new(PresetRegistry::new(vec![preset]))
     }
 

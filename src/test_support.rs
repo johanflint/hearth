@@ -1,8 +1,11 @@
 use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, Property, PropertyType};
 use crate::domain::{Device, DeviceType, Value};
-use crate::flow_engine::Expression::Literal;
+use crate::flow_engine::Expression::{self, Literal};
+use crate::flow_engine::VersionedFlow;
+use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
 use crate::flow_engine::property_command::{PropertyCommand, ResolvedPropertyCommand};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub(crate) struct DeviceBuilder {
     id: String,
@@ -56,4 +59,13 @@ pub(crate) fn property_command(value: Value) -> PropertyCommand {
 
 pub(crate) fn resolved_property_command(value: Value) -> ResolvedPropertyCommand {
     ResolvedPropertyCommand { value, transition: None }
+}
+
+/// A flow that only references the preset, through its trigger
+pub(crate) fn flow_using_preset(id: &str, name: &str, revision: u64, preset_id: &str) -> VersionedFlow {
+    let start_node = FlowNode::new(format!("{id}_start"), vec![], FlowNodeKind::Start);
+    let trigger = Expression::PresetValue { id: preset_id.to_string() };
+    let flow = Flow::new(id.to_string(), name.to_string(), None, Some(trigger), Arc::new(start_node), HashMap::new())
+        .expect("valid flow");
+    VersionedFlow { flow: Arc::new(flow), revision }
 }

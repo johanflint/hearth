@@ -150,7 +150,7 @@ impl Problem {
 mod tests {
     use super::*;
     use crate::domain::property::{BooleanProperty, NumberProperty, PropertyType};
-    use crate::domain::{Number, Preset, Value};
+    use crate::domain::{Number, Preset, Value, VersionedPreset};
     use crate::flow_engine::Expression::*;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
@@ -248,7 +248,10 @@ mod tests {
     }
 
     fn preset_registry_with_presets() -> Arc<PresetRegistry> {
-        let preset = |id: &str, value| Preset { id: id.to_string(), name: id.to_string(), value };
+        let preset = |id: &str, value| VersionedPreset {
+            preset: Arc::new(Preset { id: id.to_string(), name: id.to_string(), value }),
+            revision: 0,
+        };
         Arc::new(PresetRegistry::new(vec![
             preset("enabled", Value::Boolean(true)),
             preset("dim", Value::Number(Number::PositiveInt(10))),

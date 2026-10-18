@@ -15,6 +15,7 @@ pub mod property;
 mod time;
 mod validator;
 mod value;
+mod versioned_preset;
 mod weekday;
 mod weekday_condition;
 
@@ -33,5 +34,6 @@ pub use preset::Preset;
 pub use time::Time;
 pub use validator::{FlowValidationError, Location, Problem, ValidationIssue, find_device, find_property, validate};
 pub use value::Value;
+pub use versioned_preset::VersionedPreset;
 pub use weekday::Weekday;
 pub use weekday_condition::WeekdayCondition;
