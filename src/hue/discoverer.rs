@@ -20,8 +20,8 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     info!("Retrieving Hue devices...");
 
     let hue_url = config.hue().url();
-    let hue_response = fetch_resources::<DeviceGet>(client, hue_url, "device").await?;
-    info!("Retrieving Hue devices... OK, {} found", hue_response.data.len());
+    let device_response = fetch_resources::<DeviceGet>(client, hue_url, "device").await?;
+    info!("Retrieving Hue devices... OK, {} found", device_response.data.len());
 
     let light_response = fetch_resources::<LightGet>(client, hue_url, "light").await?;
     info!("Retrieving lights... OK, {} found", light_response.data.len());
@@ -50,7 +50,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     let device_power_response = fetch_resources::<DevicePowerGet>(client, hue_url, "device_power").await?;
     debug!("Retrieving device power... OK, {} found", device_power_response.data.len());
 
-    let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
+    let mut device_map = device_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
     let mut devices = vec![];
     let lights = map_lights(light_response.data, &mut device_map)?;
