@@ -10,6 +10,7 @@ use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
 use crate::hue::map_remotes::{MapRemotesError, map_remotes};
 use reqwest::{Client, StatusCode};
+use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use tracing::{debug, info, instrument, warn};
@@ -19,96 +20,34 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     info!("Retrieving Hue devices...");
 
     let hue_url = config.hue().url();
-    let response = client
-        .get(format!("{}/clip/v2/resource/device", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_discover_error)?;
-
-    let hue_response = response.json::<HueResponse<DeviceGet>>().await?;
+    let hue_response = fetch_resources::<DeviceGet>(client, hue_url, "device").await?;
     info!("Retrieving Hue devices... OK, {} found", hue_response.data.len());
 
-    let response = client
-        .get(format!("{}/clip/v2/resource/light", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_discover_error)?;
-
-    let light_response = response.json::<HueResponse<LightGet>>().await?;
+    let light_response = fetch_resources::<LightGet>(client, hue_url, "light").await?;
     info!("Retrieving lights... OK, {} found", light_response.data.len());
 
-    let response = client
-        .get(format!("{}/clip/v2/resource/motion", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_discover_error)?;
-
-    let motion_response = response.json::<HueResponse<MotionGet>>().await?;
+    let motion_response = fetch_resources::<MotionGet>(client, hue_url, "motion").await?;
     info!("Retrieving motion sensors... OK, {} found", motion_response.data.len());
 
-    let response = client
-        .get(format!("{}/clip/v2/resource/light_level", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_discover_error)?;
-
-    let light_levels_response = response.json::<HueResponse<LightLevelGet>>().await?;
+    let light_levels_response = fetch_resources::<LightLevelGet>(client, hue_url, "light_level").await?;
     debug!("Retrieving lights levels... OK, {} found", light_levels_response.data.len()); // Using debug as these aren't devices but services
 
-    let response = client
-        .get(format!("{}/clip/v2/resource/temperature", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_discover_error)?;
-
-    let temperature_response = response.json::<HueResponse<TemperatureGet>>().await?;
+    let temperature_response = fetch_resources::<TemperatureGet>(client, hue_url, "temperature").await?;
     debug!("Retrieving temperature sensors... OK, {} found", temperature_response.data.len()); // Using debug as these aren't devices but services
 
-    let response = client
-        .get(format!("{}/clip/v2/resource/button", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_discover_error)?;
-
-    let button_response = response.json::<HueResponse<ButtonGet>>().await?;
+    let button_response = fetch_resources::<ButtonGet>(client, hue_url, "button").await?;
     // Count the devices, not the buttons that button_response contains
     let remotes: HashSet<&str> = button_response.data.iter().map(|b| b.owner.rid.as_str()).collect();
     info!("Retrieving remotes... OK, {} found", remotes.len());
 
-    let response = client
-        .get(format!("{}/clip/v2/resource/contact", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_discover_error)?;
-
-    let contact_response = response.json::<HueResponse<ContactGet>>().await?;
+    let contact_response = fetch_resources::<ContactGet>(client, hue_url, "contact").await?;
     info!("Retrieving contact sensors... OK, {} found", contact_response.data.len());
 
-    let response = client
-        .get(format!("{}/clip/v2/resource/zigbee_connectivity", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_discover_error)?;
-
-    let zigbee_connectivity_response = response.json::<HueResponse<ZigbeeConnectivityGet>>().await?;
+    let zigbee_connectivity_response =
+        fetch_resources::<ZigbeeConnectivityGet>(client, hue_url, "zigbee_connectivity").await?;
     debug!("Retrieving zigbee connectivity... OK, {} found", zigbee_connectivity_response.data.len());
 
-    let response = client
-        .get(format!("{}/clip/v2/resource/device_power", hue_url))
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_discover_error)?;
-
-    let device_power_response = response.json::<HueResponse<DevicePowerGet>>().await?;
+    let device_power_response = fetch_resources::<DevicePowerGet>(client, hue_url, "device_power").await?;
     debug!("Retrieving device power... OK, {} found", device_power_response.data.len());
 
     let mut device_map = hue_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
@@ -137,6 +76,20 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     }
 
     Ok(devices)
+}
+
+async fn fetch_resources<T>(client: &Client, hue_url: &str, name: &'static str) -> Result<HueResponse<T>, DiscoverError>
+where
+    T: DeserializeOwned,
+{
+    let response = client
+        .get(format!("{}/clip/v2/resource/{}", hue_url, name))
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(to_discover_error)?;
+
+    Ok(response.json::<HueResponse<T>>().await?)
 }
 
 fn to_discover_error(e: reqwest::Error) -> DiscoverError {
