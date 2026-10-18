@@ -70,7 +70,7 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE presets (
         id TEXT PRIMARY KEY,
         revision INTEGER NOT NULL,
-        name TEXT NOT NULL,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
         value TEXT NOT NULL, -- domain::Value as JSON, same format as flow literals
         created_at TEXT NOT NULL,
         updated_at TEXT

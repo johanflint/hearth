@@ -25,14 +25,7 @@ pub(super) async fn update_preset(
         .await
         .map_err(update_error_response)?;
 
-    let response = PresetResponse {
-        id: stored_preset.id,
-        revision: stored_preset.revision,
-        name: stored_preset.name,
-        value: stored_preset.value,
-        created_at: stored_preset.created_at,
-        updated_at: stored_preset.updated_at,
-    };
+    let response = PresetResponse::from(stored_preset);
     Ok((StatusCode::OK, Json(response)).into_response())
 }
 
@@ -44,6 +37,9 @@ fn update_error_response(err: UpdatePresetError) -> Response {
         }
         UpdatePresetError::RevisionConflict { .. } => {
             (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response()
+        }
+        UpdatePresetError::NameAlreadyExists => {
+            (StatusCode::CONFLICT, Json(ErrorResponse::new_code_only("presetNameAlreadyExists"))).into_response()
         }
         UpdatePresetError::Internal(err) => {
             error!("❌ Failed to persist preset to store: {err}");
@@ -169,6 +165,26 @@ mod tests {
         assert_eq!(warm.name, "Warm");
         assert_eq!(warm.value, json!(true));
         assert_eq!(warm.revision, 2);
+    }
+
+    #[rstest]
+    #[case::same_case("Other")]
+    #[case::different_case("oTHER")]
+    #[tokio::test]
+    async fn update_preset_returns_a_conflict_for_a_name_used_by_another_preset(#[case] name: &str) {
+        let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
+        insert_preset_row(&database, "warm", "Warm", "true").await;
+        insert_preset_row(&database, "other", "Other", "10").await;
+        let preset_service = state.preset_service.clone();
+        let body = format!(r#"{{"baseRevision":0,"name":"{name}","value":false}}"#);
+
+        let response = call_update_preset(state, "warm", &body).await;
+
+        assert_error(response, StatusCode::CONFLICT, "presetNameAlreadyExists").await;
+        let warm = preset_service.retrieve_preset("warm").await.expect("retrieve succeeded");
+        assert_eq!(warm.name, "Warm");
+        assert_eq!(warm.value, json!(true));
+        assert_eq!(warm.revision, 0);
     }
 
     #[rstest]

@@ -40,6 +40,26 @@ impl PresetStore {
             .await
     }
 
+    pub async fn insert(&self, id: &str, name: &str, value: serde_json::Value) -> Result<StoredPreset, InsertError> {
+        let id = id.to_string();
+        let name = name.to_string();
+        self.database
+            .call(move |conn| {
+                let now = Utc::now().to_rfc3339();
+                let stored = conn
+                    .query_row(
+                        "INSERT INTO presets (id, revision, name, value, created_at, updated_at)
+                        VALUES (?1, 0, ?2, ?3, ?4, ?4)
+                        RETURNING id, revision, name, value, created_at, updated_at",
+                        params![id, name, value, now],
+                        row_to_stored_preset,
+                    )
+                    .map_err(|err| if is_name_conflict(&err) { InsertError::NameAlreadyExists } else { err.into() })?;
+                Ok(stored)
+            })
+            .await
+    }
+
     pub async fn update(
         &self,
         id: &str,
@@ -60,7 +80,8 @@ impl PresetStore {
                         params![id, base_revision as i64, name, value, now],
                         row_to_stored_preset,
                     )
-                    .optional()?;
+                    .optional()
+                    .map_err(|err| if is_name_conflict(&err) { UpdateError::NameAlreadyExists } else { err.into() })?;
 
                 if let Some(updated) = updated {
                     return Ok(updated);
@@ -105,6 +126,10 @@ fn row_to_stored_preset(row: &Row) -> rusqlite::Result<StoredPreset> {
     Ok(StoredPreset { id, revision, name, value, created_at, updated_at })
 }
 
+fn is_name_conflict(err: &rusqlite::Error) -> bool {
+    matches!(err, rusqlite::Error::SqliteFailure(err, _) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE)
+}
+
 fn to_revision(revision: i64) -> Result<u64, PresetStoreError> {
     u64::try_from(revision).map_err(|_| PresetStoreError::InvalidRevision(revision))
 }
@@ -130,6 +155,27 @@ pub enum PresetStoreError {
 }
 
 #[derive(Error, Debug)]
+pub enum InsertError {
+    #[error("a preset with this name already exists")]
+    NameAlreadyExists,
+    #[error(transparent)]
+    Store(#[from] PresetStoreError),
+}
+
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `PresetStoreError` on their own
+impl From<DatabaseError> for InsertError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+impl From<rusqlite::Error> for InsertError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+#[derive(Error, Debug)]
 pub enum UpdateError {
     #[error("preset not found")]
     NotFound,
@@ -137,6 +183,8 @@ pub enum UpdateError {
         "revision conflict: update is based on revision {base_revision}, but the current revision is {current_revision}"
     )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error("a preset with this name already exists")]
+    NameAlreadyExists,
     #[error(transparent)]
     Store(#[from] PresetStoreError),
 }
@@ -258,7 +306,7 @@ mod tests {
     async fn list_orders_the_presets_by_id() {
         let store = open_in_memory();
         for id in ["b", "c", "a"] {
-            insert_row(&store, id, "Preset", "true", None).await;
+            insert_row(&store, id, id, "true", None).await;
         }
 
         let rows = store.list().await.expect("list succeeded");
@@ -346,6 +394,97 @@ mod tests {
             matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
             "got {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn insert_returns_the_stored_preset_at_revision_zero() {
+        let store = open_in_memory();
+
+        let inserted = store.insert("preset", "Red", json!({ "type": "color", "value": "#ff0000" })).await;
+
+        let inserted = inserted.expect("insert succeeded");
+        assert_eq!(inserted.id, "preset");
+        assert_eq!(inserted.revision, 0);
+        assert_eq!(inserted.name, "Red");
+        assert_eq!(inserted.value, json!({ "type": "color", "value": "#ff0000" }));
+        assert_eq!(inserted.updated_at, Some(inserted.created_at));
+    }
+
+    #[tokio::test]
+    async fn insert_persists_the_preset_and_leaves_others_untouched() {
+        let store = open_in_memory();
+        insert_row(&store, "other", "Other", "10", None).await;
+
+        store.insert("preset", "Red", json!(true)).await.expect("insert succeeded");
+
+        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        assert_eq!(stored.name, "Red");
+        assert_eq!(stored.value, json!(true));
+        assert_eq!(stored.revision, 0);
+        let other = store.by_id("other").await.expect("by_id succeeded").expect("preset exists");
+        assert_eq!(other.name, "Other");
+        assert_eq!(other.value, json!(10));
+        assert_eq!(store.list().await.expect("list succeeded").len(), 2);
+    }
+
+    #[rstest]
+    #[case::same_case("Red")]
+    #[case::different_case("rED")]
+    #[tokio::test]
+    async fn insert_rejects_a_name_that_is_already_in_use(#[case] name: &str) {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+
+        let result = store.insert("duplicate", name, json!(false)).await;
+
+        assert!(matches!(result, Err(InsertError::NameAlreadyExists)), "got {result:?}");
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1, "nothing must be stored");
+        assert_eq!(rows[0].value, json!(true));
+    }
+
+    #[tokio::test]
+    async fn insert_fails_for_an_id_that_is_already_in_use() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+
+        let result = store.insert("preset", "Blue", json!(false)).await;
+
+        assert!(matches!(result, Err(InsertError::Store(PresetStoreError::Sqlite(_)))), "got {result:?}");
+        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        assert_eq!(stored.name, "Red");
+    }
+
+    #[rstest]
+    #[case::same_case("Other")]
+    #[case::different_case("oTHER")]
+    #[tokio::test]
+    async fn update_rejects_a_name_used_by_another_preset(#[case] name: &str) {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        insert_row(&store, "other", "Other", "10", None).await;
+
+        let result = store.update("preset", 0, name, json!(false)).await;
+
+        assert!(matches!(result, Err(UpdateError::NameAlreadyExists)), "got {result:?}");
+        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        assert_eq!(stored.name, "Red", "the preset must be unchanged");
+        assert_eq!(stored.value, json!(true));
+        assert_eq!(stored.revision, 0);
+    }
+
+    #[rstest]
+    #[case::same_name("Red")]
+    #[case::different_case("RED")]
+    #[tokio::test]
+    async fn update_allows_a_preset_to_keep_its_own_name(#[case] name: &str) {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+
+        let updated = store.update("preset", 0, name, json!(false)).await.expect("update succeeded");
+
+        assert_eq!(updated.name, name);
+        assert_eq!(updated.revision, 1);
     }
 
     #[tokio::test]

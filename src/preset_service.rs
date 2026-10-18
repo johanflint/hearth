@@ -1,9 +1,10 @@
 use crate::domain::{Preset, Value, VersionedPreset};
 use crate::preset_registry::{PresetRegistry, RegisterResult};
-use crate::preset_store::{PresetStore, PresetStoreError, StoredPreset, UpdateError};
+use crate::preset_store::{InsertError, PresetStore, PresetStoreError, StoredPreset, UpdateError};
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::debug;
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct PresetService {
@@ -22,6 +23,18 @@ impl PresetService {
 
     pub async fn retrieve_preset(&self, id: &str) -> Result<StoredPreset, RetrievePresetError> {
         self.preset_store.by_id(id).await?.ok_or(RetrievePresetError::NotFound)
+    }
+
+    pub async fn create_preset(&self, name: &str, value: Value) -> Result<StoredPreset, CreatePresetError> {
+        let id = Uuid::now_v7().to_string();
+        let json = serde_json::to_value(&value).map_err(CreatePresetError::UnsupportedValue)?;
+        let stored = self.preset_store.insert(&id, name, json).await?;
+
+        // Registry last, so a failed store write leaves it untouched
+        let preset = Preset { id: stored.id.clone(), name: stored.name.clone(), value };
+        self.preset_registry.register(VersionedPreset { preset: Arc::new(preset), revision: stored.revision });
+
+        Ok(stored)
     }
 
     pub async fn update_preset(
@@ -62,6 +75,25 @@ pub enum RetrievePresetError {
 }
 
 #[derive(Debug, Error)]
+pub enum CreatePresetError {
+    #[error("a preset with this name already exists")]
+    NameAlreadyExists,
+    #[error("unsupported value: {0}")]
+    UnsupportedValue(serde_json::Error),
+    #[error(transparent)]
+    Internal(#[from] PresetStoreError),
+}
+
+impl From<InsertError> for CreatePresetError {
+    fn from(err: InsertError) -> Self {
+        match err {
+            InsertError::NameAlreadyExists => Self::NameAlreadyExists,
+            InsertError::Store(err) => Self::Internal(err),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
 pub enum UpdatePresetError {
     #[error("Unsupported value: {0}")]
     UnsupportedValue(serde_json::Error),
@@ -71,6 +103,8 @@ pub enum UpdatePresetError {
         "revision conflict: update is based on revision {base_revision}, but the current revision is {current_revision}"
     )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error("a preset with this name already exists")]
+    NameAlreadyExists,
     #[error(transparent)]
     Internal(#[from] PresetStoreError),
 }
@@ -82,6 +116,7 @@ impl From<UpdateError> for UpdatePresetError {
             UpdateError::RevisionConflict { base_revision, current_revision } => {
                 Self::RevisionConflict { base_revision, current_revision }
             }
+            UpdateError::NameAlreadyExists => Self::NameAlreadyExists,
             UpdateError::Store(err) => Self::Internal(err),
         }
     }
@@ -113,7 +148,7 @@ mod tests {
         VersionedPreset { preset: Arc::new(Preset { id: id.to_string(), name: name.to_string(), value }), revision }
     }
 
-    // PresetStore can't write presets yet, so write the rows directly
+    // Seeds rows with a chosen id and the id as name
     async fn insert_row(database: &Database, id: &str, value: &str) {
         let (id, value) = (id.to_string(), value.to_string());
         database
@@ -339,5 +374,112 @@ mod tests {
         let registered = registry.by_id("preset").expect("preset is registered");
         assert_eq!(registered.name, "Old");
         assert_eq!(registered.revision, 0);
+    }
+
+    #[tokio::test]
+    async fn update_preset_rejects_a_name_used_by_another_preset() {
+        let (service, database, registry) = create_service_with_registry(vec![
+            preset("preset", "preset", Value::Boolean(true), 0),
+            preset("other", "other", Value::Boolean(true), 0),
+        ]);
+        insert_row(&database, "preset", "true").await;
+        insert_row(&database, "other", "true").await;
+
+        let result = service.update_preset("preset", 0, "OTHER", Value::Boolean(false)).await;
+
+        assert!(matches!(result, Err(UpdatePresetError::NameAlreadyExists)), "got {result:?}");
+        let stored = service.retrieve_preset("preset").await.expect("retrieve succeeded");
+        assert_eq!(stored.name, "preset", "the store must be unchanged");
+        assert_eq!(stored.revision, 0);
+        let registered = registry.by_id("preset").expect("preset is registered");
+        assert_eq!(registered.name, "preset", "the registry must be unchanged");
+        assert_eq!(registered.revision, 0);
+    }
+
+    #[tokio::test]
+    async fn create_preset_stores_the_preset_and_returns_it_at_revision_zero() {
+        let (service, _, _) = create_service_with_registry(vec![]);
+
+        let created = service.create_preset("Dim", Value::Number(Number::PositiveInt(10))).await;
+
+        let created = created.expect("create succeeded");
+        let id = Uuid::parse_str(&created.id).expect("id is a UUID");
+        assert_eq!(id.get_version_num(), 7);
+        assert_eq!(created.name, "Dim");
+        assert_eq!(created.value, serde_json::json!(10));
+        assert_eq!(created.revision, 0);
+        let stored = service.retrieve_preset(&created.id).await.expect("retrieve succeeded");
+        assert_eq!(stored.name, "Dim");
+        assert_eq!(stored.value, serde_json::json!(10));
+        assert_eq!(stored.revision, 0);
+    }
+
+    #[tokio::test]
+    async fn create_preset_registers_the_preset_at_the_stored_revision() {
+        let (service, _, registry) = create_service_with_registry(vec![]);
+
+        let created = service.create_preset("Dim", Value::Number(Number::PositiveInt(10))).await.expect("create");
+
+        let registered = registry.by_id(&created.id).expect("preset is registered");
+        assert_eq!(registered.id, created.id);
+        assert_eq!(registered.name, "Dim");
+        assert_eq!(registered.value, Value::Number(Number::PositiveInt(10)));
+        assert_eq!(registered.revision, 0);
+    }
+
+    #[tokio::test]
+    async fn create_preset_generates_a_unique_id_per_preset() {
+        let (service, _, _) = create_service_with_registry(vec![]);
+
+        let first = service.create_preset("First", Value::Boolean(true)).await.expect("first create succeeded");
+        let second = service.create_preset("Second", Value::Boolean(true)).await.expect("second create succeeded");
+
+        assert_ne!(first.id, second.id);
+        assert_eq!(service.list().await.expect("list succeeded").len(), 2);
+    }
+
+    #[rstest]
+    #[case::same_case("Dim")]
+    #[case::different_case("dIM")]
+    #[tokio::test]
+    async fn create_preset_rejects_a_name_that_is_already_in_use(#[case] name: &str) {
+        let (service, database, registry) =
+            create_service_with_registry(vec![preset("Dim", "Dim", Value::Boolean(true), 0)]);
+        insert_row(&database, "Dim", "true").await;
+
+        let result = service.create_preset(name, Value::Boolean(false)).await;
+
+        assert!(matches!(result, Err(CreatePresetError::NameAlreadyExists)), "got {result:?}");
+        let presets = service.list().await.expect("list succeeded");
+        assert_eq!(presets.len(), 1, "nothing must be stored");
+        assert_eq!(presets[0].value, serde_json::json!(true));
+        let registered = registry.by_id("Dim").expect("preset is registered");
+        assert_eq!(registered.value, Value::Boolean(true), "the registry must be unchanged");
+    }
+
+    #[rstest]
+    #[case::date_time(Value::DateTime(Utc::now()))]
+    #[case::none(Value::None)]
+    #[tokio::test]
+    async fn create_preset_rejects_a_value_that_cannot_be_stored(#[case] value: Value) {
+        let (service, _, _) = create_service_with_registry(vec![]);
+
+        let result = service.create_preset("Dim", value).await;
+
+        assert!(matches!(result, Err(CreatePresetError::UnsupportedValue(_))), "got {result:?}");
+        assert!(service.list().await.expect("list succeeded").is_empty(), "nothing must be stored");
+    }
+
+    #[tokio::test]
+    async fn create_preset_fails_when_the_store_fails() {
+        let (service, database, _) = create_service_with_registry(vec![]);
+        database
+            .call(|conn| conn.execute("DROP TABLE presets", []).map_err(DatabaseError::from))
+            .await
+            .expect("drop the table");
+
+        let result = service.create_preset("Dim", Value::Boolean(true)).await;
+
+        assert!(matches!(result, Err(CreatePresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
     }
 }

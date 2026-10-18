@@ -12,17 +12,7 @@ use tracing::error;
 pub(super) async fn list_presets(State(state): State<ApiState>) -> Result<Response, Response> {
     let stored_presets = state.preset_service.list().await.map_err(list_error_response)?;
 
-    let presets = stored_presets
-        .into_iter()
-        .map(|preset| PresetResponse {
-            id: preset.id,
-            revision: preset.revision,
-            name: preset.name,
-            value: preset.value,
-            created_at: preset.created_at,
-            updated_at: preset.updated_at,
-        })
-        .collect();
+    let presets = stored_presets.into_iter().map(PresetResponse::from).collect();
 
     Ok((StatusCode::OK, Json(ListPresetsResponse { presets })).into_response())
 }

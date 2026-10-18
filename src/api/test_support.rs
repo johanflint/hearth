@@ -66,7 +66,7 @@ pub(super) async fn body_json(response: Response) -> serde_json::Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
-/// Writes a preset row directly, `PresetStore` can't write presets yet
+/// Writes a preset row directly, with a chosen id
 pub(super) async fn insert_preset_row(database: &Database, id: &str, name: &str, value: &str) {
     let (id, name, value) = (id.to_string(), name.to_string(), value.to_string());
     database
@@ -81,7 +81,7 @@ pub(super) async fn insert_preset_row(database: &Database, id: &str, name: &str,
         .expect("insert preset row");
 }
 
-/// Writes a preset's revision directly, `PresetStore` can't write presets yet
+/// Writes a preset's revision directly, the store only ever increments it by one
 pub(super) async fn set_preset_revision(database: &Database, id: &str, revision: i64) {
     let id = id.to_string();
     database

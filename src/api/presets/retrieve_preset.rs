@@ -15,15 +15,7 @@ pub(super) async fn retrieve_preset(
     let stored_preset =
         state.preset_service.retrieve_preset(&id).await.map_err(|err| retrieve_error_response(&id, err))?;
 
-    let response = PresetResponse {
-        id: stored_preset.id,
-        revision: stored_preset.revision,
-        name: stored_preset.name,
-        value: stored_preset.value,
-        created_at: stored_preset.created_at,
-        updated_at: stored_preset.updated_at,
-    };
-
+    let response = PresetResponse::from(stored_preset);
     Ok((StatusCode::OK, Json(response)).into_response())
 }
 
