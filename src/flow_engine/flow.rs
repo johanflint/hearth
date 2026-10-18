@@ -67,6 +67,11 @@ impl Flow {
     pub fn walk(&self) -> impl Iterator<Item = &FlowNode> + '_ {
         self.start_node.walk()
     }
+
+    pub fn walk_expressions(&self) -> impl Iterator<Item = &Expression> + '_ {
+        let nodes = self.walk().flat_map(|node| node.expressions());
+        std::iter::once(self.trigger()).chain(nodes).flat_map(Expression::walk)
+    }
 }
 
 #[derive(Debug)]
@@ -101,6 +106,14 @@ impl FlowNode {
             stack.extend(node.outgoing_nodes.iter().rev().map(FlowLink::node));
             Some(node)
         })
+    }
+
+    pub fn expressions(&self) -> Vec<&Expression> {
+        match self.kind() {
+            FlowNodeKind::Start | FlowNodeKind::End | FlowNodeKind::Sleep(_) => vec![],
+            FlowNodeKind::Conditional(expression) => vec![expression],
+            FlowNodeKind::Action(action) => action.action().expressions(),
+        }
     }
 }
 
@@ -151,6 +164,8 @@ impl ActionFlowNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flow_engine::action::ControlDeviceAction;
+    use crate::flow_engine::property_command::PropertyCommand;
 
     fn node(id: &str, children: Vec<FlowNode>) -> FlowNode {
         let links = children.into_iter().map(|child| FlowLink::new(Arc::new(child), Value::None)).collect();
@@ -164,5 +179,79 @@ mod tests {
         let ids: Vec<&str> = tree.walk().map(FlowNode::id).collect();
 
         assert_eq!(ids, ["start", "a", "c", "b"]);
+    }
+
+    fn control_device(preset_ids: &[&str]) -> ActionFlowNode {
+        let property = preset_ids
+            .iter()
+            .map(|id| (id.to_string(), PropertyCommand { value: preset(id), transition: None }))
+            .collect();
+        ActionFlowNode::new(Box::new(ControlDeviceAction::new("device".to_string(), None, property)))
+    }
+
+    fn preset(id: &str) -> Expression {
+        Expression::PresetValue { id: id.to_string() }
+    }
+
+    fn link(node: FlowNode) -> FlowLink {
+        FlowLink::new(Arc::new(node), Value::None)
+    }
+
+    fn flow(trigger: Option<Expression>, start_node: FlowNode) -> Flow {
+        Flow::new("flow".to_string(), "flow".to_string(), None, trigger, Arc::new(start_node), HashMap::new()).unwrap()
+    }
+
+    fn preset_ids<'a>(expressions: impl Iterator<Item = &'a Expression>) -> Vec<&'a str> {
+        expressions
+            .filter_map(|e| match e {
+                Expression::PresetValue { id } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn flow_node_expressions_is_empty_for_nodes_without_expressions() {
+        for kind in [FlowNodeKind::Start, FlowNodeKind::End, FlowNodeKind::Sleep(Duration::from_secs(1))] {
+            let node = FlowNode::new("node".to_string(), vec![], kind);
+            assert!(node.expressions().is_empty(), "got {:?}", node.expressions());
+        }
+    }
+
+    #[test]
+    fn flow_node_expressions_returns_the_condition_of_a_conditional() {
+        let node = FlowNode::new("node".to_string(), vec![], FlowNodeKind::Conditional(preset("condition")));
+
+        assert_eq!(preset_ids(node.expressions().into_iter()), ["condition"]);
+    }
+
+    #[test]
+    fn flow_node_expressions_returns_the_expressions_of_an_action() {
+        let action = control_device(&["a"]);
+        let node = FlowNode::new("node".to_string(), vec![], FlowNodeKind::Action(action));
+
+        assert_eq!(preset_ids(node.expressions().into_iter()), ["a"]);
+    }
+
+    #[test]
+    fn walk_expressions_visits_the_trigger_conditionals_and_actions_and_their_sub_expressions() {
+        let nested = Expression::Not { expression: Box::new(preset("nested")) };
+        let action = control_device(&["action"]);
+        let action_node = FlowNode::new("action".to_string(), vec![], FlowNodeKind::Action(action));
+        let conditional =
+            FlowNode::new("conditional".to_string(), vec![link(action_node)], FlowNodeKind::Conditional(nested));
+        let start = FlowNode::new("start".to_string(), vec![link(conditional)], FlowNodeKind::Start);
+        let flow = flow(Some(preset("trigger")), start);
+
+        assert_eq!(preset_ids(flow.walk_expressions()), ["trigger", "nested", "action"]);
+    }
+
+    #[test]
+    fn walk_expressions_only_visits_the_default_trigger_for_a_flow_without_expressions() {
+        let start = FlowNode::new("start".to_string(), vec![], FlowNodeKind::Start);
+        let flow = flow(None, start);
+
+        assert!(preset_ids(flow.walk_expressions()).is_empty());
+        assert_eq!(flow.walk_expressions().count(), 1);
     }
 }
