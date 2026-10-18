@@ -150,8 +150,8 @@ fn to_discover_error(e: reqwest::Error) -> DiscoverError {
 #[instrument(skip_all)]
 fn log_unmapped_devices(device_map: &HashMap<String, DeviceGet>) {
     let unmapped_devices = device_map
-        .iter()
-        .map(|(_, d)| {
+        .values()
+        .map(|d| {
             format!("- {} {} '{}'", d.product_data.manufacturer_name, d.product_data.product_name, d.metadata.name)
         })
         .collect::<Vec<String>>()
