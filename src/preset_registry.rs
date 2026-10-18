@@ -33,6 +33,20 @@ impl PresetRegistry {
         *entry = preset;
         RegisterResult::Replaced
     }
+
+    pub fn unregister(&self, id: &str, base_revision: u64) -> UnregisterResult {
+        let mut entries = self.presets.write().expect("preset registry lock poisoned");
+        let Some(entry) = entries.get(id) else {
+            return UnregisterResult::NotFound;
+        };
+
+        if entry.revision > base_revision {
+            return UnregisterResult::Stale { current_revision: entry.revision };
+        }
+
+        entries.remove(id);
+        UnregisterResult::Deleted
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -40,6 +54,14 @@ pub enum RegisterResult {
     Added,
     Replaced,
     // A newer (or equal) revision is already stored; the registry is unchanged
+    Stale { current_revision: u64 },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum UnregisterResult {
+    NotFound,
+    Deleted,
+    // A newer revision is registered; the registry is unchanged
     Stale { current_revision: u64 },
 }
 
@@ -178,5 +200,68 @@ mod tests {
         assert_eq!(before.value, Value::Boolean(true));
         assert_eq!(before.revision, 0);
         assert!(!Arc::ptr_eq(&before.preset, &registry.by_id("dim").expect("preset exists").preset));
+    }
+
+    #[test]
+    fn unregister_removes_a_preset() {
+        let registry = PresetRegistry::new(vec![preset("dim", "Dim", Value::Boolean(true), 0)]);
+
+        let result = registry.unregister("dim", 0);
+
+        assert_eq!(result, UnregisterResult::Deleted);
+        assert!(registry.by_id("dim").is_none(), "expected the preset to be unregistered");
+    }
+
+    #[test]
+    fn unregister_rejects_an_unknown_preset() {
+        let registry = PresetRegistry::new(vec![preset("dim", "Dim", Value::Boolean(true), 0)]);
+
+        let result = registry.unregister("unknown", 0);
+
+        assert_eq!(result, UnregisterResult::NotFound);
+        assert!(registry.by_id("dim").is_some(), "expected the preset to be there");
+    }
+
+    #[test]
+    fn unregister_rejects_an_older_revision_than_registered() {
+        let registry = PresetRegistry::new(vec![preset("dim", "Dim", Value::Boolean(true), 1)]);
+
+        let result = registry.unregister("dim", 0);
+
+        assert_eq!(result, UnregisterResult::Stale { current_revision: 1 });
+        assert!(registry.by_id("dim").is_some(), "expected the preset to be there");
+    }
+
+    #[test]
+    fn unregister_removes_an_entry_that_lags_behind() {
+        let registry = PresetRegistry::new(vec![preset("dim", "Dim", Value::Boolean(true), 0)]);
+
+        let result = registry.unregister("dim", 1);
+
+        assert_eq!(result, UnregisterResult::Deleted);
+        assert!(registry.by_id("dim").is_none(), "expected the preset to be unregistered");
+    }
+
+    #[test]
+    fn unregister_leaves_other_presets_untouched() {
+        let registry = PresetRegistry::new(vec![
+            preset("dim", "Dim", Value::Boolean(true), 0),
+            preset("enabled", "Enabled", Value::Boolean(true), 0),
+        ]);
+
+        registry.unregister("dim", 0);
+
+        assert_eq!(registry.by_id("enabled").expect("preset exists").name, "Enabled");
+    }
+
+    #[test]
+    fn unregister_does_not_change_a_preset_a_caller_already_holds() {
+        let registry = PresetRegistry::new(vec![preset("dim", "Dim", Value::Boolean(true), 0)]);
+        let before = registry.by_id("dim").expect("preset exists");
+
+        registry.unregister("dim", 0);
+
+        assert_eq!(before.name, "Dim");
+        assert_eq!(before.revision, 0);
     }
 }

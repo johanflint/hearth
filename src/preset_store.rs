@@ -100,6 +100,32 @@ impl PresetStore {
             })
             .await
     }
+
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+        let id = id.to_string();
+        self.database
+            .call(move |conn| {
+                let rows_deleted: usize = conn.execute(
+                    "DELETE FROM presets WHERE id = ?1 AND revision = ?2",
+                    params![id, base_revision as i64],
+                )?;
+                if rows_deleted == 1 {
+                    return Ok(());
+                }
+
+                // No row matched: either the preset doesn't exist or someone else updated it first
+                let current: Option<i64> = conn
+                    .query_row("SELECT revision FROM presets WHERE id = ?1", params![id], |row| row.get(0))
+                    .optional()?;
+                match current {
+                    Some(current) => {
+                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                    }
+                    None => Err(DeleteError::NotFound),
+                }
+            })
+            .await
+    }
 }
 
 fn row_to_stored_preset(row: &Row) -> rusqlite::Result<StoredPreset> {
@@ -197,6 +223,31 @@ impl From<DatabaseError> for UpdateError {
 }
 
 impl From<rusqlite::Error> for UpdateError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum DeleteError {
+    #[error("preset not found")]
+    NotFound,
+    #[error(
+        "revision conflict: delete is based on revision {base_revision}, but the current revision is {current_revision}"
+    )]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error(transparent)]
+    Store(#[from] PresetStoreError),
+}
+
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `PresetStoreError` on their own
+impl From<DatabaseError> for DeleteError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+impl From<rusqlite::Error> for DeleteError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Store(err.into())
     }
@@ -617,6 +668,94 @@ mod tests {
         let result = store.update("preset", 0, "Blue", json!(false)).await;
 
         assert!(matches!(result, Err(UpdateError::Store(PresetStoreError::InvalidRevision(-1)))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_preset_when_the_base_revision_matches() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET revision = 3").await;
+
+        store.delete("preset", 3).await.expect("delete succeeded");
+
+        assert!(store.by_id("preset").await.expect("by_id succeeded").is_none(), "preset must be deleted");
+    }
+
+    #[tokio::test]
+    async fn delete_only_removes_the_given_preset() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        insert_row(&store, "other", "Other", "10", None).await;
+
+        store.delete("preset", 0).await.expect("delete succeeded");
+
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "other");
+        assert_eq!(rows[0].name, "Other");
+    }
+
+    #[rstest]
+    #[case::behind(0, 2)]
+    #[case::ahead(5, 2)]
+    #[tokio::test]
+    async fn delete_returns_a_revision_conflict_for_a_mismatching_base_revision(
+        #[case] base_revision: u64,
+        #[case] current_revision: u64,
+    ) {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET revision = 2").await;
+
+        let result = store.delete("preset", base_revision).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(DeleteError::RevisionConflict { base_revision: b, current_revision: c })
+                    if b == base_revision && c == current_revision
+            ),
+            "got {result:?}"
+        );
+        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        assert_eq!(stored.revision, 2, "the preset must not be deleted");
+    }
+
+    #[rstest]
+    #[case::fresh_database(&[])]
+    #[case::other_presets(&["other"])]
+    #[tokio::test]
+    async fn delete_returns_not_found_for_an_unknown_id(#[case] existing_ids: &[&str]) {
+        let store = open_in_memory();
+        for id in existing_ids {
+            insert_row(&store, id, id, "true", None).await;
+        }
+
+        let result = store.delete("preset", 0).await;
+
+        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
+        assert_eq!(store.list().await.expect("list succeeded").len(), existing_ids.len());
+    }
+
+    #[tokio::test]
+    async fn delete_fails_when_the_stored_revision_is_negative() {
+        let store = open_in_memory();
+        insert_row(&store, "preset", "Red", "true", None).await;
+        execute(&store, "UPDATE presets SET revision = -1").await;
+
+        let result = store.delete("preset", 0).await;
+
+        assert!(matches!(result, Err(DeleteError::Store(PresetStoreError::InvalidRevision(-1)))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_fails_when_the_store_fails() {
+        let store = open_in_memory();
+        execute(&store, "DROP TABLE presets").await;
+
+        let result = store.delete("preset", 0).await;
+
+        assert!(matches!(result, Err(DeleteError::Store(PresetStoreError::Sqlite(_)))), "got {result:?}");
     }
 
     #[tokio::test]
