@@ -1,0 +1,30 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "064e61aa-b077-4665-9bea-0ca4c332a331",
+      "id_v1": "/groups/1",
+      "children": [
+        { "rid": "079e0321-7e18-46bc-bc16-fcbc3dd09e30", "rtype": "device" }
+      ],
+      "services": [
+        { "rid": "6c1524d8-1fd7-40fc-a6f4-77e5a4146d89", "rtype": "grouped_light" }
+      ],
+      "metadata": { "name": "Woonkamer", "archetype": "living_room" },
+      "type": "room"
+    },
+    {
+      "id": "0b15192e-29fa-40f5-a9fa-13617a1a01fd",
+      "id_v1": "/groups/2",
+      "children": [
+        { "rid": "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3", "rtype": "device" },
+        { "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77", "rtype": "device" }
+      ],
+      "services": [
+        { "rid": "2f3a1b6e-5c4d-4e7f-8a9b-0c1d2e3f4a5b", "rtype": "grouped_light" }
+      ],
+      "metadata": { "name": "Keuken", "archetype": "kitchen" },
+      "type": "room"
+    }
+  ]
+}

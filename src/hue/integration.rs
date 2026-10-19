@@ -3,6 +3,7 @@ use crate::domain::{Controller, Device, Event};
 use crate::hue;
 use crate::hue::client::new_client;
 use crate::hue::controller::HueController;
+use crate::hue::grouped_light_index::GroupedLightIndex;
 use crate::hue::pending_writes::PendingWrites;
 use crate::integration::{Integration, IntegrationError};
 use crate::store::StoreSnapshot;
@@ -18,13 +19,15 @@ pub struct HueIntegration {
     config: Arc<AppConfig>,
     store_rx: WatchReceiver<StoreSnapshot>,
     pending_writes: Arc<PendingWrites>,
+    grouped_light_index: Arc<GroupedLightIndex>,
 }
 
 impl HueIntegration {
     pub fn new(config: Arc<AppConfig>, store_rx: WatchReceiver<StoreSnapshot>) -> Result<Self, IntegrationError> {
         let client = new_client(&config)?;
         let pending_writes = Arc::new(PendingWrites::default());
-        Ok(HueIntegration { client, config, store_rx, pending_writes })
+        let grouped_light_index = Arc::new(GroupedLightIndex::default());
+        Ok(HueIntegration { client, config, store_rx, pending_writes, grouped_light_index })
     }
 }
 
@@ -39,7 +42,9 @@ impl Integration for HueIntegration {
     }
 
     async fn discover(&self) -> Result<Vec<Device>, IntegrationError> {
-        Ok(hue::discover(&self.client, &self.config).await?)
+        let discovery = hue::discover(&self.client, &self.config).await?;
+        self.grouped_light_index.replace_all(discovery.grouped_lights);
+        Ok(discovery.devices)
     }
 
     async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError> {

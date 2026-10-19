@@ -1,22 +1,28 @@
 use crate::app_config::AppConfig;
 use crate::domain::Device;
 use crate::hue::domain::{
-    ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, TemperatureGet,
-    ZigbeeConnectivityGet,
+    ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, RoomGet,
+    TemperatureGet, ZigbeeConnectivityGet,
 };
 use crate::hue::enrich_devices::enrich_devices;
 use crate::hue::map_contact_sensors::{MapContactSensorsError, map_contact_sensors};
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
 use crate::hue::map_remotes::{MapRemotesError, map_remotes};
+use crate::hue::map_rooms::map_rooms;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use thiserror::Error;
 use tracing::{debug, info, instrument, warn};
 
+pub struct Discovery {
+    pub devices: Vec<Device>,
+    pub grouped_lights: HashMap<BTreeSet<String>, String>,
+}
+
 #[instrument(skip_all)]
-pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>, DiscoverError> {
+pub async fn discover(client: &Client, config: &AppConfig) -> Result<Discovery, DiscoverError> {
     info!("Retrieving Hue devices...");
 
     let hue_url = config.hue().url();
@@ -50,6 +56,11 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     let device_power_response = fetch_resources::<DevicePowerGet>(client, hue_url, "device_power").await?;
     debug!("Retrieving device power... OK, {} found", device_power_response.data.len());
 
+    let room_response = fetch_resources::<RoomGet>(client, hue_url, "room").await?;
+    info!("Retrieving rooms... OK, {} found", room_response.data.len());
+
+    let grouped_lights = map_rooms(room_response.data);
+
     let mut device_map = device_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
     let mut devices = vec![];
@@ -75,7 +86,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
         log_unmapped_devices(&device_map);
     }
 
-    Ok(devices)
+    Ok(Discovery { devices, grouped_lights })
 }
 
 async fn fetch_resources<T>(client: &Client, hue_url: &str, name: &'static str) -> Result<HueResponse<T>, DiscoverError>
@@ -258,10 +269,18 @@ mod tests {
             .create_async()
             .await;
 
+        server
+            .mock("GET", "/clip/v2/resource/room")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_room_simplified_response.json"))
+            .create_async()
+            .await;
+
         let app_config = AppConfigBuilder::new().hue_url(server.url()).build();
         let client = new_client(&app_config).unwrap();
 
-        let response = discover(&client, &app_config).await?;
+        let Discovery { devices: response, grouped_lights } = discover(&client, &app_config).await?;
 
         let on_property: Box<dyn Property> = Box::new(BooleanProperty::new(
             "on".to_string(),
@@ -380,6 +399,22 @@ mod tests {
         ));
 
         mock.assert();
+        assert_eq!(
+            grouped_lights,
+            HashMap::from([
+                (
+                    BTreeSet::from(["079e0321-7e18-46bc-bc16-fcbc3dd09e30".to_string()]),
+                    "6c1524d8-1fd7-40fc-a6f4-77e5a4146d89".to_string()
+                ),
+                (
+                    BTreeSet::from([
+                        "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77".to_string(),
+                        "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3".to_string()
+                    ]),
+                    "2f3a1b6e-5c4d-4e7f-8a9b-0c1d2e3f4a5b".to_string()
+                ),
+            ])
+        );
         assert_eq!(response.len(), 4);
         assert_eq!(
             response[0],
