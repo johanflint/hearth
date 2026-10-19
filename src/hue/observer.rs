@@ -194,7 +194,7 @@ fn light_initiated_by(
 
     let snapshot = store_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
     let device = snapshot.devices.get(&change.owner.rid);
-    if device.is_some_and(|device| is_unnoticeable_correction(change, &device)) {
+    if device.is_some_and(|device| is_unnoticeable_correction(change, device)) {
         return InitiatedBy::Device;
     }
 
