@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.3.0 (2026-10-19)
+
+### Features
+
+- Add integrations ([#74](https://github.com/johanflint/hearth/pull/74))
+- Manage presets ([#73](https://github.com/johanflint/hearth/pull/73))
+- Add presets ([#72](https://github.com/johanflint/hearth/pull/72))
+- Update light levels ([#69](https://github.com/johanflint/hearth/pull/69))
+- Support contact sensors ([#68](https://github.com/johanflint/hearth/pull/68))
+- Support temperature from motion sensors ([#67](https://github.com/johanflint/hearth/pull/67))
+- Claim devices ([#66](https://github.com/johanflint/hearth/pull/66))
+- Arithmetic expressions ([#65](https://github.com/johanflint/hearth/pull/65))
+- Support expressions in property value ([#64](https://github.com/johanflint/hearth/pull/64))
+- Support color literals ([#63](https://github.com/johanflint/hearth/pull/63))
+- Validate flows ([#62](https://github.com/johanflint/hearth/pull/62))
+- Support transitions ([#59](https://github.com/johanflint/hearth/pull/59))
+
+### Miscellaneous Chores
+
+- Format code with rustfmt ([#71](https://github.com/johanflint/hearth/pull/71))
+- Fix warnings ([#61](https://github.com/johanflint/hearth/pull/61))
+
+### Code Refactoring
+
+- Move `Value` to domain ([#70](https://github.com/johanflint/hearth/pull/70))
+
 ## v0.2.0 (2026-10-04)
 
 ### Features
