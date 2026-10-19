@@ -6,6 +6,7 @@ use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
+use crate::integration_list::{enabled_only, integrations};
 use crate::metrics_layer::MetricsLayer;
 use crate::preset_registry::PresetRegistry;
 use crate::preset_service::PresetService;
@@ -36,6 +37,8 @@ mod flow_service;
 mod flow_store;
 mod geo_location_deserializer;
 mod hue;
+mod integration;
+mod integration_list;
 mod metrics;
 mod metrics_layer;
 mod preset_loader;
@@ -51,7 +54,7 @@ mod store_listener;
 mod test_support;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,hearth::flow_engine=warn"))
         .add_directive("hearth::flow_log=info".parse()?);
@@ -110,12 +113,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     info!("✅  Scheduled flows");
 
-    let hue_client = hue::new_client(&config)?;
-    let pending_writes = Arc::new(hue::PendingWrites::default());
-    let hue_controller = hue::Controller::new(hue_client.clone(), pending_writes.clone(), config.clone());
-    controller_registry::register(Arc::new(hue_controller));
-    info!("✅  Initialized controllers");
-
     let geo_location = config.geo_location().clone();
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
@@ -127,11 +124,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("✅  Initialized store listener");
 
     let store_rx_clone = store.notifier();
-    let hue_store_rx = store.notifier();
+    let integrations_rx_clone = store.notifier();
     task::spawn(async move {
         store.listen().await;
     });
     info!("✅  Initialized store");
+
+    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone)?);
+    for integration in &integrations {
+        controller_registry::register(integration.controller());
+    }
+    info!("✅  Initialized controllers");
 
     let flow_service = Arc::new(FlowService::new(
         flow_store,
@@ -145,20 +148,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 
-    let hue_devices = hue::discover(&hue_client, &config).await?;
-    trace!("Observed Hue devices: {:?}", &hue_devices);
-    tx.send(Event::DiscoveredDevices(hue_devices)).await?;
-
+    for integration in &integrations {
+        let devices = integration.discover().await?;
+        trace!("Discovered devices: {:?}", &devices);
+        tx.send(Event::DiscoveredDevices(devices)).await?;
+    }
     info!("✅  Discovered all devices");
+
+    for integration in integrations {
+        trace!("Observing '{}'", integration.name());
+        let tx = tx.clone();
+        integration.observe(tx).await?;
+    }
+    info!("✅  Observing all integrations");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
 
-    hue::observe(tx, pending_writes, hue_store_rx, &hue_client, &config).await?;
-
-    match signal::ctrl_c().await {
-        Ok(()) => {}
-        Err(err) => {
-            error!("Unable to listen for shutdown signal: {}", err);
-        }
+    if let Err(err) = signal::ctrl_c().await {
+        error!("Unable to listen for shutdown signal: {}", err);
     }
 
     Ok(())

@@ -1,6 +1,5 @@
 use crate::app_config::AppConfig;
 use crate::domain::{Event, InitiatedBy};
-use crate::hue::PendingWrites;
 use crate::hue::corrections::is_unnoticeable_correction;
 use crate::hue::domain::{ChangedProperty, LightChanged, ServerSentEventPayload, UnknownProperty};
 use crate::hue::map_connectivity_changed::map_connectivity_changed;
@@ -11,11 +10,12 @@ use crate::hue::map_light_level_changed::map_light_level_changed;
 use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
 use crate::hue::map_remotes_changed::map_remote_changed;
 use crate::hue::map_temperature_changed::map_temperature_changed;
+use crate::hue::pending_writes::PendingWrites;
+use crate::integration::IntegrationError;
 use crate::sse;
 use crate::sse::{Config, ServerSentEvent};
 use crate::store::StoreSnapshot;
 use reqwest::Client;
-use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -34,7 +34,7 @@ pub async fn observe(
     store_rx: WatchReceiver<StoreSnapshot>,
     client: &Client,
     config: &AppConfig,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), IntegrationError> {
     let sse_config = Config {
         url: config.hue().url().to_owned(),
         retry_ms: config.hue().retry_ms(),
@@ -194,7 +194,7 @@ fn light_initiated_by(
 
     let snapshot = store_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
     let device = snapshot.devices.get(&change.owner.rid);
-    if device.is_some_and(|device| is_unnoticeable_correction(change, &device)) {
+    if device.is_some_and(|device| is_unnoticeable_correction(change, device)) {
         return InitiatedBy::Device;
     }
 
