@@ -1,5 +1,5 @@
 use crate::hue::domain::{
-    ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, LightLevelChanged, MotionChanged,
+    ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, LightLevelChanged, MotionChanged, RoomChanged,
     TemperatureChanged, ZigbeeConnectivityChanged,
 };
 use serde::{Deserialize, Deserializer};
@@ -35,6 +35,7 @@ pub enum ChangedProperty {
     DevicePower(DevicePowerChanged),
     Temperature(TemperatureChanged),
     Contact(ContactChanged),
+    Room(RoomChanged),
     #[serde(untagged)]
     Unknown(UnknownProperty),
 }

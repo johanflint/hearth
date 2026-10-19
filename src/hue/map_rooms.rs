@@ -1,33 +1,23 @@
 use crate::hue::domain::RoomGet;
-use std::collections::{BTreeSet, HashMap};
+use crate::hue::grouped_light_index::Room;
+use std::collections::HashMap;
 
-type DeviceId = String;
-type GroupedLightId = String;
-
-pub fn map_rooms(rooms: Vec<RoomGet>) -> HashMap<BTreeSet<DeviceId>, GroupedLightId> {
-    rooms
-        .into_iter()
-        .filter_map(|room| {
-            let grouped_light_id = room.services.into_iter().find(|s| s.rtype == "grouped_light")?.rid;
-            let members: BTreeSet<_> = room.children.into_iter().map(|resource| resource.rid).collect();
-            (!members.is_empty()).then_some((members, grouped_light_id))
-        })
-        .fold(HashMap::new(), |mut map, (members, grouped_light_id)| {
-            map.insert(members, grouped_light_id);
-            map
-        })
+pub fn map_rooms(rooms: Vec<RoomGet>) -> HashMap<String, Room> {
+    rooms.into_iter().map(|room| (room.id.clone(), Room::from(room))).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hue::grouped_light_index::GroupedLightIndex;
     use serde_json::json;
+    use std::collections::BTreeSet;
 
-    fn room(children: &[&str], services: &[(&str, &str)]) -> RoomGet {
+    fn room(id: &str, children: &[&str], services: &[(&str, &str)]) -> RoomGet {
         let children: Vec<_> = children.iter().map(|rid| json!({ "rid": rid, "rtype": "device" })).collect();
         let services: Vec<_> = services.iter().map(|(rid, rtype)| json!({ "rid": rid, "rtype": rtype })).collect();
         serde_json::from_value(json!({
-            "id": "room-id",
+            "id": id,
             "children": children,
             "services": services,
             "metadata": { "name": "Room", "archetype": "other" }
@@ -35,58 +25,75 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn maps_the_children_of_a_room_to_its_grouped_light() {
-        let rooms = vec![room(&["device-b", "device-a"], &[("grouped-light-1", "grouped_light")])];
+    fn members(devices: &[&str]) -> BTreeSet<String> {
+        devices.iter().map(|device| device.to_string()).collect()
+    }
 
-        let result = map_rooms(rooms);
-
-        assert_eq!(
-            result,
-            HashMap::from([(
-                BTreeSet::from(["device-a".to_string(), "device-b".to_string()]),
-                "grouped-light-1".to_string()
-            )])
-        );
+    // The fields of Room are private, so the mapped rooms are inspected through the index
+    fn index_of(rooms: HashMap<String, Room>) -> GroupedLightIndex {
+        let index = GroupedLightIndex::default();
+        index.replace_all(rooms);
+        index
     }
 
     #[test]
-    fn picks_the_grouped_light_from_the_services() {
-        let rooms = vec![room(&["device-a"], &[("other-service", "something_else"), ("grouped-light-1", "grouped_light")])];
-
-        let result = map_rooms(rooms);
-
-        assert_eq!(result.get(&BTreeSet::from(["device-a".to_string()])), Some(&"grouped-light-1".to_string()));
-    }
-
-    #[test]
-    fn skips_rooms_without_a_grouped_light() {
-        let rooms = vec![room(&["device-a"], &[("other-service", "something_else")]), room(&["device-b"], &[])];
-
-        assert!(map_rooms(rooms).is_empty());
-    }
-
-    #[test]
-    fn skips_rooms_without_children() {
-        let rooms = vec![room(&[], &[("grouped-light-1", "grouped_light")])];
-
-        assert!(map_rooms(rooms).is_empty());
-    }
-
-    #[test]
-    fn maps_every_room() {
+    fn maps_every_room_by_its_id() {
         let rooms = vec![
-            room(&["device-a"], &[("grouped-light-1", "grouped_light")]),
-            room(&["device-b", "device-c"], &[("grouped-light-2", "grouped_light")]),
+            room("room-1", &["device-a"], &[("grouped-light-1", "grouped_light")]),
+            room("room-2", &["device-b", "device-c"], &[("grouped-light-2", "grouped_light")]),
         ];
 
         let result = map_rooms(rooms);
 
-        assert_eq!(result.len(), 2);
-        assert_eq!(result.get(&BTreeSet::from(["device-a".to_string()])), Some(&"grouped-light-1".to_string()));
-        assert_eq!(
-            result.get(&BTreeSet::from(["device-b".to_string(), "device-c".to_string()])),
-            Some(&"grouped-light-2".to_string())
-        );
+        let mut ids: Vec<_> = result.keys().cloned().collect();
+        ids.sort();
+        assert_eq!(ids, vec!["room-1".to_string(), "room-2".to_string()]);
+    }
+
+    #[test]
+    fn maps_the_children_of_a_room_to_its_grouped_light() {
+        let rooms = vec![room("room-1", &["device-b", "device-a"], &[("grouped-light-1", "grouped_light")])];
+
+        let index = index_of(map_rooms(rooms));
+
+        assert_eq!(index.find(&members(&["device-a", "device-b"])), Some("grouped-light-1".to_string()));
+    }
+
+    #[test]
+    fn picks_the_grouped_light_from_the_services() {
+        let rooms = vec![room(
+            "room-1",
+            &["device-a"],
+            &[("other-service", "something_else"), ("grouped-light-1", "grouped_light")],
+        )];
+
+        let index = index_of(map_rooms(rooms));
+
+        assert_eq!(index.find(&members(&["device-a"])), Some("grouped-light-1".to_string()));
+    }
+
+    #[test]
+    fn keeps_rooms_without_a_grouped_light() {
+        let rooms = vec![room("room-1", &["device-a"], &[("other-service", "something_else")])];
+
+        let result = map_rooms(rooms);
+
+        assert!(result.contains_key("room-1"));
+        assert_eq!(index_of(result).find(&members(&["device-a"])), None);
+    }
+
+    #[test]
+    fn keeps_rooms_without_children() {
+        let rooms = vec![room("room-1", &[], &[("grouped-light-1", "grouped_light")])];
+
+        let result = map_rooms(rooms);
+
+        assert!(result.contains_key("room-1"));
+        assert_eq!(index_of(result).find(&members(&[])), None);
+    }
+
+    #[test]
+    fn maps_no_rooms_to_an_empty_map() {
+        assert!(map_rooms(vec![]).is_empty());
     }
 }

@@ -1,7 +1,8 @@
 use crate::app_config::AppConfig;
 use crate::domain::{Event, InitiatedBy};
 use crate::hue::corrections::is_unnoticeable_correction;
-use crate::hue::domain::{ChangedProperty, LightChanged, ServerSentEventPayload, UnknownProperty};
+use crate::hue::domain::{ChangedProperty, DataType, LightChanged, ServerSentEventPayload, UnknownProperty};
+use crate::hue::grouped_light_index::GroupedLightIndex;
 use crate::hue::map_connectivity_changed::map_connectivity_changed;
 use crate::hue::map_contact_sensors_changed::map_contact_sensors_changed;
 use crate::hue::map_device_power_changed::map_device_power_changed;
@@ -31,6 +32,7 @@ type HueEvent = ServerSentEvent<Vec<ServerSentEventPayload>>;
 pub async fn observe(
     tx: Sender<Event>,
     pending_writes: Arc<PendingWrites>,
+    grouped_light_index: Arc<GroupedLightIndex>,
     store_rx: WatchReceiver<StoreSnapshot>,
     client: &Client,
     config: &AppConfig,
@@ -44,7 +46,15 @@ pub async fn observe(
     };
     let buffer_size = config.core().store_buffer_size();
     let client = client.clone();
-    task::spawn(supervise_hue_pipeline(tx, client, pending_writes, store_rx, sse_config, buffer_size));
+    task::spawn(supervise_hue_pipeline(
+        tx,
+        client,
+        pending_writes,
+        grouped_light_index,
+        store_rx,
+        sse_config,
+        buffer_size,
+    ));
 
     Ok(())
 }
@@ -56,6 +66,7 @@ async fn supervise_hue_pipeline(
     tx: Sender<Event>,
     client: Client,
     pending_writes: Arc<PendingWrites>,
+    grouped_light_index: Arc<GroupedLightIndex>,
     store_rx: WatchReceiver<StoreSnapshot>,
     sse_config: Config,
     buffer_size: usize,
@@ -63,7 +74,13 @@ async fn supervise_hue_pipeline(
     loop {
         let (sse_tx, sse_rx) = mpsc::channel::<HueEvent>(buffer_size);
 
-        let mut processor = task::spawn(run_processor(sse_rx, tx.clone(), pending_writes.clone(), store_rx.clone()));
+        let mut processor = task::spawn(run_processor(
+            sse_rx,
+            tx.clone(),
+            pending_writes.clone(),
+            grouped_light_index.clone(),
+            store_rx.clone(),
+        ));
         let mut listener = {
             let cloned_client = client.clone();
             let cloned_sse_config = sse_config.clone();
@@ -95,6 +112,7 @@ async fn run_processor(
     mut sse_rx: Receiver<HueEvent>,
     tx: Sender<Event>,
     pending_writes: Arc<PendingWrites>,
+    grouped_light_index: Arc<GroupedLightIndex>,
     store_rx: WatchReceiver<StoreSnapshot>,
 ) {
     while let Some(hue_event) = sse_rx.recv().await {
@@ -103,8 +121,17 @@ async fn run_processor(
         }
         if let Some(data) = hue_event.data {
             for payload in data {
+                let data_type = &payload.r#type;
                 for property in payload.data {
-                    handle_changed_property(tx.clone(), property, pending_writes.clone(), &store_rx).await;
+                    handle_changed_property(
+                        tx.clone(),
+                        property,
+                        data_type,
+                        pending_writes.clone(),
+                        grouped_light_index.clone(),
+                        &store_rx,
+                    )
+                    .await;
                 }
             }
         }
@@ -114,7 +141,9 @@ async fn run_processor(
 async fn handle_changed_property(
     tx: Sender<Event>,
     property: ChangedProperty,
+    data_type: &DataType,
     pending_writes: Arc<PendingWrites>,
+    grouped_light_index: Arc<GroupedLightIndex>,
     store_rx: &WatchReceiver<StoreSnapshot>,
 ) {
     match property {
@@ -176,6 +205,11 @@ async fn handle_changed_property(
                 });
             }
         }
+        ChangedProperty::Room(property) => match data_type {
+            DataType::Add | DataType::Update => grouped_light_index.apply(property.id.clone(), property.into()),
+            DataType::Delete => grouped_light_index.remove(&property.id),
+            DataType::Error => {}
+        },
         ChangedProperty::Unknown(UnknownProperty { property_type, value }) => {
             debug!("⚠️ Unknown changed property type '{}'", property_type);
             trace!("   Payload: {}", value);

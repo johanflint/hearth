@@ -11,6 +11,14 @@ pub struct RoomGet {
     pub metadata: Metadata,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RoomChanged {
+    pub id: String,
+    pub children: Option<Vec<Owner>>,
+    pub services: Option<Vec<Owner>>,
+    pub metadata: Option<Metadata>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

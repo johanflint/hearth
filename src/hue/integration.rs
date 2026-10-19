@@ -43,12 +43,20 @@ impl Integration for HueIntegration {
 
     async fn discover(&self) -> Result<Vec<Device>, IntegrationError> {
         let discovery = hue::discover(&self.client, &self.config).await?;
-        self.grouped_light_index.replace_all(discovery.grouped_lights);
+        self.grouped_light_index.replace_all(discovery.rooms);
         Ok(discovery.devices)
     }
 
     async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError> {
-        hue::observe(tx, self.pending_writes.clone(), self.store_rx.clone(), &self.client, &self.config).await
+        hue::observe(
+            tx,
+            self.pending_writes.clone(),
+            self.grouped_light_index.clone(),
+            self.store_rx.clone(),
+            &self.client,
+            &self.config,
+        )
+        .await
     }
 
     fn controller(&self) -> Arc<dyn Controller> {
