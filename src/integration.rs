@@ -1,0 +1,17 @@
+use crate::domain::{Controller, Device, Event};
+use async_trait::async_trait;
+use std::error::Error;
+use std::fmt::Debug;
+use std::sync::Arc;
+use tokio::sync::mpsc::Sender;
+
+// Send + Sync so `?` can propagate it from async fns that are required to be Send
+pub type IntegrationError = Box<dyn Error + Send + Sync>;
+
+#[async_trait]
+pub trait Integration: Debug + Send + Sync {
+    async fn discover(&self) -> Result<Vec<Device>, IntegrationError>;
+    /// Starts observing in the background and returns once started; the integration supervises itself afterwards
+    async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError>;
+    fn controller(&self) -> Arc<dyn Controller>;
+}
