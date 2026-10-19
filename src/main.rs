@@ -150,12 +150,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     for integration in &integrations {
         let devices = integration.discover().await?;
-        trace!("Observed devices: {:?}", &devices);
+        trace!("Discovered devices: {:?}", &devices);
         tx.send(Event::DiscoveredDevices(devices)).await?;
     }
     info!("✅  Discovered all devices");
 
     for integration in integrations {
+        trace!("Observing '{}'", integration.name());
         let tx = tx.clone();
         integration.observe(tx).await?;
     }

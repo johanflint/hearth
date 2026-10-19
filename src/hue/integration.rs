@@ -30,6 +30,10 @@ impl HueIntegration {
 
 #[async_trait]
 impl Integration for HueIntegration {
+    fn name(&self) -> &'static str {
+        "Hue"
+    }
+
     async fn discover(&self) -> Result<Vec<Device>, IntegrationError> {
         Ok(hue::discover(&self.client, &self.config).await?)
     }
