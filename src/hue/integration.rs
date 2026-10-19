@@ -34,6 +34,10 @@ impl Integration for HueIntegration {
         "Hue"
     }
 
+    fn enabled(&self) -> bool {
+        self.config.hue().enabled()
+    }
+
     async fn discover(&self) -> Result<Vec<Device>, IntegrationError> {
         Ok(hue::discover(&self.client, &self.config).await?)
     }
@@ -53,12 +57,24 @@ mod tests {
     use crate::app_config::AppConfigBuilder;
     use crate::hue::controller::CONTROLLER_ID;
     use crate::hue::discoverer::DiscoverError;
+    use rstest::rstest;
     use tokio::sync::{mpsc, watch};
 
     fn hue_integration(hue_url: String) -> HueIntegration {
         let config = Arc::new(AppConfigBuilder::new().hue_url(hue_url).build());
         let (_store_tx, store_rx) = watch::channel(StoreSnapshot::default());
         HueIntegration::new(config, store_rx).unwrap()
+    }
+
+    #[rstest]
+    #[case::enabled(true)]
+    #[case::disabled(false)]
+    fn enabled_follows_the_hue_config(#[case] enabled: bool) {
+        let config = Arc::new(AppConfigBuilder::new().hue_enabled(enabled).build());
+        let (_store_tx, store_rx) = watch::channel(StoreSnapshot::default());
+        let integration = HueIntegration::new(config, store_rx).unwrap();
+
+        assert_eq!(integration.enabled(), enabled);
     }
 
     #[test]

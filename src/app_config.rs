@@ -81,6 +81,7 @@ impl Db {
 
 #[derive(Debug, Deserialize)]
 pub struct Hue {
+    enabled: bool,
     url: String,
     retry_ms: u64,
     retry_max_delay_ms: u64,
@@ -90,6 +91,10 @@ pub struct Hue {
 }
 
 impl Hue {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub fn url(&self) -> &str {
         &self.url
     }
@@ -133,6 +138,7 @@ impl AppConfigBuilder {
                 },
                 db: Db { file_name: "hearth.db".to_string() },
                 hue: Hue {
+                    enabled: true,
                     url: "https://hue.url/".to_string(),
                     retry_ms: 100,
                     retry_max_delay_ms: 200,
@@ -143,6 +149,11 @@ impl AppConfigBuilder {
                 location: GeoLocation { latitude: 51.8615899, longitude: 4.3580323, altitude: 0.0 },
             },
         }
+    }
+
+    pub fn hue_enabled(mut self, enabled: bool) -> Self {
+        self.config.hue.enabled = enabled;
+        self
     }
 
     pub fn hue_url(mut self, url: String) -> Self {

@@ -12,6 +12,7 @@
     "directory": ""
   },
   "hue": {
+    enabled: false,
     url: "https://localhost",
     retry_ms: 500,
     retry_max_delay_ms: 30000,

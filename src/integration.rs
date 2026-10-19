@@ -10,6 +10,9 @@ pub type IntegrationError = Box<dyn Error + Send + Sync>;
 
 #[async_trait]
 pub trait Integration: Debug + Send + Sync {
+    /// Name of the system integrating with
+    fn name(&self) -> &'static str;
+    fn enabled(&self) -> bool;
     async fn discover(&self) -> Result<Vec<Device>, IntegrationError>;
     /// Starts observing in the background and returns once started; the integration supervises itself afterwards
     async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError>;

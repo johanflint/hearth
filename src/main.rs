@@ -6,7 +6,7 @@ use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
-use crate::integration_list::integrations;
+use crate::integration_list::{enabled_only, integrations};
 use crate::metrics_layer::MetricsLayer;
 use crate::preset_registry::PresetRegistry;
 use crate::preset_service::PresetService;
@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     info!("✅  Initialized store");
 
-    let integrations = integrations(config.clone(), integrations_rx_clone)?;
+    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone)?);
     for integration in &integrations {
         controller_registry::register(integration.controller());
     }
