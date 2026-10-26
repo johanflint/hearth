@@ -1,0 +1,26 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "064e61aa-b077-4665-9bea-0ca4c332a331",
+      "id_v1": "/groups/1",
+      "children": [
+        {
+          "rid": "079e0321-7e18-46bc-bc16-fcbc3dd09e30",
+          "rtype": "device"
+        }
+      ],
+      "services": [
+        {
+          "rid": "6c1524d8-1fd7-40fc-a6f4-77e5a4146d89",
+          "rtype": "grouped_light"
+        }
+      ],
+      "metadata": {
+        "name": "Eetkamer",
+        "archetype": "dining"
+      },
+      "type": "room"
+    }
+  ]
+}

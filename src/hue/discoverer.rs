@@ -1,14 +1,15 @@
 use crate::app_config::AppConfig;
 use crate::domain::Device;
 use crate::hue::domain::{
-    ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, TemperatureGet,
-    ZigbeeConnectivityGet,
+    ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, RoomGet,
+    TemperatureGet, ZigbeeConnectivityGet,
 };
 use crate::hue::enrich_devices::enrich_devices;
 use crate::hue::map_contact_sensors::{MapContactSensorsError, map_contact_sensors};
 use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
 use crate::hue::map_remotes::{MapRemotesError, map_remotes};
+use crate::hue::map_rooms::map_rooms;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet};
@@ -49,6 +50,12 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
 
     let device_power_response = fetch_resources::<DevicePowerGet>(client, hue_url, "device_power").await?;
     debug!("Retrieving device power... OK, {} found", device_power_response.data.len());
+
+    let room_response = fetch_resources::<RoomGet>(client, hue_url, "room").await?;
+    info!("Retrieving rooms... OK, {} found", room_response.data.len());
+
+    let light_device_ids: HashSet<String> = light_response.data.iter().map(|light| light.owner.rid.clone()).collect();
+    let _ = map_rooms(room_response.data, &light_device_ids);
 
     let mut device_map = device_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
@@ -255,6 +262,14 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(include_str!("../../tests/resources/hue_device_power_simplified_response.json"))
+            .create_async()
+            .await;
+
+        server
+            .mock("GET", "/clip/v2/resource/room")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_room_simplified_response.json"))
             .create_async()
             .await;
 
