@@ -1,7 +1,7 @@
 use crate::app_config::AppConfig;
 use crate::domain::{Event, InitiatedBy};
 use crate::hue::corrections::is_unnoticeable_correction;
-use crate::hue::domain::{ChangedProperty, LightChanged, ServerSentEventPayload, UnknownProperty};
+use crate::hue::domain::{ChangedProperty, DataType, LightChanged, ServerSentEventPayload, UnknownProperty};
 use crate::hue::map_connectivity_changed::map_connectivity_changed;
 use crate::hue::map_contact_sensors_changed::map_contact_sensors_changed;
 use crate::hue::map_device_power_changed::map_device_power_changed;
@@ -9,6 +9,7 @@ use crate::hue::map_light_changed::map_light_changed_property;
 use crate::hue::map_light_level_changed::map_light_level_changed;
 use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
 use crate::hue::map_remotes_changed::map_remote_changed;
+use crate::hue::map_rooms_changed::map_rooms_changed;
 use crate::hue::map_temperature_changed::map_temperature_changed;
 use crate::hue::pending_writes::PendingWrites;
 use crate::integration::IntegrationError;
@@ -103,8 +104,10 @@ async fn run_processor(
         }
         if let Some(data) = hue_event.data {
             for payload in data {
+                let data_type = payload.r#type;
                 for property in payload.data {
-                    handle_changed_property(tx.clone(), property, pending_writes.clone(), &store_rx).await;
+                    handle_changed_property(tx.clone(), property, data_type.clone(), pending_writes.clone(), &store_rx)
+                        .await;
                 }
             }
         }
@@ -114,6 +117,7 @@ async fn run_processor(
 async fn handle_changed_property(
     tx: Sender<Event>,
     property: ChangedProperty,
+    data_type: DataType,
     pending_writes: Arc<PendingWrites>,
     store_rx: &WatchReceiver<StoreSnapshot>,
 ) {
@@ -176,6 +180,14 @@ async fn handle_changed_property(
                 });
             }
         }
+        ChangedProperty::Room(property) => {
+            let snapshot = store_rx.borrow().clone(); // Cheap: clones the Arcs
+            for event in map_rooms_changed(property, data_type, &snapshot) {
+                tx.send(event).await.unwrap_or_else(|e| {
+                    warn!("⚠️ Unable to send changed room event: {}", e);
+                });
+            }
+        }
         ChangedProperty::Unknown(UnknownProperty { property_type, value }) => {
             debug!("⚠️ Unknown changed property type '{}'", property_type);
             trace!("   Payload: {}", value);
@@ -192,7 +204,7 @@ fn light_initiated_by(
         return InitiatedBy::Hearth;
     }
 
-    let snapshot = store_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
+    let snapshot = store_rx.borrow().clone(); // Cheap: clones the Arcs
     let device = snapshot.devices.get(&change.owner.rid);
     if device.is_some_and(|device| is_unnoticeable_correction(change, device)) {
         return InitiatedBy::Device;

@@ -28,7 +28,7 @@ pub use connectivity::Connectivity;
 pub use contact_state::ContactState;
 pub use controller::Controller;
 pub use device::{Device, DeviceType};
-pub use events::{Event, InitiatedBy};
+pub use events::{Event, GroupChanged, InitiatedBy};
 pub use geo_location::GeoLocation;
 pub use group::{Group, GroupOwner};
 pub use number::Number;

@@ -11,10 +11,51 @@ pub struct RoomGet {
     pub metadata: Metadata,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RoomChanged {
+    pub id: String,
+    pub children: Option<Vec<Owner>>,
+    #[allow(dead_code)]
+    pub services: Option<Vec<Owner>>,
+    pub metadata: Option<RoomMetadataChanged>,
+}
+
+// An update only carries the changed metadata fields, so unlike `Metadata` nothing is required
+#[derive(Debug, Deserialize)]
+pub struct RoomMetadataChanged {
+    pub name: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn deserialize_room_changed_with_only_a_name() {
+        let json = json!({
+            "id": "room-id",
+            "id_v1": "/groups/14",
+            "metadata": { "name": "Study" },
+            "type": "room"
+        });
+
+        let room: RoomChanged = serde_json::from_value(json).unwrap();
+
+        assert_eq!(room.id, "room-id");
+        assert_eq!(room.metadata.unwrap().name, Some("Study".to_string()));
+        assert!(room.children.is_none());
+        assert!(room.services.is_none());
+    }
+
+    #[test]
+    fn deserialize_room_changed_with_only_an_archetype() {
+        let json = json!({ "id": "room-id", "metadata": { "archetype": "office" }, "type": "room" });
+
+        let room: RoomChanged = serde_json::from_value(json).unwrap();
+
+        assert_eq!(room.metadata.unwrap().name, None);
+    }
 
     #[test]
     fn deserialize_room_get() {

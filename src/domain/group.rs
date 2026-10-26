@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 /// Represents a group of devices, to be controlled together
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Group {
     pub id: String,
     pub name: String,
@@ -10,7 +10,7 @@ pub struct Group {
     pub owner: GroupOwner,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum GroupOwner {
     #[allow(dead_code)]
     Hearth,

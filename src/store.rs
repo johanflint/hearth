@@ -1,7 +1,7 @@
 use crate::domain::property::{
     BooleanProperty, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyLocator,
 };
-use crate::domain::{Device, Event, Group, InitiatedBy};
+use crate::domain::{Device, Event, Group, GroupChanged, GroupOwner, InitiatedBy};
 use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::property_changed_reducer::reduce_property_changed_event;
 use metrics::{counter, gauge};
@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
 use tokio::sync::{mpsc, watch};
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 pub type DeviceMap = HashMap<String, Arc<Device>>;
 pub type GroupMap = HashMap<String, Arc<Group>>;
@@ -100,16 +100,6 @@ impl Store {
 
                 counter!(Metric::StoreDeviceDiscoveries.name()).increment(num_devices as u64);
                 gauge!(Metric::StoreDeviceCount.name()).set(self.devices.len() as f64);
-                None
-            }
-            Event::DiscoveredGroups(discovered_groups) => {
-                let num_groups = discovered_groups.len();
-                debug!("🔵 Registering {} new group(s)...", num_groups);
-                self.groups.extend(discovered_groups.into_iter().map(|group| (group.id.clone(), Arc::new(group))));
-                info!("🔵 Registering {} new group(s)... OK", num_groups);
-
-                counter!(Metric::StoreGroupDiscoveries.name()).increment(num_groups as u64);
-                gauge!(Metric::StoreGroupCount.name()).set(self.groups.len() as f64);
                 None
             }
             Event::BooleanPropertyChanged { device_id, property_id, value, initiated_by } => {
@@ -232,6 +222,53 @@ impl Store {
                     initiated_by,
                 })
             }
+            Event::DiscoveredGroups(discovered_groups) => {
+                let num_groups = discovered_groups.len();
+                debug!("🔵 Registering {} new group(s)...", num_groups);
+                self.groups.extend(discovered_groups.into_iter().map(|group| (group.id.clone(), Arc::new(group))));
+                info!("🔵 Registering {} new group(s)... OK", num_groups);
+
+                counter!(Metric::StoreGroupDiscoveries.name()).increment(num_groups as u64);
+                gauge!(Metric::StoreGroupCount.name()).set(self.groups.len() as f64);
+                None
+            }
+            Event::GroupChanged(GroupChanged { id, name, device_ids }) => {
+                let group = match self.groups.get(&id) {
+                    Some(existing) => {
+                        let existing = Group::clone(existing);
+                        Group {
+                            name: name.unwrap_or(existing.name),
+                            device_ids: device_ids.unwrap_or(existing.device_ids),
+                            ..existing
+                        }
+                    }
+                    None => match (name, device_ids) {
+                        (Some(name), Some(device_ids)) => {
+                            Group { id: id.clone(), name, device_ids, revision: 0, owner: GroupOwner::Integration }
+                        }
+                        _ => {
+                            warn!("⚠️ Ignoring partial update for an unknown group '{id}'");
+                            return None;
+                        }
+                    },
+                };
+
+                // Discovery skips groups without lights, so a group that lost its last light is removed
+                if group.device_ids.is_empty() {
+                    self.groups.remove(&id);
+                } else {
+                    info!("*** UPDATED/INSERT GROUP: {:?}", &group);
+                    self.groups.insert(id, Arc::new(group));
+                }
+
+                gauge!(Metric::StoreGroupCount.name()).set(self.groups.len() as f64);
+                None
+            }
+            Event::GroupRemoved { group_id } => {
+                self.groups.remove(&group_id);
+                gauge!(Metric::StoreGroupCount.name()).set(self.groups.len() as f64);
+                None
+            }
         }
     }
 }
@@ -334,6 +371,142 @@ mod tests {
         assert_eq!(update.snapshot.groups.len(), 1);
         assert!(update.snapshot.groups.contains_key("group"));
         assert_eq!(update.snapshot.devices.len(), 1);
+    }
+
+    fn group_changed(id: &str, name: Option<&str>, device_ids: Option<&[&str]>) -> Event {
+        Event::GroupChanged(GroupChanged {
+            id: id.to_string(),
+            name: name.map(str::to_string),
+            device_ids: device_ids.map(|ids| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>()),
+        })
+    }
+
+    #[tokio::test]
+    async fn group_changed_with_name_and_devices_creates_an_unknown_group() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(group_changed("group", Some("Group"), Some(&["a", "b"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.changed, None);
+        assert_eq!(update.snapshot.groups.len(), 1);
+        assert_eq!(*update.snapshot.groups["group"], group("group", "Group", &["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn group_changed_with_only_a_name_keeps_the_devices() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredGroups(vec![group("group", "Old name", &["a", "b"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(group_changed("group", Some("New name"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(*update.snapshot.groups["group"], group("group", "New name", &["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn group_changed_with_only_devices_keeps_the_name() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredGroups(vec![group("group", "Group", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(group_changed("group", None, Some(&["a", "b"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(*update.snapshot.groups["group"], group("group", "Group", &["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn group_changed_keeps_the_revision_and_owner() {
+        let (tx, mut reactive_rx) = start_store();
+        let existing = Group { revision: 3, owner: GroupOwner::Hearth, ..group("group", "Group", &["a"]) };
+        tx.send(Event::DiscoveredGroups(vec![existing])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(group_changed("group", Some("Renamed"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let stored = &update.snapshot.groups["group"];
+        assert_eq!(stored.revision, 3);
+        assert_eq!(stored.owner, GroupOwner::Hearth);
+    }
+
+    #[tokio::test]
+    async fn group_changed_leaves_other_groups_unchanged() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredGroups(vec![group("first", "First", &["a"]), group("second", "Second", &["b"])]))
+            .await
+            .unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(group_changed("first", Some("Renamed"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(*update.snapshot.groups["second"], group("second", "Second", &["b"]));
+    }
+
+    #[tokio::test]
+    async fn group_changed_without_devices_removes_the_group() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredGroups(vec![group("group", "Group", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(group_changed("group", None, Some(&[]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert!(update.snapshot.groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn group_changed_for_a_new_group_without_devices_creates_nothing() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(group_changed("group", Some("Group"), Some(&[]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert!(update.snapshot.groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn partial_group_changed_for_an_unknown_group_is_ignored() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(group_changed("group", Some("Group"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+        assert!(update.snapshot.groups.is_empty());
+
+        tx.send(group_changed("group", None, Some(&["a"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+        assert!(update.snapshot.groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn group_removed_removes_only_that_group() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredGroups(vec![group("first", "First", &["a"]), group("second", "Second", &["b"])]))
+            .await
+            .unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(Event::GroupRemoved { group_id: "first".to_string() }).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.changed, None);
+        assert_eq!(update.snapshot.groups.len(), 1);
+        assert!(update.snapshot.groups.contains_key("second"));
+    }
+
+    #[tokio::test]
+    async fn group_removed_for_an_unknown_group_changes_nothing() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredGroups(vec![group("group", "Group", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(Event::GroupRemoved { group_id: "unknown".to_string() }).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.groups.len(), 1);
     }
 
     #[tokio::test]
