@@ -1,5 +1,4 @@
 use crate::app_config::AppConfig;
-use crate::domain::Device;
 use crate::hue::domain::{
     ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, RoomGet,
     TemperatureGet, ZigbeeConnectivityGet,
@@ -143,7 +142,7 @@ mod tests {
     use crate::domain::property::{
         BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit,
     };
-    use crate::domain::{BatteryState, Connectivity, ContactState, DeviceType, Group, GroupOwner};
+    use crate::domain::{BatteryState, Connectivity, ContactState, Device, DeviceType, Group, GroupOwner};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;

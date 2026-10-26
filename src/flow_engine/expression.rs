@@ -1588,7 +1588,7 @@ mod tests {
     ) {
         let device = device();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
-        let snapshot = StoreSnapshot { devices: Arc::new(devices) };
+        let snapshot = StoreSnapshot { devices: Arc::new(devices), ..Default::default() };
 
         let result = evaluate(
             &PropertyValue { device_id: device_id.to_string(), property_id: property_id.to_string() },
@@ -1854,7 +1854,7 @@ mod tests {
         );
         let device = DeviceBuilder::new("device").with_properties(vec![battery_state_property]).build();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
-        let snapshot = StoreSnapshot { devices: Arc::new(devices) };
+        let snapshot = StoreSnapshot { devices: Arc::new(devices), ..Default::default() };
 
         let result = evaluate(
             &PropertyValue { device_id: "device".to_string(), property_id: "batteryState".to_string() },
@@ -1960,7 +1960,10 @@ mod tests {
 
         fn snapshot() -> StoreSnapshot {
             let device = device();
-            StoreSnapshot { devices: Arc::new(HashMap::from([(device.id.clone(), Arc::new(device))])) }
+            StoreSnapshot {
+                devices: Arc::new(HashMap::from([(device.id.clone(), Arc::new(device))])),
+                ..Default::default()
+            }
         }
 
         fn literal(value: Value) -> Box<Expression> {

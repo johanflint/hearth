@@ -319,7 +319,7 @@ mod tests {
             ])
             .build();
         let devices: DeviceMap = HashMap::from([(device.id.clone(), Arc::new(device))]);
-        StoreSnapshot { devices: Arc::new(devices) }
+        StoreSnapshot { devices: Arc::new(devices), ..Default::default() }
     }
 
     fn preset_registry() -> Arc<PresetRegistry> {

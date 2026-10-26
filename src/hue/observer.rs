@@ -224,7 +224,10 @@ mod tests {
     const DEVICE_ID: &str = "device_id";
 
     fn store_rx(device: Device) -> WatchReceiver<StoreSnapshot> {
-        let snapshot = StoreSnapshot { devices: Arc::new(HashMap::from([(device.id.clone(), Arc::new(device))])) };
+        let snapshot = StoreSnapshot {
+            devices: Arc::new(HashMap::from([(device.id.clone(), Arc::new(device))])),
+            ..Default::default()
+        };
         watch::channel(snapshot).1
     }
 
