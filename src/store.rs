@@ -97,6 +97,8 @@ impl Store {
                 gauge!(Metric::StoreDeviceCount.name()).set(self.devices.len() as f64);
                 None
             }
+            // Groups are not stored yet
+            Event::DiscoveredGroups(_) => None,
             Event::BooleanPropertyChanged { device_id, property_id, value, initiated_by } => {
                 let Some(resolved_property_id) =
                     resolve_property_id::<BooleanProperty>(&self.devices, &device_id, &property_id)
@@ -234,9 +236,38 @@ fn resolve_property_id<T: 'static + Property>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::InitiatedBy;
+    use crate::domain::{Group, GroupOwner, InitiatedBy};
     use crate::test_support::DeviceBuilder;
+    use std::collections::BTreeSet;
     use tokio::sync::mpsc::channel;
+
+    #[tokio::test]
+    async fn discovered_groups_leave_the_devices_unchanged() {
+        let (tx, rx) = channel::<Event>(8);
+        let (mut store, mut reactive_rx) = Store::new(rx);
+
+        tokio::spawn(async move {
+            store.listen().await;
+        });
+
+        let device = DeviceBuilder::new("device").with_boolean_property("on", false).build();
+        tx.send(Event::DiscoveredDevices(vec![device])).await.unwrap();
+        reactive_rx.recv().await.expect("devices should produce a reactive update");
+
+        let group = Group {
+            id: "group".to_string(),
+            name: "Group".to_string(),
+            device_ids: BTreeSet::from(["device".to_string()]),
+            revision: 0,
+            owner: GroupOwner::Integration,
+        };
+        tx.send(Event::DiscoveredGroups(vec![group])).await.unwrap();
+        let update = reactive_rx.recv().await.expect("groups should produce a reactive update");
+
+        assert_eq!(update.changed, None);
+        assert_eq!(update.snapshot.devices.len(), 1);
+        assert!(update.snapshot.devices.contains_key("device"));
+    }
 
     #[tokio::test]
     async fn property_change_is_persisted_in_the_store() {

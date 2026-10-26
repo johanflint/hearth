@@ -1,4 +1,4 @@
-use crate::domain::{Controller, Device, Event};
+use crate::domain::{Controller, Device, Event, Group};
 use async_trait::async_trait;
 use std::error::Error;
 use std::fmt::Debug;
@@ -13,8 +13,15 @@ pub trait Integration: Debug + Send + Sync {
     /// Name of the system integrating with
     fn name(&self) -> &'static str;
     fn enabled(&self) -> bool;
-    async fn discover(&self) -> Result<Vec<Device>, IntegrationError>;
+    async fn discover(&self) -> Result<Discovery, IntegrationError>;
     /// Starts observing in the background and returns once started; the integration supervises itself afterwards
     async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError>;
     fn controller(&self) -> Arc<dyn Controller>;
+}
+
+/// The devices and groups an integration found when discovering.
+#[derive(Debug, PartialEq)]
+pub struct Discovery {
+    pub devices: Vec<Device>,
+    pub groups: Vec<Group>,
 }

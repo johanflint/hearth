@@ -10,6 +10,7 @@ use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
 use crate::hue::map_remotes::{MapRemotesError, map_remotes};
 use crate::hue::map_rooms::map_rooms;
+use crate::integration::Discovery;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet};
@@ -17,7 +18,7 @@ use thiserror::Error;
 use tracing::{debug, info, instrument, warn};
 
 #[instrument(skip_all)]
-pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>, DiscoverError> {
+pub async fn discover(client: &Client, config: &AppConfig) -> Result<Discovery, DiscoverError> {
     info!("Retrieving Hue devices...");
 
     let hue_url = config.hue().url();
@@ -55,7 +56,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
     info!("Retrieving rooms... OK, {} found", room_response.data.len());
 
     let light_device_ids: HashSet<String> = light_response.data.iter().map(|light| light.owner.rid.clone()).collect();
-    let _ = map_rooms(room_response.data, &light_device_ids);
+    let groups = map_rooms(room_response.data, &light_device_ids);
 
     let mut device_map = device_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
@@ -82,7 +83,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Vec<Device>
         log_unmapped_devices(&device_map);
     }
 
-    Ok(devices)
+    Ok(Discovery { devices, groups })
 }
 
 async fn fetch_resources<T>(client: &Client, hue_url: &str, name: &'static str) -> Result<HueResponse<T>, DiscoverError>
@@ -142,11 +143,11 @@ mod tests {
     use crate::domain::property::{
         BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit,
     };
-    use crate::domain::{BatteryState, Connectivity, ContactState, DeviceType};
+    use crate::domain::{BatteryState, Connectivity, ContactState, DeviceType, Group, GroupOwner};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use strum::IntoEnumIterator;
 
     fn connectivity_property(status: &str) -> Box<dyn Property> {
@@ -395,9 +396,9 @@ mod tests {
         ));
 
         mock.assert();
-        assert_eq!(response.len(), 4);
+        assert_eq!(response.devices.len(), 4);
         assert_eq!(
-            response[0],
+            response.devices[0],
             Device {
                 id: "079e0321-7e18-46bc-bc16-fcbc3dd09e30".to_string(),
                 r#type: DeviceType::Light,
@@ -418,7 +419,7 @@ mod tests {
             }
         );
         assert_eq!(
-            response[1],
+            response.devices[1],
             Device {
                 id: "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3".to_string(),
                 r#type: DeviceType::MotionSensor,
@@ -446,7 +447,7 @@ mod tests {
             }
         );
         assert_eq!(
-            response[2],
+            response.devices[2],
             Device {
                 id: "3a3225cb-dcda-46fb-8f21-00a8c76024bc".to_string(),
                 r#type: DeviceType::Remote,
@@ -468,7 +469,7 @@ mod tests {
             }
         );
         assert_eq!(
-            response[3],
+            response.devices[3],
             Device {
                 id: "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77".to_string(),
                 r#type: DeviceType::ContactSensor,
@@ -486,6 +487,16 @@ mod tests {
                 address: None,
                 controller_id: Some("hue"),
             }
+        );
+        assert_eq!(
+            response.groups,
+            vec![Group {
+                id: "064e61aa-b077-4665-9bea-0ca4c332a331".to_string(),
+                name: "Eetkamer".to_string(),
+                device_ids: BTreeSet::from(["079e0321-7e18-46bc-bc16-fcbc3dd09e30".to_string()]),
+                revision: 0,
+                owner: GroupOwner::Integration,
+            }]
         );
 
         Ok(())

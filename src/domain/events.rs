@@ -1,11 +1,12 @@
-use crate::domain::Number;
 use crate::domain::device::Device;
 use crate::domain::property::{CartesianCoordinate, Gamut, PropertyLocator};
+use crate::domain::{Group, Number};
 use chrono::{DateTime, Utc};
 
 #[derive(PartialEq, Debug)]
 pub enum Event {
     DiscoveredDevices(Vec<Device>),
+    DiscoveredGroups(Vec<Group>),
     BooleanPropertyChanged {
         device_id: String,
         property_id: PropertyLocator,

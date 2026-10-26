@@ -6,6 +6,7 @@ use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
+use crate::integration::Discovery;
 use crate::integration_list::{enabled_only, integrations};
 use crate::metrics_layer::MetricsLayer;
 use crate::preset_registry::PresetRegistry;
@@ -149,9 +150,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("✅  Initialized server");
 
     for integration in &integrations {
-        let devices = integration.discover().await?;
+        let Discovery { devices, groups } = integration.discover().await?;
         trace!("Discovered devices: {:?}", &devices);
+        trace!("Discovered groups: {:?}", &groups);
         tx.send(Event::DiscoveredDevices(devices)).await?;
+        tx.send(Event::DiscoveredGroups(groups)).await?;
     }
     info!("✅  Discovered all devices");
 
