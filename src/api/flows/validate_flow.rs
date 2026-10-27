@@ -86,6 +86,7 @@ impl From<&Location> for LocationResponse {
 fn problem_code(problem: &Problem) -> &'static str {
     match problem {
         Problem::UnknownDevice { .. } => "unknownDevice",
+        Problem::UnknownGroup { .. } => "unknownGroup",
         Problem::UnknownProperty { .. } => "unknownProperty",
         Problem::ReadOnlyProperty { .. } => "readonlyProperty",
         Problem::IncompatibleValue { .. } => "incompatibleValue",
@@ -107,6 +108,7 @@ mod tests {
 
     #[rstest]
     #[case::unknown_device(Problem::UnknownDevice{ device_id: "lamp".to_string() }, "unknownDevice")]
+    #[case::unknown_group(Problem::UnknownGroup{ group_id: "room".to_string() }, "unknownGroup")]
     #[case::unknown_property(Problem::UnknownProperty{ device_id: "lamp".to_string(), property_id: "on".to_string() }, "unknownProperty")]
     #[case::readonly_property(Problem::ReadOnlyProperty{ device_id: "lamp".to_string(), property_id: "on".to_string() }, "readonlyProperty")]
     #[case::incompatible_value(
