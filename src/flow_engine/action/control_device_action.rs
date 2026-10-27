@@ -2,9 +2,9 @@ use crate::domain::property::{NumberProperty, Property, PropertyError, Validated
 use crate::domain::{ClaimMode, Problem, Value, find_device, find_property};
 use crate::flow_engine::Expression;
 use crate::flow_engine::action::Action;
+use crate::flow_engine::action::device_command::CommandMap;
 use crate::flow_engine::context::Context;
-use crate::flow_engine::expression::evaluate;
-use crate::flow_engine::property_command::{PropertyCommand, ResolvedPropertyCommand};
+use crate::flow_engine::property_command::PropertyCommand;
 use crate::flow_engine::scope::Scope;
 use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::any::Any;
 use std::collections::HashMap;
-use tracing::{error, info, instrument, warn};
+use tracing::{error, instrument, warn};
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -80,30 +80,6 @@ impl ControlDeviceAction {
     }
 }
 
-#[derive(PartialEq, Default, Debug)]
-pub struct DeviceCommand {
-    pub claim: Option<ClaimMode>,
-    pub properties: HashMap<String, ResolvedPropertyCommand>,
-}
-
-pub type CommandMap = HashMap<String, DeviceCommand>;
-
-fn clamp_to_range(device_id: &str, property_id: &str, property: &dyn Property, value: Value) -> Value {
-    let (Value::Number(number), Some(number_property)) = (&value, property.as_any().downcast_ref::<NumberProperty>())
-    else {
-        return value;
-    };
-
-    match number_property.validate_value(*number) {
-        ValidatedValue::Clamped(clamped, error) => {
-            #[rustfmt::skip]
-            info!(device_id, property_id, "⚠️ Invalid value '{}' for property '{}' ({}), clamped to '{}'", number, property_id, error, clamped);
-            Value::Number(clamped)
-        }
-        ValidatedValue::Valid(_) | ValidatedValue::Invalid(_) => value,
-    }
-}
-
 #[async_trait]
 impl Action for ControlDeviceAction {
     fn kind(&self) -> &'static str {
@@ -126,53 +102,9 @@ impl Action for ControlDeviceAction {
             return;
         };
 
-        let device_command = command_map.entry(self.device_id.clone()).or_insert_with(DeviceCommand::default);
-        // A later action without a claim doesn't undo the claim of an earlier action
-        if let Some(claim) = self.claim {
-            device_command.claim = Some(claim);
-        }
-
-        for (property_id, property_command) in self.property.iter() {
-            let Some(property) = device.properties.get(property_id) else {
-                warn!(
-                    device_id = self.device_id,
-                    property_id, "Unable to control device '{}'... unknown property '{}'", self.device_id, property_id
-                );
-                continue;
-            };
-
-            let value = match evaluate(&property_command.value, context) {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(device_id = self.device_id, property_id, expression = %property_command.value, "⚠️ Evaluating expression... failed: {}", err);
-                    continue;
-                }
-            };
-            info!(device_id = self.device_id, property_id, "Evaluated '{}' → '{}'", property_command.value, value);
-            // Validation can't catch a preset that changed kind after the flow was stored
-            let (expected, actual) = (property.value_kind(), value.kind());
-            if expected != actual {
-                warn!(
-                    device_id = self.device_id,
-                    property_id, "⚠️ Expected a {expected} for property '{property_id}', got a {actual}, ignoring"
-                );
-                continue;
-            }
-
-            let value = clamp_to_range(&self.device_id, property_id, property.as_ref(), value);
-
-            let resolved_command = ResolvedPropertyCommand { value, transition: property_command.transition };
-            let result = device_command.properties.insert(property_id.clone(), resolved_command);
-            if let Some(previous_value) = result {
-                warn!(
-                    device_id = self.device_id,
-                    "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'",
-                    property_id,
-                    device.name,
-                    previous_value.value
-                );
-            }
-        }
+        let device_command = command_map.entry(self.device_id.clone()).or_default();
+        device_command.set_properties(device, &self.property, context);
+        device_command.set_claim(self.claim);
     }
 
     fn validate(&self, snapshot: &StoreSnapshot, preset_registry: &PresetRegistry) -> Vec<Problem> {
@@ -214,6 +146,8 @@ mod tests {
         BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind,
     };
     use crate::flow_engine::Expression;
+    use crate::flow_engine::action::device_command::DeviceCommand;
+    use crate::flow_engine::property_command::ResolvedPropertyCommand;
     use crate::store::DeviceMap;
     use crate::test_support::{DeviceBuilder, property_command};
     use pretty_assertions::assert_eq;

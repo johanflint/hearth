@@ -11,15 +11,13 @@ use std::any::Any;
 use std::fmt::Debug;
 
 mod control_device_action;
+mod device_command;
 mod log_action;
 
-pub use control_device_action::CommandMap;
+pub use device_command::CommandMap;
 
 #[cfg(test)]
-pub use {
-    control_device_action::{ControlDeviceAction, DeviceCommand},
-    log_action::LogAction,
-};
+pub use {control_device_action::ControlDeviceAction, device_command::DeviceCommand, log_action::LogAction};
 
 #[async_trait]
 pub trait Action: Debug + Send + Sync {
