@@ -1,4 +1,4 @@
-use crate::domain::{ClaimMode, Problem};
+use crate::domain::{ClaimMode, Problem, find_device, find_group, validate_property_command};
 use crate::flow_engine::action::Action;
 use crate::flow_engine::action::device_command::evaluate_commands;
 use crate::flow_engine::property_command::PropertyCommand;
@@ -60,8 +60,37 @@ impl Action for ControlGroupAction {
         }
     }
 
-    fn validate(&self, _snapshot: &StoreSnapshot, _preset_registry: &PresetRegistry) -> Vec<Problem> {
-        todo!()
+    fn validate(&self, snapshot: &StoreSnapshot, preset_registry: &PresetRegistry) -> Vec<Problem> {
+        let group = match find_group(&self.group_id, snapshot) {
+            Ok(group) => group,
+            Err(problem) => return vec![problem],
+        };
+
+        let mut problems = vec![];
+        for device_id in &group.device_ids {
+            let device = match find_device(device_id, snapshot) {
+                Ok(device) => device,
+                Err(problem) => {
+                    problems.push(problem);
+                    continue;
+                }
+            };
+
+            for (property_id, command) in &self.property {
+                if let Err(problem) = validate_property_command(snapshot, preset_registry, device, property_id, command)
+                {
+                    // The range differs per device, the value is clamped for each device at runtime
+                    let is_range_problem =
+                        matches!(problem, Problem::ValueTooSmall { .. } | Problem::ValueTooLarge { .. });
+
+                    // Problems that are not tied to the device, like an unknown preset, would repeat for every device
+                    if !is_range_problem && !problems.contains(&problem) {
+                        problems.push(problem);
+                    }
+                }
+            }
+        }
+        problems
     }
 
     fn expressions(&self) -> Vec<&Expression> {
@@ -76,12 +105,13 @@ impl Action for ControlGroupAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::property::{NumberProperty, PropertyType};
+    use crate::domain::property::{NumberProperty, PropertyType, ValueKind};
     use crate::domain::{Device, Group, GroupOwner, Number, Value};
     use crate::flow_engine::action::device_command::DeviceCommand;
     use crate::store::{DeviceMap, GroupMap};
     use crate::test_support::{DeviceBuilder, property_command, resolved_property_command};
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
     use std::io;
     use std::sync::Arc;
 
@@ -294,5 +324,91 @@ mod tests {
         let expected =
             device_command(Some(ClaimMode::Claim), &[("on", Value::Boolean(true)), ("brightness", number(20))]);
         assert_eq!(command_map["lamp1"], expected);
+    }
+
+    fn validate_group(action: &ControlGroupAction, snapshot: StoreSnapshot) -> Vec<Problem> {
+        action.validate(&snapshot, &PresetRegistry::new(vec![]))
+    }
+
+    #[test]
+    fn validate_accepts_a_group_whose_devices_have_the_property() {
+        let action = control_group("room", None, &[("on", Value::Boolean(true))]);
+
+        assert_eq!(validate_group(&action, snapshot(&["lamp1", "lamp2", "lamp3"])), []);
+    }
+
+    #[test]
+    fn validate_accepts_an_empty_group() {
+        let action = control_group("room", None, &[("on", Value::Boolean(true))]);
+
+        assert_eq!(validate_group(&action, snapshot(&[])), []);
+    }
+
+    #[test]
+    fn validate_reports_an_unknown_group() {
+        let action = control_group("unknown", None, &[("on", Value::Boolean(true))]);
+
+        let problems = validate_group(&action, snapshot(&["lamp1"]));
+
+        assert_eq!(problems, [Problem::UnknownGroup { group_id: "unknown".to_string() }]);
+    }
+
+    #[test]
+    fn validate_reports_a_device_of_the_group_that_is_not_in_the_store() {
+        let action = control_group("room", None, &[("on", Value::Boolean(true))]);
+
+        let problems = validate_group(&action, snapshot(&["lamp1", "ghost"]));
+
+        assert_eq!(problems, [Problem::UnknownDevice { device_id: "ghost".to_string() }]);
+    }
+
+    #[test]
+    fn validate_reports_an_unknown_property_for_the_device_that_lacks_it() {
+        let action = control_group("room", None, &[("brightness", number(20))]);
+
+        let problems = validate_group(&action, snapshot(&["lamp1", "lamp3"]));
+
+        assert_eq!(
+            problems,
+            [Problem::UnknownProperty { device_id: "lamp3".to_string(), property_id: "brightness".to_string() }]
+        );
+    }
+
+    #[test]
+    fn validate_reports_an_incompatible_value_for_each_device() {
+        let action = control_group("room", None, &[("on", number(50))]);
+
+        let problems = validate_group(&action, snapshot(&["lamp1", "lamp2"]));
+
+        let incompatible = |device_id: &str| Problem::IncompatibleValue {
+            device_id: device_id.to_string(),
+            property_id: "on".to_string(),
+            expected: ValueKind::Boolean,
+            actual: ValueKind::Number,
+        };
+        assert_eq!(problems, [incompatible("lamp1"), incompatible("lamp2")]);
+    }
+
+    #[rstest]
+    #[case::too_large(150)]
+    #[case::too_small(0)]
+    fn validate_ignores_a_value_outside_the_range_of_a_device(#[case] value: u64) {
+        let action = control_group("room", None, &[("brightness", number(value))]);
+
+        assert_eq!(validate_group(&action, snapshot(&["lamp1", "lamp2"])), []);
+    }
+
+    #[test]
+    fn validate_reports_an_unknown_preset_once_for_the_whole_group() {
+        let preset = PropertyCommand { value: Expression::PresetValue { id: "missing".to_string() }, transition: None };
+        let action = ControlGroupAction {
+            group_id: "room".to_string(),
+            claim: None,
+            property: HashMap::from([("brightness".to_string(), preset)]),
+        };
+
+        let problems = validate_group(&action, snapshot(&["lamp1", "lamp2"]));
+
+        assert_eq!(problems, [Problem::PresetNotFound { id: "missing".to_string() }]);
     }
 }

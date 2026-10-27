@@ -1,5 +1,4 @@
-use crate::domain::property::{NumberProperty, Property, PropertyError, ValidatedValue};
-use crate::domain::{ClaimMode, Problem, Value, find_device, find_property};
+use crate::domain::{ClaimMode, Problem, find_device, validate_property_command};
 use crate::flow_engine::Expression;
 use crate::flow_engine::action::Action;
 use crate::flow_engine::action::device_command::{CommandMap, evaluate_commands};
@@ -32,51 +31,6 @@ impl ControlDeviceAction {
         property: HashMap<String, PropertyCommand>,
     ) -> ControlDeviceAction {
         ControlDeviceAction { device_id, claim, property }
-    }
-
-    fn validate_command(
-        &self,
-        snapshot: &StoreSnapshot,
-        preset_registry: &PresetRegistry,
-        property_id: &str,
-        property: &dyn Property,
-        command: &PropertyCommand,
-    ) -> Result<(), Problem> {
-        let device_id = self.device_id.clone();
-        let property_id = property_id.to_string();
-
-        if property.readonly() {
-            return Err(Problem::ReadOnlyProperty { device_id, property_id });
-        }
-
-        let actual = command.value.value_kind(snapshot, preset_registry)?;
-        let expected = property.value_kind();
-
-        if expected != actual {
-            return Err(Problem::IncompatibleValue { device_id, property_id, expected, actual });
-        }
-
-        let preset = match &command.value {
-            Expression::PresetValue { id } => preset_registry.by_id(id),
-            _ => None,
-        };
-        let known_value = command.value.constant_value().or(preset.as_ref().map(|preset| &preset.value));
-        let Some(Value::Number(value)) = known_value else {
-            return Ok(());
-        };
-        let Some(number_property) = property.as_any().downcast_ref::<NumberProperty>() else {
-            return Ok(());
-        };
-        let value = *value;
-        match number_property.validate_value(value) {
-            ValidatedValue::Clamped(minimum, PropertyError::ValueTooSmall) => {
-                Err(Problem::ValueTooSmall { device_id, property_id, value, minimum })
-            }
-            ValidatedValue::Clamped(maximum, PropertyError::ValueTooLarge) => {
-                Err(Problem::ValueTooLarge { device_id, property_id, value, maximum })
-            }
-            ValidatedValue::Valid(_) | ValidatedValue::Clamped(..) | ValidatedValue::Invalid(_) => Ok(()),
-        }
     }
 }
 
@@ -115,13 +69,7 @@ impl Action for ControlDeviceAction {
 
         self.property
             .iter()
-            .filter_map(|(property_id, command)| {
-                find_property(device, property_id)
-                    .and_then(|property| {
-                        self.validate_command(snapshot, preset_registry, property_id, property, command)
-                    })
-                    .err()
-            })
+            .filter_map(|(id, command)| validate_property_command(snapshot, preset_registry, device, id, command).err())
             .collect()
     }
 
@@ -137,13 +85,11 @@ impl Action for ControlDeviceAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::Color;
     use crate::domain::Number;
     use crate::domain::Preset;
     use crate::domain::VersionedPreset;
-    use crate::domain::property::{
-        BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType, ValueKind,
-    };
+    use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, NumberProperty, PropertyType};
+    use crate::domain::{Color, Value};
     use crate::flow_engine::Expression;
     use crate::flow_engine::action::device_command::DeviceCommand;
     use crate::flow_engine::property_command::ResolvedPropertyCommand;
@@ -312,197 +258,8 @@ mod tests {
         );
     }
 
-    #[rstest]
-    #[case::set_boolean("on", property_command(Value::Boolean(true)))]
-    #[case::set_number("brightness", property_command(Value::Number(number(50))))]
-    #[case::set_number_to_the_minimum("brightness", property_command(Value::Number(number(1))))]
-    #[case::set_number_to_the_maximum("brightness", property_command(Value::Number(number(100))))]
-    #[case::set_float_within_the_range("brightness", property_command(Value::Number(Number::Float(99.5))))]
-    #[case::set_float_to_the_minimum("brightness", property_command(Value::Number(Number::Float(1.0))))]
-    #[case::set_float_to_the_maximum("brightness", property_command(Value::Number(Number::Float(100.0))))]
-    #[case::set_number_without_a_range("temperature", property_command(Value::Number(number(1_000_000))))]
-    #[case::set_color("color", property_command(Value::Color(red())))]
-    fn control_device_validate_accepts_a_value_that_matches_the_property(
-        #[case] property_id: &str,
-        #[case] command: PropertyCommand,
-    ) {
-        assert_eq!(control_device_with("lamp", property_id, command).validate(&snapshot(), &preset_registry()), []);
-    }
-
-    #[rstest]
-    #[case::number_for_boolean(
-        "on",
-        property_command(Value::Number(number(50))),
-        ValueKind::Boolean,
-        ValueKind::Number
-    )]
-    #[case::color_for_boolean("on", property_command(Value::Color(red())), ValueKind::Boolean, ValueKind::Color)]
-    #[case::boolean_for_number(
-        "brightness",
-        property_command(Value::Boolean(true)),
-        ValueKind::Number,
-        ValueKind::Boolean
-    )]
-    fn control_device_validate_reports_an_incompatible_value(
-        #[case] property_id: &str,
-        #[case] command: PropertyCommand,
-        #[case] expected: ValueKind,
-        #[case] actual: ValueKind,
-    ) {
-        let problems = control_device_with("lamp", property_id, command).validate(&snapshot(), &preset_registry());
-
-        assert_eq!(
-            problems,
-            [Problem::IncompatibleValue {
-                device_id: "lamp".to_string(),
-                property_id: property_id.to_string(),
-                expected,
-                actual
-            }]
-        );
-    }
-
     #[test]
-    fn control_device_validate_reports_a_readonly_property_instead_of_an_incompatible_value() {
-        let problems = control_device_with("lamp", "motion", property_command(Value::Number(number(50))))
-            .validate(&snapshot(), &preset_registry());
-
-        assert_eq!(
-            problems,
-            [Problem::ReadOnlyProperty { device_id: "lamp".to_string(), property_id: "motion".to_string() }]
-        );
-    }
-
-    #[rstest]
-    #[case::positive_int(number(0))]
-    #[case::negative_int(Number::NegativeInt(-1))]
-    #[case::float(Number::Float(0.5))]
-    fn control_device_validate_reports_a_value_below_the_minimum(#[case] value: Number) {
-        let problems = control_device_with("lamp", "brightness", property_command(Value::Number(value)))
-            .validate(&snapshot(), &preset_registry());
-
-        assert_eq!(
-            problems,
-            [Problem::ValueTooSmall {
-                device_id: "lamp".to_string(),
-                property_id: "brightness".to_string(),
-                value,
-                minimum: number(1)
-            }]
-        );
-    }
-
-    #[rstest]
-    #[case::positive_int(number(101))]
-    #[case::float(Number::Float(100.5))]
-    fn control_device_validate_reports_a_value_above_the_maximum(#[case] value: Number) {
-        let problems = control_device_with("lamp", "brightness", property_command(Value::Number(value)))
-            .validate(&snapshot(), &preset_registry());
-
-        assert_eq!(
-            problems,
-            [Problem::ValueTooLarge {
-                device_id: "lamp".to_string(),
-                property_id: "brightness".to_string(),
-                value,
-                maximum: number(100)
-            }]
-        );
-    }
-
-    #[test]
-    fn control_device_validate_skips_the_range_for_a_value_that_is_only_known_at_runtime() {
-        let command = PropertyCommand {
-            value: Expression::PropertyValue { device_id: "lamp".to_string(), property_id: "temperature".to_string() },
-            transition: None,
-        };
-
-        assert_eq!(control_device_with("lamp", "brightness", command).validate(&snapshot(), &preset_registry()), []);
-    }
-
-    #[rstest]
-    #[case::number("brightness", "dim")]
-    #[case::boolean("on", "enabled")]
-    #[case::color("color", "warm")]
-    fn control_device_validate_accepts_a_preset_that_matches_the_property_type(
-        #[case] property_id: &str,
-        #[case] preset_id: &str,
-    ) {
-        let action = control_device_with("lamp", property_id, preset_command(preset_id));
-
-        assert_eq!(action.validate(&snapshot(), &preset_registry_with_presets()), []);
-    }
-
-    #[test]
-    fn control_device_validate_reports_an_unknown_preset() {
-        let action = control_device_with("lamp", "brightness", preset_command("missing"));
-
-        let problems = action.validate(&snapshot(), &preset_registry_with_presets());
-
-        assert_eq!(problems, [Problem::PresetNotFound { id: "missing".to_string() }]);
-    }
-
-    #[rstest]
-    #[case::number_for_boolean("on", "dim", ValueKind::Boolean, ValueKind::Number)]
-    #[case::boolean_for_number("brightness", "enabled", ValueKind::Number, ValueKind::Boolean)]
-    #[case::color_for_number("brightness", "warm", ValueKind::Number, ValueKind::Color)]
-    fn control_device_validate_reports_a_preset_of_the_wrong_kind(
-        #[case] property_id: &str,
-        #[case] preset_id: &str,
-        #[case] expected: ValueKind,
-        #[case] actual: ValueKind,
-    ) {
-        let action = control_device_with("lamp", property_id, preset_command(preset_id));
-
-        let problems = action.validate(&snapshot(), &preset_registry_with_presets());
-
-        assert_eq!(
-            problems,
-            [Problem::IncompatibleValue {
-                device_id: "lamp".to_string(),
-                property_id: property_id.to_string(),
-                expected,
-                actual
-            }]
-        );
-    }
-
-    #[test]
-    fn control_device_validate_reports_a_preset_below_the_minimum() {
-        let action = control_device_with("lamp", "brightness", preset_command("too_dark"));
-
-        let problems = action.validate(&snapshot(), &preset_registry_with_presets());
-
-        assert_eq!(
-            problems,
-            [Problem::ValueTooSmall {
-                device_id: "lamp".to_string(),
-                property_id: "brightness".to_string(),
-                value: number(0),
-                minimum: number(1)
-            }]
-        );
-    }
-
-    #[test]
-    fn control_device_validate_reports_a_preset_above_the_maximum() {
-        let action = control_device_with("lamp", "brightness", preset_command("too_bright"));
-
-        let problems = action.validate(&snapshot(), &preset_registry_with_presets());
-
-        assert_eq!(
-            problems,
-            [Problem::ValueTooLarge {
-                device_id: "lamp".to_string(),
-                property_id: "brightness".to_string(),
-                value: number(101),
-                maximum: number(100)
-            }]
-        );
-    }
-
-    #[test]
-    fn control_device_validate_reports_a_range_problem_for_each_property() {
+    fn control_device_validate_reports_the_problem_of_each_property() {
         let action = ControlDeviceAction::new(
             "lamp".to_string(),
             None,

@@ -34,7 +34,10 @@ pub use group::{Group, GroupOwner};
 pub use number::Number;
 pub use preset::Preset;
 pub use time::Time;
-pub use validator::{FlowValidationError, Location, Problem, ValidationIssue, find_device, find_property, validate};
+pub use validator::{
+    FlowValidationError, Location, Problem, ValidationIssue, find_device, find_group, find_property, validate,
+    validate_property_command,
+};
 pub use value::Value;
 pub use versioned_preset::VersionedPreset;
 pub use weekday::Weekday;
