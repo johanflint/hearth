@@ -92,7 +92,7 @@ impl Action for ControlDeviceAction {
         let Some(device) = snapshot.devices.get(&self.device_id) else {
             warn!(
                 device_id = self.device_id,
-                "Unable to control unknown device '{}', ignoring action: {:?}", self.device_id, self.property
+                "⚠️ Unable to control unknown device '{}', ignoring action: {:?}", self.device_id, self.property
             );
             return;
         };
@@ -126,8 +126,7 @@ impl Action for ControlDeviceAction {
     }
 
     fn expressions(&self) -> Vec<&Expression> {
-        let expressions: Vec<&Expression> = self.property.values().map(|property| &property.value).collect();
-        expressions
+        self.property.values().map(|property| &property.value).collect()
     }
 
     fn as_any(&self) -> &dyn Any {
