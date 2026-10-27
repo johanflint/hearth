@@ -11,6 +11,7 @@ use std::any::Any;
 use std::fmt::Debug;
 
 mod control_device_action;
+mod control_group_action;
 mod device_command;
 mod log_action;
 
