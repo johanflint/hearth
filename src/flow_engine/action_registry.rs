@@ -3,9 +3,10 @@ use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
-pub(in crate::flow_engine) static ACTION_REGISTRY: LazyLock<
-    RwLock<HashMap<String, fn(&serde_json::Value) -> Result<Box<dyn Action>, serde_json::Error>>>,
-> = LazyLock::new(|| RwLock::new(HashMap::new()));
+type ActionMap = HashMap<String, fn(&serde_json::Value) -> Result<Box<dyn Action>, serde_json::Error>>;
+
+pub(in crate::flow_engine) static ACTION_REGISTRY: LazyLock<RwLock<ActionMap>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub(in crate::flow_engine) fn register_action<T: Action + Send + Sync + Default + DeserializeOwned + 'static>() {
     let kind = T::default().kind().to_owned();
