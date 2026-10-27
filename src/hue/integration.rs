@@ -1,10 +1,10 @@
 use crate::app_config::AppConfig;
-use crate::domain::{Controller, Device, Event};
+use crate::domain::{Controller, Event};
 use crate::hue;
 use crate::hue::client::new_client;
 use crate::hue::controller::HueController;
 use crate::hue::pending_writes::PendingWrites;
-use crate::integration::{Integration, IntegrationError};
+use crate::integration::{Discovery, Integration, IntegrationError};
 use crate::store::StoreSnapshot;
 use async_trait::async_trait;
 use reqwest::Client;
@@ -38,7 +38,7 @@ impl Integration for HueIntegration {
         self.config.hue().enabled()
     }
 
-    async fn discover(&self) -> Result<Vec<Device>, IntegrationError> {
+    async fn discover(&self) -> Result<Discovery, IntegrationError> {
         Ok(hue::discover(&self.client, &self.config).await?)
     }
 

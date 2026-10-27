@@ -1,5 +1,5 @@
 use crate::hue::domain::{
-    ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, LightLevelChanged, MotionChanged,
+    ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, LightLevelChanged, MotionChanged, RoomChanged,
     TemperatureChanged, ZigbeeConnectivityChanged,
 };
 use serde::{Deserialize, Deserializer};
@@ -15,7 +15,7 @@ pub struct ServerSentEventPayload {
     pub data: Vec<ChangedProperty>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DataType {
     Add,
@@ -35,6 +35,7 @@ pub enum ChangedProperty {
     DevicePower(DevicePowerChanged),
     Temperature(TemperatureChanged),
     Contact(ContactChanged),
+    Room(RoomChanged),
     #[serde(untagged)]
     Unknown(UnknownProperty),
 }
@@ -102,6 +103,56 @@ mod tests {
         let first_result = &result[0];
         assert_eq!(first_result.data.len(), 1);
         assert!(matches!(&first_result.data[0], ChangedProperty::Light(LightChanged { .. })));
+
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_a_room_rename_as_a_room() -> Result<(), serde_json::Error> {
+        // An update only carries the changed fields, here just the name. When the room fails to deserialize,
+        // it silently ends up as an UnknownProperty and the rename is lost
+        let json = r#"
+        [
+          {
+            "creationtime": "2026-10-26T20:25:54Z",
+            "data": [
+              {
+                "id": "9ccb0235-6630-4321-b383-403cbc44ecfc",
+                "id_v1": "/groups/14",
+                "metadata": {
+                  "name": "Werkkamer"
+                },
+                "type": "room"
+              },
+              {
+                "dimming": {
+                  "brightness": 44.93
+                },
+                "id": "e1defce4-1e6e-485b-bbbe-1bf90eb8ab64",
+                "id_v1": "/groups/0",
+                "owner": {
+                  "rid": "2d91c055-67de-4c97-9eeb-6d7f98234583",
+                  "rtype": "bridge_home"
+                },
+                "type": "grouped_light"
+              }
+            ],
+            "id": "03665a79-befc-49eb-a3d4-ffb613a9f8bc",
+            "type": "update"
+          }
+        ]
+        "#;
+
+        let result = serde_json::from_str::<Vec<ServerSentEventPayload>>(json)?;
+
+        assert!(matches!(result[0].r#type, DataType::Update));
+        let ChangedProperty::Room(room) = &result[0].data[0] else {
+            panic!("expected a room, got {:?}", result[0].data[0]);
+        };
+        assert_eq!(room.id, "9ccb0235-6630-4321-b383-403cbc44ecfc");
+        assert_eq!(room.metadata.as_ref().and_then(|metadata| metadata.name.as_deref()), Some("Werkkamer"));
+        assert!(room.children.is_none());
+        assert!(matches!(&result[0].data[1], ChangedProperty::Unknown(_)));
 
         Ok(())
     }

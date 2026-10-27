@@ -20,6 +20,8 @@ pub enum Metric {
     SseConnectionAttempts,
     StoreDeviceCount,
     StoreDeviceDiscoveries,
+    StoreGroupCount,
+    StoreGroupDiscoveries,
     StorePropertyChanges,
 }
 
@@ -32,6 +34,8 @@ impl Metric {
             Metric::SseConnectionAttempts => "hearth_sse_connection_attempts_total",
             Metric::StoreDeviceCount => "hearth_store_device_count",
             Metric::StoreDeviceDiscoveries => "hearth_store_device_discoveries_total",
+            Metric::StoreGroupCount => "hearth_store_group_count",
+            Metric::StoreGroupDiscoveries => "hearth_store_group_discoveries_total",
             Metric::StorePropertyChanges => "hearth_store_property_changes_total",
         }
     }
@@ -39,7 +43,7 @@ impl Metric {
     const fn kind(&self) -> MetricKind {
         match self {
             Metric::FlowExecutionDuration => MetricKind::Histogram,
-            Metric::StoreDeviceCount => MetricKind::Gauge,
+            Metric::StoreDeviceCount | Metric::StoreGroupCount => MetricKind::Gauge,
             _ => MetricKind::Counter,
         }
     }
@@ -60,6 +64,8 @@ impl Metric {
             Metric::StoreDeviceCount => "Total number of devices",
             Metric::StoreDeviceDiscoveries => "Newly discovered devices",
             Metric::StorePropertyChanges => "Number of times a property changed event is processed",
+            Metric::StoreGroupCount => "Total number of groups",
+            Metric::StoreGroupDiscoveries => "Newly discovered groups",
         }
     }
 }

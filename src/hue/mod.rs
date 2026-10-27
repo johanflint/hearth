@@ -19,6 +19,8 @@ mod map_motion_sensors;
 mod map_motion_sensors_changed;
 mod map_remotes;
 mod map_remotes_changed;
+mod map_rooms;
+mod map_rooms_changed;
 mod map_temperature_changed;
 mod observer;
 mod pending_writes;

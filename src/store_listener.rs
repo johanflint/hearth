@@ -73,7 +73,10 @@ mod tests {
 
     // The claim registry is global, so every test uses its own device id
     fn snapshot(device: Device) -> StoreSnapshot {
-        StoreSnapshot { devices: Arc::new(HashMap::from([(device.id.clone(), Arc::new(device))])) }
+        StoreSnapshot {
+            devices: Arc::new(HashMap::from([(device.id.clone(), Arc::new(device))])),
+            ..Default::default()
+        }
     }
 
     fn change(device_id: &str, initiated_by: InitiatedBy) -> PropertyChange {
