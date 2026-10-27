@@ -1,7 +1,7 @@
 use crate::domain::property::{NumberProperty, Property, PropertyError, ValidatedValue};
 use crate::domain::{ClaimMode, Problem, Value, find_device, find_property};
 use crate::flow_engine::Expression;
-use crate::flow_engine::action_registry::{ACTION_REGISTRY, known_actions};
+use crate::flow_engine::action::Action;
 use crate::flow_engine::context::Context;
 use crate::flow_engine::expression::evaluate;
 use crate::flow_engine::property_command::{PropertyCommand, ResolvedPropertyCommand};
@@ -10,83 +10,10 @@ use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
 use action_macros::register_action;
 use async_trait::async_trait;
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use std::any::Any;
 use std::collections::HashMap;
-use std::fmt::Debug;
 use tracing::{error, info, instrument, warn};
-
-#[async_trait]
-pub trait Action: Debug + Send + Sync {
-    fn kind(&self) -> &'static str;
-
-    async fn execute(&self, context: &Context, scope: &mut Scope);
-
-    fn validate(&self, _snapshot: &StoreSnapshot, _preset_registry: &PresetRegistry) -> Vec<Problem> {
-        vec![]
-    }
-
-    fn expressions(&self) -> Vec<&Expression>;
-
-    fn as_any(&self) -> &dyn Any;
-}
-
-impl<'de> Deserialize<'de> for Box<dyn Action> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
-        let kind = value
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| serde::de::Error::custom("missing field 'type'"))?;
-
-        let registry = ACTION_REGISTRY.read().unwrap();
-        if let Some(action) = registry.get(kind) {
-            action(&value).map_err(serde::de::Error::custom)
-        } else {
-            Err(serde::de::Error::custom(format!(
-                "unknown action type '{}', known types: {}",
-                kind,
-                known_actions().join(", ")
-            )))
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Default, PartialEq)]
-#[register_action]
-pub struct LogAction {
-    message: String,
-}
-
-#[cfg(test)]
-impl LogAction {
-    pub fn new(message: String) -> LogAction {
-        LogAction { message }
-    }
-}
-
-#[async_trait]
-impl Action for LogAction {
-    fn kind(&self) -> &'static str {
-        "log"
-    }
-
-    #[instrument(fields(action = self.kind()), skip_all)]
-    async fn execute(&self, _context: &Context, _scope: &mut Scope) {
-        info!(target: "hearth::flow_log", "{}", self.message);
-    }
-
-    fn expressions(&self) -> Vec<&Expression> {
-        vec![]
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -362,23 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_log_action() -> io::Result<()> {
-        let json = r#"{
-            "type": "log",
-            "message": "Hello"
-        }"#;
-
-        let node = serde_json::from_str::<Box<dyn Action>>(json)?;
-
-        let expected = LogAction { message: "Hello".to_string() };
-
-        let action = node.as_any().downcast_ref::<LogAction>().unwrap();
-        assert_eq!(&expected, action);
-
-        Ok(())
-    }
-
-    #[test]
     fn deserialize_control_device_action() -> io::Result<()> {
         let json = r#"{
             "type": "controlDevice",
@@ -435,31 +345,6 @@ mod tests {
         assert_eq!(&expected, action);
 
         Ok(())
-    }
-
-    #[test]
-    fn deserialize_returns_error_if_type_is_missing() {
-        let json = "{}";
-
-        let node = serde_json::from_str::<Box<dyn Action>>(json);
-        assert!(node.is_err());
-        assert_eq!(node.unwrap_err().to_string(), "missing field 'type'");
-    }
-
-    #[test]
-    fn deserialize_returns_error_for_invalid_type() {
-        let json = r#"{
-            "type": "UnknownAction"
-        }"#;
-
-        let node = serde_json::from_str::<Box<dyn Action>>(json);
-        assert!(node.is_err());
-        assert!(node.unwrap_err().to_string().starts_with("unknown action type 'UnknownAction', known types:"));
-    }
-
-    #[test]
-    fn log_action_has_nothing_to_validate() {
-        assert_eq!(LogAction::new("message".to_string()).validate(&StoreSnapshot::default(), &preset_registry()), []);
     }
 
     #[test]
