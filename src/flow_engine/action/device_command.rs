@@ -21,48 +21,60 @@ impl DeviceCommand {
     }
 
     pub fn set_properties(&mut self, device: &Device, commands: &HashMap<String, PropertyCommand>, context: &Context) {
-        for (property_id, property_command) in commands {
-            let Some(property) = device.properties.get(property_id) else {
-                warn!(
-                    device_id = device.id,
-                    property_id, "⚠️ Unable to control device '{}'... unknown property '{}'", device.id, property_id
-                );
+        for (property_id, command) in commands {
+            let Some(resolved_command) = resolve_property(device, property_id, command, context) else {
                 continue;
             };
 
-            let value = match evaluate(&property_command.value, context) {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(device_id = device.id, property_id, expression = %property_command.value, "⚠️ Evaluating expression... failed: {}", err);
-                    continue;
-                }
-            };
-            info!(device_id = device.id, property_id, "Evaluated '{}' → '{}'", property_command.value, value);
-            // Validation can't catch a preset that changed kind after the flow was stored
-            let (expected, actual) = (property.value_kind(), value.kind());
-            if expected != actual {
-                warn!(
-                    device_id = device.id,
-                    property_id, "⚠️ Expected a {expected} for property '{property_id}', got a {actual}, ignoring"
-                );
-                continue;
-            }
-
-            let value = clamp_to_range(&device.id, property_id, property.as_ref(), value);
-
-            let resolved_command = ResolvedPropertyCommand { value, transition: property_command.transition };
-            let result = self.properties.insert(property_id.clone(), resolved_command);
-            if let Some(previous_value) = result {
+            if let Some(previous) = self.properties.insert(property_id.clone(), resolved_command) {
                 warn!(
                     device_id = device.id,
                     "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'",
                     property_id,
                     device.name,
-                    previous_value.value
+                    previous.value
                 );
             }
         }
     }
+}
+
+// Evaluates the command for one property of the device, returns None (after logging) if it can't be applied
+fn resolve_property(
+    device: &Device,
+    property_id: &str,
+    command: &PropertyCommand,
+    context: &Context,
+) -> Option<ResolvedPropertyCommand> {
+    let Some(property) = device.properties.get(property_id) else {
+        warn!(
+            device_id = device.id,
+            property_id, "⚠️ Unable to control device '{}'... unknown property '{}'", device.id, property_id
+        );
+        return None;
+    };
+
+    let value = match evaluate(&command.value, context) {
+        Ok(value) => value,
+        Err(err) => {
+            warn!(device_id = device.id, property_id, expression = %command.value, "⚠️ Evaluating expression... failed: {}", err);
+            return None;
+        }
+    };
+    info!(device_id = device.id, property_id, "Evaluated '{}' → '{}'", command.value, value);
+
+    // Validation can't catch a preset that changed kind after the flow was stored
+    let (expected, actual) = (property.value_kind(), value.kind());
+    if expected != actual {
+        warn!(
+            device_id = device.id,
+            property_id, "⚠️ Expected a {expected} for property '{property_id}', got a {actual}, ignoring"
+        );
+        return None;
+    }
+
+    let value = clamp_to_range(&device.id, property_id, property.as_ref(), value);
+    Some(ResolvedPropertyCommand { value, transition: command.transition })
 }
 
 fn clamp_to_range(device_id: &str, property_id: &str, property: &dyn Property, value: Value) -> Value {
