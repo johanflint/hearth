@@ -2,7 +2,7 @@ use crate::domain::property::{NumberProperty, Property, PropertyError, Validated
 use crate::domain::{ClaimMode, Problem, Value, find_device, find_property};
 use crate::flow_engine::Expression;
 use crate::flow_engine::action::Action;
-use crate::flow_engine::action::device_command::CommandMap;
+use crate::flow_engine::action::device_command::{CommandMap, evaluate_commands};
 use crate::flow_engine::context::Context;
 use crate::flow_engine::property_command::PropertyCommand;
 use crate::flow_engine::scope::Scope;
@@ -103,7 +103,7 @@ impl Action for ControlDeviceAction {
         };
 
         let device_command = command_map.entry(self.device_id.clone()).or_default();
-        device_command.set_properties(device, &self.property, context);
+        device_command.set_properties(device, &evaluate_commands(&self.property, context));
         device_command.set_claim(self.claim);
     }
 

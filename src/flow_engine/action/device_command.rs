@@ -20,13 +20,13 @@ impl DeviceCommand {
         self.claim = claim.or(self.claim);
     }
 
-    pub fn set_properties(&mut self, device: &Device, commands: &HashMap<String, PropertyCommand>, context: &Context) {
-        for (property_id, command) in commands {
-            let Some(resolved_command) = resolve_property(device, property_id, command, context) else {
+    pub fn set_properties(&mut self, device: &Device, evaluated: &HashMap<String, ResolvedPropertyCommand>) {
+        for (property_id, command) in evaluated {
+            let Some(command) = fit_to_property(device, property_id, command) else {
                 continue;
             };
 
-            if let Some(previous) = self.properties.insert(property_id.clone(), resolved_command) {
+            if let Some(previous) = self.properties.insert(property_id.clone(), command) {
                 warn!(
                     device_id = device.id,
                     "⚠️ Overriding property '{}' for device '{}', it was set by another node to '{:?}'",
@@ -39,12 +39,31 @@ impl DeviceCommand {
     }
 }
 
-// Evaluates the command for one property of the device, returns None (after logging) if it can't be applied
-fn resolve_property(
+// Evaluates the expressions once, so the result can be applied to multiple devices. Skips the ones that fail.
+pub fn evaluate_commands(
+    commands: &HashMap<String, PropertyCommand>,
+    context: &Context,
+) -> HashMap<String, ResolvedPropertyCommand> {
+    commands
+        .iter()
+        .filter_map(|(property_id, command)| match evaluate(&command.value, context) {
+            Ok(value) => {
+                info!(property_id, "Evaluated '{}' → '{}'", command.value, value);
+                Some((property_id.clone(), ResolvedPropertyCommand { value, transition: command.transition }))
+            }
+            Err(err) => {
+                warn!(property_id, expression = %command.value, "⚠️ Evaluating expression... failed: {}", err);
+                None
+            }
+        })
+        .collect()
+}
+
+// Checks the evaluated command against the property of the device, returns None (after logging) if it can't be applied
+fn fit_to_property(
     device: &Device,
     property_id: &str,
-    command: &PropertyCommand,
-    context: &Context,
+    command: &ResolvedPropertyCommand,
 ) -> Option<ResolvedPropertyCommand> {
     let Some(property) = device.properties.get(property_id) else {
         warn!(
@@ -54,17 +73,8 @@ fn resolve_property(
         return None;
     };
 
-    let value = match evaluate(&command.value, context) {
-        Ok(value) => value,
-        Err(err) => {
-            warn!(device_id = device.id, property_id, expression = %command.value, "⚠️ Evaluating expression... failed: {}", err);
-            return None;
-        }
-    };
-    info!(device_id = device.id, property_id, "Evaluated '{}' → '{}'", command.value, value);
-
     // Validation can't catch a preset that changed kind after the flow was stored
-    let (expected, actual) = (property.value_kind(), value.kind());
+    let (expected, actual) = (property.value_kind(), command.value.kind());
     if expected != actual {
         warn!(
             device_id = device.id,
@@ -73,7 +83,7 @@ fn resolve_property(
         return None;
     }
 
-    let value = clamp_to_range(&device.id, property_id, property.as_ref(), value);
+    let value = clamp_to_range(&device.id, property_id, property.as_ref(), command.value.clone());
     Some(ResolvedPropertyCommand { value, transition: command.transition })
 }
 
@@ -130,7 +140,7 @@ mod tests {
 
     fn set_properties(commands: &HashMap<String, PropertyCommand>) -> DeviceCommand {
         let mut device_command = DeviceCommand::default();
-        device_command.set_properties(&device(), commands, &context());
+        device_command.set_properties(&device(), &evaluate_commands(commands, &context()));
         device_command
     }
 
@@ -222,9 +232,15 @@ mod tests {
     #[test]
     fn set_properties_overrides_a_property_set_earlier() {
         let mut device_command = DeviceCommand::default();
-        device_command.set_properties(&device(), &commands("brightness", property_command(number(10))), &context());
+        device_command.set_properties(
+            &device(),
+            &evaluate_commands(&commands("brightness", property_command(number(10))), &context()),
+        );
 
-        device_command.set_properties(&device(), &commands("brightness", property_command(number(20))), &context());
+        device_command.set_properties(
+            &device(),
+            &evaluate_commands(&commands("brightness", property_command(number(20))), &context()),
+        );
 
         assert_eq!(device_command.properties["brightness"], resolved_property_command(number(20)));
     }
@@ -232,9 +248,15 @@ mod tests {
     #[test]
     fn set_properties_keeps_properties_set_earlier() {
         let mut device_command = DeviceCommand::default();
-        device_command.set_properties(&device(), &commands("on", property_command(Value::Boolean(true))), &context());
+        device_command.set_properties(
+            &device(),
+            &evaluate_commands(&commands("on", property_command(Value::Boolean(true))), &context()),
+        );
 
-        device_command.set_properties(&device(), &commands("brightness", property_command(number(20))), &context());
+        device_command.set_properties(
+            &device(),
+            &evaluate_commands(&commands("brightness", property_command(number(20))), &context()),
+        );
 
         assert_eq!(device_command.properties.len(), 2);
     }
