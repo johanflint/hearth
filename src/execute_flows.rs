@@ -290,13 +290,19 @@ fn controller_commands(
 fn is_exact_match(group: &Group, dispatches: &HashMap<DeviceId, DeviceDispatch>) -> bool {
     let Some(first) = group.device_ids.first().and_then(|id| dispatches.get(id)) else { return false };
 
-    group.device_ids.iter().all(|id| {
-        dispatches.get(id).is_some_and(|member| {
-            member.group_id.as_ref() == Some(&group.id)
-                && member.device.controller_id == first.device.controller_id
-                && member.properties == first.properties
-        })
-    })
+    for device_id in &group.device_ids {
+        let Some(member) = dispatches.get(device_id) else { return false };
+        if member.group_id.as_ref() != Some(&group.id) {
+            return false;
+        }
+        if member.device.controller_id != first.device.controller_id {
+            return false;
+        }
+        if member.properties != first.properties {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]
