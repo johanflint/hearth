@@ -46,6 +46,8 @@ impl Controller for HueController {
                 DeviceType::Remote => {}
                 DeviceType::ContactSensor => {}
             },
+            Command::ControlGroup { group, devices, property } => {
+            }
         }
     }
 }

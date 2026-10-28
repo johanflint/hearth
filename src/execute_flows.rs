@@ -1,5 +1,5 @@
 use crate::claim_registry::{AuthorizeError, Claim, ClaimOrigin};
-use crate::domain::{ClaimMode, Command, Device, GeoLocation, controller_registry};
+use crate::domain::{ClaimMode, Command, Controller, Device, GeoLocation, Group, controller_registry};
 use crate::flow_engine::flow::Flow;
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::flow_engine::{CommandMap, Context, FlowEngineError, FlowExecutionReport};
@@ -156,36 +156,47 @@ fn flow_ids<T>(proposals: &[Proposal<T>]) -> Vec<String> {
     flow_ids
 }
 
-async fn dispatch_commands(snapshot: &StoreSnapshot, dispatch_map: DispatchMap) {
-    for (device_id, device_command) in dispatch_map {
-        if let Some(device) = snapshot.devices.get(&device_id) {
-            match claim_registry::authorize(device, device_command.claim) {
-                Ok(()) => {}
-                Err(AuthorizeError::Claimed(origin)) => {
-                    info!(device_id, claimed_by = %origin, "Device '{}' is claimed by {}, skipping writes without a claim", device.name, origin);
-                    continue;
-                }
-                Err(AuthorizeError::NotClaimable(_)) => {
-                    warn!(device_id, "⚠️ Device '{}' is not claimable, skipping writes", device.name);
-                    continue;
-                }
-            }
+struct DeviceDispatch {
+    device: Arc<Device>,
+    controller: Arc<dyn Controller>,
+    properties: HashMap<PropertyId, ResolvedPropertyCommand>,
+}
 
-            let properties = filter_flow_editable_properties(device, device_command.properties);
-            if properties.is_empty() {
+async fn dispatch_commands(snapshot: &StoreSnapshot, dispatch_map: DispatchMap) {
+    let dispatches = authorize_dispatches(snapshot, dispatch_map);
+    for (controller, command) in controller_commands(snapshot, dispatches) {
+        controller.execute(command).await;
+    }
+}
+
+fn authorize_dispatches(snapshot: &StoreSnapshot, dispatch_map: DispatchMap) -> HashMap<DeviceId, DeviceDispatch> {
+    let mut dispatches: HashMap<DeviceId, DeviceDispatch> = HashMap::new();
+    for (device_id, device_command) in dispatch_map {
+        let Some(device) = snapshot.devices.get(&device_id) else { continue };
+        match claim_registry::authorize(device, device_command.claim) {
+            Ok(()) => {}
+            Err(AuthorizeError::Claimed(origin)) => {
+                info!(device_id, claimed_by = %origin, "Device '{}' is claimed by {}, skipping writes without a claim", device.name, origin);
                 continue;
             }
-
-            if let Some(controller) =
-                device.controller_id.and_then(|controller_id| controller_registry::get(controller_id))
-            {
-                let command = Command::ControlDevice { device: device.clone(), property: Arc::new(properties) };
-                controller.execute(command).await;
-            } else {
-                warn!(device_id, "⚠️ Device '{}' is not tied to a controller", device.name);
+            Err(AuthorizeError::NotClaimable(_)) => {
+                warn!(device_id, "⚠️ Device '{}' is not claimable, skipping writes", device.name);
+                continue;
             }
         }
+
+        let properties = filter_flow_editable_properties(device, device_command.properties);
+        if properties.is_empty() {
+            continue;
+        }
+
+        let Some(controller) = device.controller_id.and_then(controller_registry::get) else {
+            warn!(device_id, "⚠️ Device '{}' is not tied to a controller", device.name);
+            continue;
+        };
+        dispatches.insert(device_id, DeviceDispatch { device: device.clone(), controller, properties });
     }
+    dispatches
 }
 
 // Drops properties that a flow is not allowed to write (unknown and marked as readonly).
@@ -221,15 +232,55 @@ fn filter_flow_editable_properties(
         .collect()
 }
 
+// Determines the which command to send to which controller. A group command is only used when every member of the group
+// has the same properties set, otherwise a group command would change more than the flow stated.
+fn controller_commands(
+    snapshot: &StoreSnapshot,
+    mut dispatches: HashMap<DeviceId, DeviceDispatch>,
+) -> Vec<(Arc<dyn Controller>, Command)> {
+    let mut commands = Vec::new();
+    for group in snapshot.groups.values() {
+        if group.device_ids.len() < 2 || !is_exact_match(group, &dispatches) {
+            continue;
+        }
+
+        let mut members = group.device_ids.iter().filter_map(|id| dispatches.remove(id));
+        let Some(first) = members.next() else { continue };
+
+        let controller = first.controller;
+        let property = Arc::new(first.properties);
+        let devices = std::iter::once(first.device).chain(members.map(|member| member.device)).collect();
+        commands.push((controller, Command::ControlGroup { group: group.clone(), devices, property }));
+    }
+
+    let device_commands = dispatches.into_values().map(|dispatch| {
+        let command = Command::ControlDevice { device: dispatch.device, property: Arc::new(dispatch.properties) };
+        (dispatch.controller, command)
+    });
+
+    commands.extend(device_commands);
+    commands
+}
+
+fn is_exact_match(group: &Group, dispatches: &HashMap<DeviceId, DeviceDispatch>) -> bool {
+    let mut members = group.device_ids.iter().map(|id| dispatches.get(id));
+    let Some(Some(first)) = members.next() else { return false };
+
+    members.all(|member| {
+        member.is_some_and(|m| m.device.controller_id == first.device.controller_id && m.properties == first.properties)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::Color;
     use crate::domain::property::{BooleanProperty, PropertyType};
+    use crate::domain::{Color, GroupOwner};
     use crate::domain::{Number, Value};
     use crate::flow_engine::action::DeviceCommand;
     use crate::flow_engine::flow::{FlowLink, FlowNode, FlowNodeKind};
     use crate::test_support::{DeviceBuilder, resolved_property_command};
+    use async_trait::async_trait;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use std::any::Any;
@@ -688,5 +739,168 @@ mod tests {
         let result = filter_flow_editable_properties(&device, properties);
 
         assert_eq!(result, HashMap::from([("on".to_string(), resolved_property_command(Value::Boolean(true)))]));
+    }
+
+    #[derive(Debug)]
+    struct StubController(&'static str);
+
+    #[async_trait]
+    impl Controller for StubController {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+
+        async fn execute(&self, _command: Command) {}
+    }
+
+    fn dispatch_for(
+        device_id: &str,
+        controller_id: &'static str,
+        properties: HashMap<String, ResolvedPropertyCommand>,
+    ) -> (DeviceId, DeviceDispatch) {
+        let mut device = DeviceBuilder::new(device_id).build();
+        device.controller_id = Some(controller_id);
+
+        let dispatch = DeviceDispatch {
+            device: Arc::new(device),
+            controller: Arc::new(StubController(controller_id)),
+            properties,
+        };
+        (device_id.to_string(), dispatch)
+    }
+
+    fn hue_dispatch(device_id: &str) -> (DeviceId, DeviceDispatch) {
+        dispatch_for(device_id, "hue", on_command())
+    }
+
+    fn snapshot_with_group(device_ids: &[&str]) -> StoreSnapshot {
+        let group = Group {
+            id: "room".to_string(),
+            name: "Room".to_string(),
+            device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
+            revision: 0,
+            owner: GroupOwner::Integration,
+        };
+        StoreSnapshot { groups: Arc::new(HashMap::from([(group.id.clone(), Arc::new(group))])), ..Default::default() }
+    }
+
+    // The order of the commands is not defined, so they are described and sorted
+    fn describe_commands(commands: &[(Arc<dyn Controller>, Command)]) -> Vec<String> {
+        let mut descriptions: Vec<String> = commands
+            .iter()
+            .map(|(_, command)| match command {
+                Command::ControlDevice { device, .. } => format!("device {}", device.id),
+                Command::ControlGroup { group, devices, .. } => {
+                    let device_ids: Vec<&str> = devices.iter().map(|device| device.id.as_str()).collect();
+                    format!("group {}: {}", group.id, device_ids.join(", "))
+                }
+            })
+            .collect();
+        descriptions.sort();
+        descriptions
+    }
+
+    #[test]
+    fn controller_commands_sends_a_group_command_when_every_member_has_the_same_properties() {
+        let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
+        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), hue_dispatch(DEVICE2_ID)]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["group room: device2_id, device_id"]);
+        let (controller, Command::ControlGroup { property, .. }) = &commands[0] else {
+            panic!("expected a group command");
+        };
+        assert_eq!(controller.id(), "hue");
+        assert_eq!(**property, on_command());
+    }
+
+    #[test]
+    fn controller_commands_sends_a_device_command_for_every_device_without_groups() {
+        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), hue_dispatch(DEVICE2_ID)]);
+
+        let commands = controller_commands(&StoreSnapshot::default(), dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device2_id", "device device_id"]);
+    }
+
+    #[test]
+    fn controller_commands_sends_nothing_without_dispatches() {
+        let commands = controller_commands(&snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]), HashMap::new());
+
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn controller_commands_sends_device_commands_when_a_member_is_not_dispatched() {
+        // A member that is claimed, or has nothing left to write after filtering, is not dispatched
+        let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
+        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID)]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device_id"]);
+    }
+
+    #[rstest]
+    #[case::different_value(HashMap::from([("on".to_string(), resolved_property_command(Value::Boolean(false)))]))]
+    #[case::different_property(HashMap::from([("brightness".to_string(), resolved_property_command(Value::Number(Number::PositiveInt(50))))]))]
+    #[case::additional_property(HashMap::from([
+        ("on".to_string(), resolved_property_command(Value::Boolean(true))),
+        ("brightness".to_string(), resolved_property_command(Value::Number(Number::PositiveInt(50)))),
+    ]))]
+    #[case::different_transition(HashMap::from([(
+        "on".to_string(),
+        ResolvedPropertyCommand { value: Value::Boolean(true), transition: Some(Duration::from_secs(10)) }
+    )]))]
+    fn controller_commands_sends_device_commands_when_the_members_have_different_properties(
+        #[case] other_properties: HashMap<String, ResolvedPropertyCommand>,
+    ) {
+        let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
+        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), dispatch_for(DEVICE2_ID, "hue", other_properties)]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device2_id", "device device_id"]);
+    }
+
+    #[test]
+    fn controller_commands_sends_device_commands_when_the_members_have_different_controllers() {
+        let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
+        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), dispatch_for(DEVICE2_ID, "other", on_command())]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device2_id", "device device_id"]);
+    }
+
+    #[test]
+    fn controller_commands_sends_a_device_command_for_a_group_with_a_single_device() {
+        let snapshot = snapshot_with_group(&[DEVICE_ID]);
+        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID)]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device_id"]);
+    }
+
+    #[test]
+    fn controller_commands_sends_a_device_command_for_a_device_outside_the_group() {
+        let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
+        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), hue_dispatch(DEVICE2_ID), hue_dispatch("device3_id")]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device3_id", "group room: device2_id, device_id"]);
+    }
+
+    #[test]
+    fn controller_commands_sends_a_device_command_for_a_group_that_refers_to_an_unknown_device() {
+        let snapshot = snapshot_with_group(&[DEVICE_ID, "ghost"]);
+        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID)]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device_id"]);
     }
 }
