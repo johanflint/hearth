@@ -848,6 +848,116 @@ mod tests {
         assert_eq!(result, HashMap::from([("on".to_string(), resolved_property_command(Value::Boolean(true)))]));
     }
 
+    // The controller and claim registries are global, so these tests use ids that no other test uses
+    const STUB_CONTROLLER_ID: &str = "authorize_dispatches_stub";
+
+    fn controlled_device(device_id: &str, controller_id: Option<&'static str>) -> Device {
+        controller_registry::register(Arc::new(StubController(STUB_CONTROLLER_ID)));
+
+        let on = BooleanProperty::new("on".to_string(), PropertyType::On, false, None, false);
+        let mut device = DeviceBuilder::new(device_id).with_properties(vec![Box::new(on)]).build();
+        device.controller_id = controller_id;
+        device
+    }
+
+    fn snapshot_with_device(device: Device) -> StoreSnapshot {
+        let devices = HashMap::from([(device.id.clone(), Arc::new(device))]);
+        StoreSnapshot { devices: Arc::new(devices), ..Default::default() }
+    }
+
+    #[test]
+    fn authorize_dispatches_keeps_the_group_device_controller_and_properties() {
+        let device_id = "authorize_device";
+        let snapshot = snapshot_with_device(controlled_device(device_id, Some(STUB_CONTROLLER_ID)));
+        let dispatch_map = HashMap::from([(device_id.to_string(), group_command("room", on_command()))]);
+
+        let dispatches = authorize_dispatches(&snapshot, dispatch_map);
+
+        assert_eq!(dispatches.len(), 1);
+        let dispatch = &dispatches[device_id];
+        assert_eq!(dispatch.group_id.as_deref(), Some("room"));
+        assert_eq!(dispatch.device.id, device_id);
+        assert_eq!(dispatch.controller.id(), STUB_CONTROLLER_ID);
+        assert_eq!(dispatch.properties, on_command());
+    }
+
+    #[test]
+    fn authorize_dispatches_skips_an_unknown_device() {
+        let dispatch_map = HashMap::from([("authorize_unknown_device".to_string(), device_command(on_command()))]);
+
+        let dispatches = authorize_dispatches(&StoreSnapshot::default(), dispatch_map);
+
+        assert!(dispatches.is_empty());
+    }
+
+    #[test]
+    fn authorize_dispatches_skips_a_claimed_device_without_a_claim() {
+        let device = controlled_device("authorize_claimed_device", Some(STUB_CONTROLLER_ID));
+        claim_registry::claim(&device, ClaimOrigin::External).unwrap();
+        let dispatch_map = HashMap::from([(device.id.clone(), device_command(on_command()))]);
+
+        let dispatches = authorize_dispatches(&snapshot_with_device(device), dispatch_map);
+
+        assert!(dispatches.is_empty());
+    }
+
+    #[test]
+    fn authorize_dispatches_dispatches_a_claimed_device_when_the_flow_claims_it() {
+        let device = controlled_device("authorize_reclaimed_device", Some(STUB_CONTROLLER_ID));
+        claim_registry::claim(&device, ClaimOrigin::External).unwrap();
+        let dispatch_command = DispatchCommand {
+            group_id: None,
+            claim: flow_claim(ClaimMode::Claim, &["flow"]),
+            properties: on_command(),
+        };
+        let dispatch_map = HashMap::from([(device.id.clone(), dispatch_command)]);
+
+        let dispatches = authorize_dispatches(&snapshot_with_device(device), dispatch_map);
+
+        assert!(dispatches.contains_key("authorize_reclaimed_device"));
+    }
+
+    #[test]
+    fn authorize_dispatches_skips_an_unclaimable_device_with_a_claim() {
+        let mut device = controlled_device("authorize_unclaimable_device", Some(STUB_CONTROLLER_ID));
+        device.claimable = false;
+        let dispatch_command = DispatchCommand {
+            group_id: None,
+            claim: flow_claim(ClaimMode::Claim, &["flow"]),
+            properties: on_command(),
+        };
+        let dispatch_map = HashMap::from([(device.id.clone(), dispatch_command)]);
+
+        let dispatches = authorize_dispatches(&snapshot_with_device(device), dispatch_map);
+
+        assert!(dispatches.is_empty());
+    }
+
+    #[test]
+    fn authorize_dispatches_skips_a_device_without_writable_properties() {
+        let device = controlled_device("authorize_readonly_device", Some(STUB_CONTROLLER_ID));
+        let properties = HashMap::from([("unknown".to_string(), resolved_property_command(Value::Boolean(true)))]);
+        let dispatch_map = HashMap::from([(device.id.clone(), device_command(properties))]);
+
+        let dispatches = authorize_dispatches(&snapshot_with_device(device), dispatch_map);
+
+        assert!(dispatches.is_empty());
+    }
+
+    #[rstest]
+    #[case::no_controller(None)]
+    #[case::unregistered_controller(Some("unregistered"))]
+    fn authorize_dispatches_skips_a_device_without_a_registered_controller(
+        #[case] controller_id: Option<&'static str>,
+    ) {
+        let device = controlled_device("authorize_uncontrolled_device", controller_id);
+        let dispatch_map = HashMap::from([(device.id.clone(), device_command(on_command()))]);
+
+        let dispatches = authorize_dispatches(&snapshot_with_device(device), dispatch_map);
+
+        assert!(dispatches.is_empty());
+    }
+
     #[derive(Debug)]
     struct StubController(&'static str);
 
