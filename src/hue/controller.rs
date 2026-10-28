@@ -359,9 +359,9 @@ mod tests {
     #[tokio::test]
     async fn control_group_sends_one_group_request_when_every_light_gets_the_same_request() {
         let mut server = mockito::Server::new_async().await;
-        let group_mock = put_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 1).await;
-        let light1_mock = put_mock(&mut server, "light", "light1", 0).await;
-        let light2_mock = put_mock(&mut server, "light", "light2", 0).await;
+        let group_mock = turn_on_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 1).await;
+        let light1_mock = turn_on_mock(&mut server, "light", "light1", 0).await;
+        let light2_mock = turn_on_mock(&mut server, "light", "light2", 0).await;
         let (controller, pending_writes) = controller(&server);
         let devices = vec![light("device1", Some("light1"), None), light("device2", Some("light2"), None)];
         let logs = LogMessages::default();
@@ -384,8 +384,8 @@ mod tests {
     #[tokio::test]
     async fn control_group_sends_a_request_per_light_when_the_group_has_no_grouped_light() {
         let mut server = mockito::Server::new_async().await;
-        let light1_mock = put_mock(&mut server, "light", "light1", 1).await;
-        let light2_mock = put_mock(&mut server, "light", "light2", 1).await;
+        let light1_mock = turn_on_mock(&mut server, "light", "light1", 1).await;
+        let light2_mock = turn_on_mock(&mut server, "light", "light2", 1).await;
         let (controller, pending_writes) = controller(&server);
         let devices = vec![light("device1", Some("light1"), None), light("device2", Some("light2"), None)];
         let logs = LogMessages::default();
@@ -407,9 +407,9 @@ mod tests {
     #[tokio::test]
     async fn control_group_sends_a_request_per_light_when_the_requests_differ_per_light() {
         let mut server = mockito::Server::new_async().await;
-        let group_mock = put_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 0).await;
-        let light1_mock = put_mock(&mut server, "light", "light1", 1).await;
-        let light2_mock = put_mock(&mut server, "light", "light2", 1).await;
+        let group_mock = turn_on_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 0).await;
+        let light1_mock = turn_on_mock(&mut server, "light", "light1", 1).await;
+        let light2_mock = turn_on_mock(&mut server, "light", "light2", 1).await;
         let (controller, pending_writes) = controller(&server);
         // The color is outside both gamuts, so it is clipped to a different color per light
         let devices =
@@ -437,8 +437,8 @@ mod tests {
     #[tokio::test]
     async fn control_group_sends_a_request_per_light_when_a_light_cannot_be_controlled() {
         let mut server = mockito::Server::new_async().await;
-        let group_mock = put_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 0).await;
-        let light1_mock = put_mock(&mut server, "light", "light1", 1).await;
+        let group_mock = turn_on_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 0).await;
+        let light1_mock = turn_on_mock(&mut server, "light", "light1", 1).await;
         let (controller, pending_writes) = controller(&server);
         let devices = vec![light("device1", Some("light1"), None), light("device2", None, None)];
         let logs = LogMessages::default();
@@ -460,7 +460,7 @@ mod tests {
     #[tokio::test]
     async fn control_group_sends_nothing_when_no_light_can_be_controlled() {
         let mut server = mockito::Server::new_async().await;
-        let group_mock = put_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 0).await;
+        let group_mock = turn_on_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 0).await;
         let (controller, _) = controller(&server);
         let devices = vec![light("device1", None, None), light("device2", None, None)];
         let logs = LogMessages::default();
@@ -475,7 +475,7 @@ mod tests {
         assert_eq!(logs.count("Unable to control"), 0);
     }
 
-    async fn put_mock(server: &mut ServerGuard, resource: &str, id: &str, expected_requests: usize) -> Mock {
+    async fn turn_on_mock(server: &mut ServerGuard, resource: &str, id: &str, expected_requests: usize) -> Mock {
         server
             .mock("PUT", format!("/clip/v2/resource/{resource}/{id}").as_str())
             .match_body(Matcher::PartialJson(json!({ "on": { "on": true } })))
