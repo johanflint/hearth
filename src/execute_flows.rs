@@ -9,12 +9,13 @@ use crate::store::{PropertyChange, StoreSnapshot};
 use crate::{claim_registry, flow_engine};
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tracing::{info, instrument, warn};
 
+type GroupId = String;
 type DeviceId = String;
 type PropertyId = String;
 
@@ -26,10 +27,12 @@ struct Proposal<T> {
 
 type ProposalMap = HashMap<(DeviceId, PropertyId), Vec<Proposal<ResolvedPropertyCommand>>>;
 type ClaimProposalMap = HashMap<DeviceId, Vec<Proposal<ClaimMode>>>;
+type GroupProposalMap = HashMap<DeviceId, Vec<Proposal<GroupId>>>;
 
 // The commands for one device after merging the command maps of all flows
 #[derive(Default, PartialEq, Debug)]
 pub struct DispatchCommand {
+    pub group_id: Option<GroupId>,
     pub claim: Option<Claim>,
     pub properties: HashMap<PropertyId, ResolvedPropertyCommand>,
 }
@@ -85,12 +88,20 @@ pub async fn execute_flows(
 fn merge_command_maps(reports: Vec<(Arc<Flow>, Result<FlowExecutionReport, FlowEngineError>)>) -> DispatchMap {
     let mut proposals: ProposalMap = HashMap::new();
     let mut claim_proposals: ClaimProposalMap = HashMap::new();
+    let mut group_proposals: GroupProposalMap = HashMap::new();
 
     for (origin, report) in reports {
         let Ok(report) = report else { continue };
 
         if let Some(command_map) = report.take_from_scope::<CommandMap>("command_map") {
             for (device_id, device_command) in command_map {
+                if let Some(group_id) = device_command.group_id {
+                    group_proposals
+                        .entry(device_id.clone())
+                        .or_default()
+                        .push(Proposal { origin: origin.clone(), value: group_id })
+                }
+
                 if let Some(claim) = device_command.claim {
                     claim_proposals
                         .entry(device_id.clone())
@@ -109,6 +120,13 @@ fn merge_command_maps(reports: Vec<(Arc<Flow>, Result<FlowExecutionReport, FlowE
     }
 
     let mut merged_map: DispatchMap = HashMap::new();
+    // Disagreeing flows only lose the group optimization, the properties are still sent per device
+    for (device_id, group_ids) in group_proposals {
+        if let Some(group_id) = agreed_value(&group_ids) {
+            merged_map.entry(device_id).or_default().group_id = Some(group_id.clone());
+        }
+    }
+
     for ((device_id, property_id), writes) in proposals {
         let Some(command) = agreed_value(&writes) else {
             log_conflict(&device_id, &property_id, &writes);
@@ -157,6 +175,7 @@ fn flow_ids<T>(proposals: &[Proposal<T>]) -> Vec<String> {
 }
 
 struct DeviceDispatch {
+    group_id: Option<GroupId>,
     device: Arc<Device>,
     controller: Arc<dyn Controller>,
     properties: HashMap<PropertyId, ResolvedPropertyCommand>,
@@ -194,7 +213,10 @@ fn authorize_dispatches(snapshot: &StoreSnapshot, dispatch_map: DispatchMap) -> 
             warn!(device_id, "⚠️ Device '{}' is not tied to a controller", device.name);
             continue;
         };
-        dispatches.insert(device_id, DeviceDispatch { device: device.clone(), controller, properties });
+        dispatches.insert(
+            device_id,
+            DeviceDispatch { group_id: device_command.group_id, device: device.clone(), controller, properties },
+        );
     }
     dispatches
 }
@@ -232,14 +254,17 @@ fn filter_flow_editable_properties(
         .collect()
 }
 
-// Determines the which command to send to which controller. A group command is only used when every member of the group
-// has the same properties set, otherwise a group command would change more than the flow stated.
+// Determines which command to send to which controller. A group command is only used for a group that a flow
+// targeted, and only when every member is dispatched with the same properties, otherwise it would change more
+// than the flows stated.
 fn controller_commands(
     snapshot: &StoreSnapshot,
     mut dispatches: HashMap<DeviceId, DeviceDispatch>,
 ) -> Vec<(Arc<dyn Controller>, Command)> {
     let mut commands = Vec::new();
-    for group in snapshot.groups.values() {
+    let group_ids: BTreeSet<GroupId> = dispatches.values().filter_map(|d| d.group_id.clone()).collect();
+    for group_id in group_ids {
+        let Some(group) = snapshot.groups.get(&group_id) else { continue };
         if group.external_id.is_none() || group.device_ids.len() < 2 || !is_exact_match(group, &dispatches) {
             continue;
         }
@@ -263,11 +288,14 @@ fn controller_commands(
 }
 
 fn is_exact_match(group: &Group, dispatches: &HashMap<DeviceId, DeviceDispatch>) -> bool {
-    let mut members = group.device_ids.iter().map(|id| dispatches.get(id));
-    let Some(Some(first)) = members.next() else { return false };
+    let Some(first) = group.device_ids.first().and_then(|id| dispatches.get(id)) else { return false };
 
-    members.all(|member| {
-        member.is_some_and(|m| m.device.controller_id == first.device.controller_id && m.properties == first.properties)
+    group.device_ids.iter().all(|id| {
+        dispatches.get(id).is_some_and(|member| {
+            member.group_id.as_ref() == Some(&group.id)
+                && member.device.controller_id == first.device.controller_id
+                && member.properties == first.properties
+        })
     })
 }
 
@@ -298,7 +326,20 @@ mod tests {
         claim: Option<ClaimMode>,
         properties: HashMap<String, ResolvedPropertyCommand>,
     ) -> FlowExecutionReport {
-        let command_map: CommandMap = HashMap::from([(device_id.to_string(), DeviceCommand { claim, properties })]);
+        create_report_with_command(device_id, DeviceCommand { group_id: None, claim, properties })
+    }
+
+    fn create_report_with_group(
+        device_id: &str,
+        group_id: &str,
+        properties: HashMap<String, ResolvedPropertyCommand>,
+    ) -> FlowExecutionReport {
+        let device_command = DeviceCommand { group_id: Some(group_id.to_string()), claim: None, properties };
+        create_report_with_command(device_id, device_command)
+    }
+
+    fn create_report_with_command(device_id: &str, device_command: DeviceCommand) -> FlowExecutionReport {
+        let command_map: CommandMap = HashMap::from([(device_id.to_string(), device_command)]);
 
         let mut scope: HashMap<String, Box<dyn Any + Send + Sync>> = HashMap::new();
         scope.insert("command_map".to_string(), Box::new(command_map));
@@ -318,7 +359,7 @@ mod tests {
     }
 
     fn device_command(properties: HashMap<String, ResolvedPropertyCommand>) -> DispatchCommand {
-        DispatchCommand { claim: None, properties }
+        DispatchCommand { group_id: None, claim: None, properties }
     }
 
     fn flow_claim(mode: ClaimMode, flow_ids: &[&str]) -> Option<Claim> {
@@ -554,7 +595,7 @@ mod tests {
             result,
             HashMap::from([(
                 DEVICE_ID.to_string(),
-                DispatchCommand { claim: flow_claim(claim, &["flow"]), properties: on_command() }
+                DispatchCommand { group_id: None, claim: flow_claim(claim, &["flow"]), properties: on_command() }
             )])
         );
     }
@@ -569,7 +610,11 @@ mod tests {
             result,
             HashMap::from([(
                 DEVICE_ID.to_string(),
-                DispatchCommand { claim: flow_claim(ClaimMode::Release, &["flow"]), properties: HashMap::new() }
+                DispatchCommand {
+                    group_id: None,
+                    claim: flow_claim(ClaimMode::Release, &["flow"]),
+                    properties: HashMap::new()
+                }
             )])
         );
     }
@@ -587,6 +632,7 @@ mod tests {
             HashMap::from([(
                 DEVICE_ID.to_string(),
                 DispatchCommand {
+                    group_id: None,
                     claim: flow_claim(ClaimMode::Claim, &["flow", "other_flow"]),
                     properties: on_command()
                 }
@@ -606,7 +652,11 @@ mod tests {
             result,
             HashMap::from([(
                 DEVICE_ID.to_string(),
-                DispatchCommand { claim: flow_claim(ClaimMode::Claim, &["flow"]), properties: on_command() }
+                DispatchCommand {
+                    group_id: None,
+                    claim: flow_claim(ClaimMode::Claim, &["flow"]),
+                    properties: on_command()
+                }
             )])
         );
     }
@@ -646,17 +696,68 @@ mod tests {
             HashMap::from([
                 (
                     DEVICE_ID.to_string(),
-                    DispatchCommand { claim: flow_claim(ClaimMode::Claim, &["flow"]), properties: HashMap::new() }
+                    DispatchCommand {
+                        group_id: None,
+                        claim: flow_claim(ClaimMode::Claim, &["flow"]),
+                        properties: HashMap::new()
+                    }
                 ),
                 (
                     DEVICE2_ID.to_string(),
                     DispatchCommand {
+                        group_id: None,
                         claim: flow_claim(ClaimMode::Release, &["other_flow"]),
                         properties: HashMap::new()
                     }
                 ),
             ])
         );
+    }
+
+    fn group_command(group_id: &str, properties: HashMap<String, ResolvedPropertyCommand>) -> DispatchCommand {
+        DispatchCommand { group_id: Some(group_id.to_string()), claim: None, properties }
+    }
+
+    #[test]
+    fn merge_command_maps_keeps_the_group() {
+        let report = create_report_with_group(DEVICE_ID, "room", on_command());
+
+        let result = merge_command_maps(vec![(create_flow("flow"), Ok(report))]);
+
+        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), group_command("room", on_command()))]));
+    }
+
+    #[test]
+    fn merge_command_maps_equal_groups_deduplicate() {
+        let report = create_report_with_group(DEVICE_ID, "room", on_command());
+        let report2 = create_report_with_group(DEVICE_ID, "room", on_command());
+
+        let result =
+            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+
+        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), group_command("room", on_command()))]));
+    }
+
+    #[test]
+    fn merge_command_maps_a_flow_without_group_does_not_conflict_with_a_group() {
+        let report = create_report_with_group(DEVICE_ID, "room", on_command());
+        let report2 = create_report(DEVICE_ID, on_command());
+
+        let result =
+            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+
+        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), group_command("room", on_command()))]));
+    }
+
+    #[test]
+    fn merge_command_maps_conflicting_groups_reset_the_group_and_keep_the_properties() {
+        let report = create_report_with_group(DEVICE_ID, "room", on_command());
+        let report2 = create_report_with_group(DEVICE_ID, "zone", on_command());
+
+        let result =
+            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+
+        assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), device_command(on_command()))]));
     }
 
     #[test]
@@ -755,6 +856,7 @@ mod tests {
 
     fn dispatch_for(
         device_id: &str,
+        group_id: Option<&str>,
         controller_id: &'static str,
         properties: HashMap<String, ResolvedPropertyCommand>,
     ) -> (DeviceId, DeviceDispatch) {
@@ -762,6 +864,7 @@ mod tests {
         device.controller_id = Some(controller_id);
 
         let dispatch = DeviceDispatch {
+            group_id: group_id.map(str::to_string),
             device: Arc::new(device),
             controller: Arc::new(StubController(controller_id)),
             properties,
@@ -769,24 +872,34 @@ mod tests {
         (device_id.to_string(), dispatch)
     }
 
-    fn hue_dispatch(device_id: &str) -> (DeviceId, DeviceDispatch) {
-        dispatch_for(device_id, "hue", on_command())
+    // A device that a flow controlled through the group 'room'
+    fn room_dispatch(device_id: &str) -> (DeviceId, DeviceDispatch) {
+        dispatch_for(device_id, Some("room"), "hue", on_command())
     }
 
-    fn snapshot_with_group(device_ids: &[&str]) -> StoreSnapshot {
-        snapshot_with_external_id(device_ids, Some("grouped-light"))
+    // A device that a flow controlled directly
+    fn device_dispatch(device_id: &str) -> (DeviceId, DeviceDispatch) {
+        dispatch_for(device_id, None, "hue", on_command())
     }
 
-    fn snapshot_with_external_id(device_ids: &[&str], external_id: Option<&str>) -> StoreSnapshot {
-        let group = Group {
-            id: "room".to_string(),
-            name: "Room".to_string(),
+    fn group(id: &str, device_ids: &[&str], external_id: Option<&str>) -> Group {
+        Group {
+            id: id.to_string(),
+            name: id.to_string(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
             owner: GroupOwner::Integration,
             external_id: external_id.map(str::to_string),
-        };
-        StoreSnapshot { groups: Arc::new(HashMap::from([(group.id.clone(), Arc::new(group))])), ..Default::default() }
+        }
+    }
+
+    fn snapshot_with_groups(groups: Vec<Group>) -> StoreSnapshot {
+        let groups = groups.into_iter().map(|group| (group.id.clone(), Arc::new(group))).collect();
+        StoreSnapshot { groups: Arc::new(groups), ..Default::default() }
+    }
+
+    fn snapshot_with_group(device_ids: &[&str]) -> StoreSnapshot {
+        snapshot_with_groups(vec![group("room", device_ids, Some("grouped-light"))])
     }
 
     // The order of the commands is not defined, so they are described and sorted
@@ -808,7 +921,7 @@ mod tests {
     #[test]
     fn controller_commands_sends_a_group_command_when_every_member_has_the_same_properties() {
         let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
-        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), hue_dispatch(DEVICE2_ID)]);
+        let dispatches = HashMap::from([room_dispatch(DEVICE_ID), room_dispatch(DEVICE2_ID)]);
 
         let commands = controller_commands(&snapshot, dispatches);
 
@@ -822,10 +935,10 @@ mod tests {
     }
 
     #[test]
-    fn controller_commands_sends_a_device_command_for_every_device_without_groups() {
-        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), hue_dispatch(DEVICE2_ID)]);
+    fn controller_commands_sends_device_commands_for_an_exact_match_that_no_flow_controlled_as_a_group() {
+        let dispatches = HashMap::from([device_dispatch(DEVICE_ID), device_dispatch(DEVICE2_ID)]);
 
-        let commands = controller_commands(&StoreSnapshot::default(), dispatches);
+        let commands = controller_commands(&snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]), dispatches);
 
         assert_eq!(describe_commands(&commands), ["device device2_id", "device device_id"]);
     }
@@ -841,7 +954,7 @@ mod tests {
     fn controller_commands_sends_device_commands_when_a_member_is_not_dispatched() {
         // A member that is claimed, or has nothing left to write after filtering, is not dispatched
         let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
-        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID)]);
+        let dispatches = HashMap::from([room_dispatch(DEVICE_ID)]);
 
         let commands = controller_commands(&snapshot, dispatches);
 
@@ -863,7 +976,8 @@ mod tests {
         #[case] other_properties: HashMap<String, ResolvedPropertyCommand>,
     ) {
         let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
-        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), dispatch_for(DEVICE2_ID, "hue", other_properties)]);
+        let dispatches =
+            HashMap::from([room_dispatch(DEVICE_ID), dispatch_for(DEVICE2_ID, Some("room"), "hue", other_properties)]);
 
         let commands = controller_commands(&snapshot, dispatches);
 
@@ -873,7 +987,8 @@ mod tests {
     #[test]
     fn controller_commands_sends_device_commands_when_the_members_have_different_controllers() {
         let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
-        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), dispatch_for(DEVICE2_ID, "other", on_command())]);
+        let dispatches =
+            HashMap::from([room_dispatch(DEVICE_ID), dispatch_for(DEVICE2_ID, Some("room"), "other", on_command())]);
 
         let commands = controller_commands(&snapshot, dispatches);
 
@@ -882,8 +997,8 @@ mod tests {
 
     #[test]
     fn controller_commands_sends_device_commands_for_a_group_without_an_external_id() {
-        let snapshot = snapshot_with_external_id(&[DEVICE_ID, DEVICE2_ID], None);
-        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), hue_dispatch(DEVICE2_ID)]);
+        let snapshot = snapshot_with_groups(vec![group("room", &[DEVICE_ID, DEVICE2_ID], None)]);
+        let dispatches = HashMap::from([room_dispatch(DEVICE_ID), room_dispatch(DEVICE2_ID)]);
 
         let commands = controller_commands(&snapshot, dispatches);
 
@@ -893,7 +1008,7 @@ mod tests {
     #[test]
     fn controller_commands_sends_a_device_command_for_a_group_with_a_single_device() {
         let snapshot = snapshot_with_group(&[DEVICE_ID]);
-        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID)]);
+        let dispatches = HashMap::from([room_dispatch(DEVICE_ID)]);
 
         let commands = controller_commands(&snapshot, dispatches);
 
@@ -903,7 +1018,8 @@ mod tests {
     #[test]
     fn controller_commands_sends_a_device_command_for_a_device_outside_the_group() {
         let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
-        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), hue_dispatch(DEVICE2_ID), hue_dispatch("device3_id")]);
+        let dispatches =
+            HashMap::from([room_dispatch(DEVICE_ID), room_dispatch(DEVICE2_ID), device_dispatch("device3_id")]);
 
         let commands = controller_commands(&snapshot, dispatches);
 
@@ -913,10 +1029,72 @@ mod tests {
     #[test]
     fn controller_commands_sends_a_device_command_for_a_group_that_refers_to_an_unknown_device() {
         let snapshot = snapshot_with_group(&[DEVICE_ID, "ghost"]);
-        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID)]);
+        let dispatches = HashMap::from([room_dispatch(DEVICE_ID)]);
 
         let commands = controller_commands(&snapshot, dispatches);
 
         assert_eq!(describe_commands(&commands), ["device device_id"]);
+    }
+
+    // DEVICE2_ID is the first member of the group, so this also covers the first member
+    #[rstest]
+    #[case::untagged(None)]
+    #[case::tagged_with_another_group(Some("zone"))]
+    fn controller_commands_sends_device_commands_when_a_member_is_not_controlled_through_the_group(
+        #[case] group_id: Option<&str>,
+    ) {
+        let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
+        let dispatches =
+            HashMap::from([room_dispatch(DEVICE_ID), dispatch_for(DEVICE2_ID, group_id, "hue", on_command())]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device2_id", "device device_id"]);
+    }
+
+    #[test]
+    fn controller_commands_sends_device_commands_for_an_unknown_group() {
+        let dispatches = HashMap::from([room_dispatch(DEVICE_ID), room_dispatch(DEVICE2_ID)]);
+
+        let commands = controller_commands(&StoreSnapshot::default(), dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device2_id", "device device_id"]);
+    }
+
+    #[test]
+    fn controller_commands_sends_a_group_command_per_controlled_group() {
+        let snapshot = snapshot_with_groups(vec![
+            group("room", &[DEVICE_ID, DEVICE2_ID], Some("grouped-light")),
+            group("zone", &["device3_id", "device4_id"], Some("grouped-light-2")),
+        ]);
+        let zone_dispatch = |device_id| dispatch_for(device_id, Some("zone"), "hue", on_command());
+        let dispatches = HashMap::from([
+            room_dispatch(DEVICE_ID),
+            room_dispatch(DEVICE2_ID),
+            zone_dispatch("device3_id"),
+            zone_dispatch("device4_id"),
+        ]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(
+            describe_commands(&commands),
+            ["group room: device2_id, device_id", "group zone: device3_id, device4_id"]
+        );
+    }
+
+    #[test]
+    fn controller_commands_uses_the_controlled_group_of_overlapping_groups() {
+        // Both groups match exactly, but the flow only controlled the zone
+        let snapshot = snapshot_with_groups(vec![
+            group("room", &[DEVICE_ID, DEVICE2_ID], Some("grouped-light")),
+            group("zone", &[DEVICE_ID, DEVICE2_ID], Some("grouped-light-2")),
+        ]);
+        let zone_dispatch = |device_id| dispatch_for(device_id, Some("zone"), "hue", on_command());
+        let dispatches = HashMap::from([zone_dispatch(DEVICE_ID), zone_dispatch(DEVICE2_ID)]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["group zone: device2_id, device_id"]);
     }
 }

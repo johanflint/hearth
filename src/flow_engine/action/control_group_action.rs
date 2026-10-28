@@ -57,6 +57,7 @@ impl Action for ControlGroupAction {
             let device_command = command_map.entry(device_id.clone()).or_default();
             device_command.set_properties(device, &evaluated);
             device_command.set_claim(self.claim);
+            device_command.set_group_id(self.group_id.clone());
         }
     }
 
@@ -173,6 +174,7 @@ mod tests {
 
     fn device_command(claim: Option<ClaimMode>, properties: &[(&str, Value)]) -> DeviceCommand {
         DeviceCommand {
+            group_id: Some("room".to_string()),
             claim,
             properties: properties
                 .iter()

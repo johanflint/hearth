@@ -341,7 +341,11 @@ mod tests {
             command_map,
             Some(HashMap::from([(
                 "lamp".to_string(),
-                DeviceCommand { claim: None, properties: HashMap::from([("brightness".to_string(), expected)]) }
+                DeviceCommand {
+                    group_id: None,
+                    claim: None,
+                    properties: HashMap::from([("brightness".to_string(), expected)])
+                }
             )]))
         );
     }
@@ -363,13 +367,17 @@ mod tests {
             command_map,
             Some(HashMap::from([(
                 "lamp".to_string(),
-                DeviceCommand { claim: None, properties: HashMap::from([("brightness".to_string(), expected)]) }
+                DeviceCommand {
+                    group_id: None,
+                    claim: None,
+                    properties: HashMap::from([("brightness".to_string(), expected)])
+                }
             )]))
         );
     }
 
     fn lamp_command(properties: HashMap<String, ResolvedPropertyCommand>) -> Option<CommandMap> {
-        Some(HashMap::from([("lamp".to_string(), DeviceCommand { claim: None, properties })]))
+        Some(HashMap::from([("lamp".to_string(), DeviceCommand { group_id: None, claim: None, properties })]))
     }
 
     #[rstest]
@@ -459,7 +467,10 @@ mod tests {
 
         assert_eq!(
             command_map,
-            Some(HashMap::from([("lamp".to_string(), DeviceCommand { claim: None, properties: HashMap::new() })]))
+            Some(HashMap::from([(
+                "lamp".to_string(),
+                DeviceCommand { group_id: None, claim: None, properties: HashMap::new() }
+            )]))
         );
     }
 
@@ -469,7 +480,10 @@ mod tests {
 
         assert_eq!(
             command_map,
-            Some(HashMap::from([("lamp".to_string(), DeviceCommand { claim: None, properties: HashMap::new() })]))
+            Some(HashMap::from([(
+                "lamp".to_string(),
+                DeviceCommand { group_id: None, claim: None, properties: HashMap::new() }
+            )]))
         );
     }
 

@@ -8,6 +8,7 @@ use tracing::{info, warn};
 
 #[derive(PartialEq, Default, Debug)]
 pub struct DeviceCommand {
+    pub group_id: Option<String>,
     pub claim: Option<ClaimMode>,
     pub properties: HashMap<String, ResolvedPropertyCommand>,
 }
@@ -15,6 +16,10 @@ pub struct DeviceCommand {
 pub type CommandMap = HashMap<String, DeviceCommand>;
 
 impl DeviceCommand {
+    pub fn set_group_id(&mut self, group_id: String) {
+        self.group_id = Some(group_id);
+    }
+
     // A later action without a claim doesn't undo the claim of an earlier action
     pub fn set_claim(&mut self, claim: Option<ClaimMode>) {
         self.claim = claim.or(self.claim);
@@ -278,5 +283,15 @@ mod tests {
         device_command.set_claim(second);
 
         assert_eq!(device_command.claim, expected);
+    }
+
+    #[test]
+    fn set_group_id_keeps_the_last_group() {
+        let mut device_command = DeviceCommand::default();
+
+        device_command.set_group_id("room".to_string());
+        device_command.set_group_id("zone".to_string());
+
+        assert_eq!(device_command.group_id, Some("zone".to_string()));
     }
 }
