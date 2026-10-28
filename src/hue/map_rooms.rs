@@ -33,7 +33,7 @@ pub fn map_rooms(rooms: Vec<RoomGet>, light_device_ids: &HashSet<String>) -> Vec
         .collect()
 }
 
-fn grouped_light_id(services: &[Owner]) -> Option<String> {
+pub fn grouped_light_id(services: &[Owner]) -> Option<String> {
     services.iter().find(|service| service.rtype == GROUPED_LIGHT).map(|service| service.rid.clone())
 }
 

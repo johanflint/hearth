@@ -15,7 +15,6 @@ pub struct RoomGet {
 pub struct RoomChanged {
     pub id: String,
     pub children: Option<Vec<Owner>>,
-    #[allow(dead_code)]
     pub services: Option<Vec<Owner>>,
     pub metadata: Option<RoomMetadataChanged>,
 }

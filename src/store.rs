@@ -232,13 +232,14 @@ impl Store {
                 gauge!(Metric::StoreGroupCount.name()).set(self.groups.len() as f64);
                 None
             }
-            Event::GroupChanged(GroupChanged { id, name, device_ids }) => {
+            Event::GroupChanged(GroupChanged { id, name, device_ids, external_id }) => {
                 let group = match self.groups.get(&id) {
                     Some(existing) => {
                         let existing = Group::clone(existing);
                         Group {
                             name: name.unwrap_or(existing.name),
                             device_ids: device_ids.unwrap_or(existing.device_ids),
+                            external_id: external_id.or(existing.external_id),
                             ..existing
                         }
                     }
@@ -249,7 +250,7 @@ impl Store {
                             device_ids,
                             revision: 0,
                             owner: GroupOwner::Integration,
-                            external_id: None,
+                            external_id,
                         },
                         _ => {
                             warn!("⚠️ Ignoring partial update for an unknown group '{id}'");
@@ -384,6 +385,16 @@ mod tests {
             id: id.to_string(),
             name: name.map(str::to_string),
             device_ids: device_ids.map(|ids| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>()),
+            external_id: None,
+        })
+    }
+
+    fn group_changed_with_external_id(id: &str, external_id: &str) -> Event {
+        Event::GroupChanged(GroupChanged {
+            id: id.to_string(),
+            name: None,
+            device_ids: None,
+            external_id: Some(external_id.to_string()),
         })
     }
 
@@ -397,6 +408,50 @@ mod tests {
         assert_eq!(update.changed, None);
         assert_eq!(update.snapshot.groups.len(), 1);
         assert_eq!(*update.snapshot.groups["group"], group("group", "Group", &["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn group_changed_creates_a_group_with_the_external_id() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::GroupChanged(GroupChanged {
+            id: "group".to_string(),
+            name: Some("Group".to_string()),
+            device_ids: Some(BTreeSet::from(["a".to_string(), "b".to_string()])),
+            external_id: Some("grouped-light".to_string()),
+        }))
+        .await
+        .unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let expected = Group { external_id: Some("grouped-light".to_string()), ..group("group", "Group", &["a", "b"]) };
+        assert_eq!(*update.snapshot.groups["group"], expected);
+    }
+
+    #[tokio::test]
+    async fn group_changed_without_an_external_id_keeps_the_existing_one() {
+        let (tx, mut reactive_rx) = start_store();
+        let existing = Group { external_id: Some("grouped-light".to_string()), ..group("group", "Group", &["a"]) };
+        tx.send(Event::DiscoveredGroups(vec![existing])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(group_changed("group", Some("Renamed"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.groups["group"].external_id.as_deref(), Some("grouped-light"));
+    }
+
+    #[tokio::test]
+    async fn group_changed_with_an_external_id_replaces_the_existing_one() {
+        let (tx, mut reactive_rx) = start_store();
+        let existing = Group { external_id: Some("old".to_string()), ..group("group", "Group", &["a"]) };
+        tx.send(Event::DiscoveredGroups(vec![existing])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(group_changed_with_external_id("group", "new")).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.groups["group"].external_id.as_deref(), Some("new"));
     }
 
     #[tokio::test]
