@@ -1,6 +1,8 @@
 use crate::domain::{Group, GroupOwner};
-use crate::hue::domain::RoomGet;
+use crate::hue::domain::{Owner, RoomGet};
 use std::collections::{BTreeSet, HashSet};
+
+const GROUPED_LIGHT: &str = "grouped_light";
 
 pub fn map_rooms(rooms: Vec<RoomGet>, light_device_ids: &HashSet<String>) -> Vec<Group> {
     rooms
@@ -18,15 +20,21 @@ pub fn map_rooms(rooms: Vec<RoomGet>, light_device_ids: &HashSet<String>) -> Vec
                 return None;
             }
 
+            let grouped_light_id = grouped_light_id(&room.services);
             Some(Group {
                 id: room.id,
                 name: room.metadata.name,
                 device_ids,
                 revision: 0,
                 owner: GroupOwner::Integration,
+                external_id: grouped_light_id,
             })
         })
         .collect()
+}
+
+fn grouped_light_id(services: &[Owner]) -> Option<String> {
+    services.iter().find(|service| service.rtype == GROUPED_LIGHT).map(|service| service.rid.clone())
 }
 
 #[cfg(test)]
@@ -70,8 +78,19 @@ mod tests {
                 device_ids: device_ids(&["lamp-1", "lamp-2"]),
                 revision: 0,
                 owner: GroupOwner::Integration,
+                external_id: Some("grouped-light".to_string()),
             }]
         );
+    }
+
+    #[test]
+    fn map_rooms_leaves_the_external_id_empty_for_a_room_without_a_grouped_light() {
+        let mut room = room("room-1", "Living room", &["lamp-1"]);
+        room.services = vec![owner("motion-service", "motion")];
+
+        let groups = map_rooms(vec![room], &light_device_ids(&["lamp-1"]));
+
+        assert_eq!(groups[0].external_id, None);
     }
 
     #[test]

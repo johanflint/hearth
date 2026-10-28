@@ -495,6 +495,7 @@ mod tests {
                 device_ids: BTreeSet::from(["079e0321-7e18-46bc-bc16-fcbc3dd09e30".to_string()]),
                 revision: 0,
                 owner: GroupOwner::Integration,
+                external_id: Some("6c1524d8-1fd7-40fc-a6f4-77e5a4146d89".to_string()),
             }]
         );
 

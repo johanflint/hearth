@@ -14,7 +14,7 @@ pub struct LightGet {
     pub color: Option<Color>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct LightRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<On>,
@@ -46,7 +46,7 @@ impl LightRequest {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct On {
     pub on: bool,
 }
@@ -57,22 +57,22 @@ pub struct Dimming {
     pub min_dim_level: Option<f64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct SetDimming {
     pub brightness: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct SetColorTemperature {
     pub mirek: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct SetColor {
     pub xy: Xy,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct SetDynamics {
     pub duration: u64, // milliseconds
 }
@@ -99,7 +99,7 @@ pub struct Color {
     pub gamut_type: GamutType,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct Xy {
     pub x: f64,
     pub y: f64,

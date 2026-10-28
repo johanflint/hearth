@@ -240,7 +240,7 @@ fn controller_commands(
 ) -> Vec<(Arc<dyn Controller>, Command)> {
     let mut commands = Vec::new();
     for group in snapshot.groups.values() {
-        if group.device_ids.len() < 2 || !is_exact_match(group, &dispatches) {
+        if group.external_id.is_none() || group.device_ids.len() < 2 || !is_exact_match(group, &dispatches) {
             continue;
         }
 
@@ -774,12 +774,17 @@ mod tests {
     }
 
     fn snapshot_with_group(device_ids: &[&str]) -> StoreSnapshot {
+        snapshot_with_external_id(device_ids, Some("grouped-light"))
+    }
+
+    fn snapshot_with_external_id(device_ids: &[&str], external_id: Option<&str>) -> StoreSnapshot {
         let group = Group {
             id: "room".to_string(),
             name: "Room".to_string(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
             owner: GroupOwner::Integration,
+            external_id: external_id.map(str::to_string),
         };
         StoreSnapshot { groups: Arc::new(HashMap::from([(group.id.clone(), Arc::new(group))])), ..Default::default() }
     }
@@ -808,10 +813,11 @@ mod tests {
         let commands = controller_commands(&snapshot, dispatches);
 
         assert_eq!(describe_commands(&commands), ["group room: device2_id, device_id"]);
-        let (controller, Command::ControlGroup { property, .. }) = &commands[0] else {
+        let (controller, Command::ControlGroup { group, property, .. }) = &commands[0] else {
             panic!("expected a group command");
         };
         assert_eq!(controller.id(), "hue");
+        assert_eq!(group.external_id.as_deref(), Some("grouped-light"));
         assert_eq!(**property, on_command());
     }
 
@@ -868,6 +874,16 @@ mod tests {
     fn controller_commands_sends_device_commands_when_the_members_have_different_controllers() {
         let snapshot = snapshot_with_group(&[DEVICE_ID, DEVICE2_ID]);
         let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), dispatch_for(DEVICE2_ID, "other", on_command())]);
+
+        let commands = controller_commands(&snapshot, dispatches);
+
+        assert_eq!(describe_commands(&commands), ["device device2_id", "device device_id"]);
+    }
+
+    #[test]
+    fn controller_commands_sends_device_commands_for_a_group_without_an_external_id() {
+        let snapshot = snapshot_with_external_id(&[DEVICE_ID, DEVICE2_ID], None);
+        let dispatches = HashMap::from([hue_dispatch(DEVICE_ID), hue_dispatch(DEVICE2_ID)]);
 
         let commands = controller_commands(&snapshot, dispatches);
 

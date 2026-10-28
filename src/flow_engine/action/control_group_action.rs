@@ -144,6 +144,7 @@ mod tests {
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
             owner: GroupOwner::Integration,
+            external_id: None,
         };
         let groups: GroupMap = HashMap::from([(group.id.clone(), Arc::new(group))]);
 

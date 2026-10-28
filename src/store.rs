@@ -243,9 +243,14 @@ impl Store {
                         }
                     }
                     None => match (name, device_ids) {
-                        (Some(name), Some(device_ids)) => {
-                            Group { id: id.clone(), name, device_ids, revision: 0, owner: GroupOwner::Integration }
-                        }
+                        (Some(name), Some(device_ids)) => Group {
+                            id: id.clone(),
+                            name,
+                            device_ids,
+                            revision: 0,
+                            owner: GroupOwner::Integration,
+                            external_id: None,
+                        },
                         _ => {
                             warn!("⚠️ Ignoring partial update for an unknown group '{id}'");
                             return None;
@@ -298,6 +303,7 @@ mod tests {
             device_ids: device_ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>(),
             revision: 0,
             owner: GroupOwner::Integration,
+            external_id: None,
         }
     }
 

@@ -2,7 +2,7 @@ use crate::app_config::AppConfig;
 use crate::domain::property::{
     BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue,
 };
-use crate::domain::{Color, Command, Controller, Device, DeviceType};
+use crate::domain::{Color, Command, Controller, Device, DeviceType, Group};
 use crate::domain::{Number, Value};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
@@ -47,6 +47,7 @@ impl Controller for HueController {
                 DeviceType::ContactSensor => {}
             },
             Command::ControlGroup { group, devices, property } => {
+                self.control_group(&group, &devices, &property).await;
             }
         }
     }
@@ -57,15 +58,18 @@ impl HueController {
         HueController { client, pending_writes, config }
     }
 
-    async fn control_device_light(&self, device: Arc<Device>, property: Arc<HashMap<String, ResolvedPropertyCommand>>) {
+    fn light_request(
+        device: &Device,
+        property: &HashMap<String, ResolvedPropertyCommand>,
+    ) -> Option<(String, LightRequest)> {
         let Some(on_property) = device.get_property_of_type::<BooleanProperty>(PropertyType::On) else {
             warn!(device_id = device.id, "⚠️ Light has no on property");
-            return;
+            return None;
         };
 
         let Some(light_id) = on_property.external_id() else {
             warn!(device_id = device.id, "⚠️ Light on property has no Hue resource id");
-            return;
+            return None;
         };
 
         let transition = property
@@ -164,11 +168,63 @@ impl HueController {
             })
         });
 
-        let request = LightRequest::new(on, brightness, color_temperature, color, transition);
-        self.pending_writes.record(light_id, &request, Instant::now());
+        Some((light_id.to_string(), LightRequest::new(on, brightness, color_temperature, color, transition)))
+    }
+
+    async fn control_device_light(&self, device: Arc<Device>, property: Arc<HashMap<String, ResolvedPropertyCommand>>) {
+        let Some((light_id, request)) = Self::light_request(&device, &property) else {
+            return;
+        };
+        self.pending_writes.record(&light_id, &request, Instant::now());
 
         let url = format!("{}/clip/v2/resource/light/{}", self.config.hue().url(), light_id);
         self.send_request(&request, &url, &device, "light").await;
+    }
+
+    async fn control_group(
+        &self,
+        group: &Group,
+        devices: &[Arc<Device>],
+        property: &Arc<HashMap<String, ResolvedPropertyCommand>>,
+    ) {
+        let Some(grouped_light_id) = &group.external_id else {
+            return self.control_lights_separately(devices, property).await;
+        };
+
+        // Returns None if a light can't be controlled
+        let Some(light_requests) = devices
+            .iter()
+            .map(|device| Self::light_request(device, property))
+            .collect::<Option<Vec<(String, LightRequest)>>>()
+        else {
+            return self.control_lights_separately(devices, property).await;
+        };
+
+        let Some((_, request)) = light_requests.first() else { return };
+
+        // Clamping and gamut are per light, a group request would be wrong if they are different
+        if light_requests.iter().any(|(_, other)| other != request) {
+            return self.control_lights_separately(devices, property).await;
+        }
+
+        let now = Instant::now();
+        for (light_id, _) in &light_requests {
+            self.pending_writes.record(light_id, request, now);
+        }
+
+        info!(group_id = group.id, "🏠 Control group '{}' with {} lights", group.name, devices.len());
+        let url = format!("{}/clip/v2/resource/grouped_light/{}", self.config.hue().url(), grouped_light_id);
+        self.send_request(request, &url, &devices[0], "group").await;
+    }
+
+    async fn control_lights_separately(
+        &self,
+        devices: &[Arc<Device>],
+        property: &Arc<HashMap<String, ResolvedPropertyCommand>>,
+    ) {
+        for device in devices {
+            self.control_device_light(device.clone(), property.clone()).await;
+        }
     }
 
     async fn control_device_motion_sensor(
