@@ -263,7 +263,6 @@ impl Store {
                 if group.device_ids.is_empty() {
                     self.groups.remove(&id);
                 } else {
-                    info!("*** UPDATED/INSERT GROUP: {:?}", &group);
                     self.groups.insert(id, Arc::new(group));
                 }
 
