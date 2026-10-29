@@ -1,5 +1,6 @@
 use crate::domain::{DeviceType, Event, GroupChanged};
 use crate::hue::domain::{DataType, RoomChanged};
+use crate::hue::map_rooms::grouped_light_id;
 use crate::store::StoreSnapshot;
 use std::collections::BTreeSet;
 
@@ -20,8 +21,9 @@ fn upsert(room: RoomChanged, snapshot: &StoreSnapshot) -> Vec<Event> {
             .map(|child| child.rid)
             .collect::<BTreeSet<_>>()
     });
+    let external_id = room.services.as_deref().and_then(grouped_light_id);
     let group_changed =
-        GroupChanged { id: room.id, name: room.metadata.and_then(|metadata| metadata.name), device_ids };
+        GroupChanged { id: room.id, name: room.metadata.and_then(|metadata| metadata.name), device_ids, external_id };
     vec![Event::GroupChanged(group_changed)]
 }
 
@@ -50,6 +52,10 @@ mod tests {
         }
     }
 
+    fn service(rid: &str, rtype: &str) -> Owner {
+        Owner { rid: rid.to_string(), rtype: rtype.to_string() }
+    }
+
     fn room(name: Option<&str>, children: Option<&[&str]>) -> RoomChanged {
         RoomChanged {
             id: "room".to_string(),
@@ -64,6 +70,7 @@ mod tests {
             id: "room".to_string(),
             name: name.map(str::to_string),
             device_ids: device_ids.map(|ids| ids.iter().map(|id| id.to_string()).collect()),
+            external_id: None,
         })
     }
 
@@ -107,6 +114,36 @@ mod tests {
         let events = map_rooms_changed(room(None, Some(&["sensor"])), DataType::Update, &snapshot());
 
         assert_eq!(events, vec![group_changed(None, Some(&[]))]);
+    }
+
+    #[test]
+    fn add_maps_the_grouped_light_to_the_external_id() {
+        let room = RoomChanged {
+            services: Some(vec![service("grouped-light", "grouped_light")]),
+            ..room(Some("Kitchen"), Some(&["lamp-a"]))
+        };
+
+        let events = map_rooms_changed(room, DataType::Add, &snapshot());
+
+        assert_eq!(
+            events,
+            vec![Event::GroupChanged(GroupChanged {
+                id: "room".to_string(),
+                name: Some("Kitchen".to_string()),
+                device_ids: Some(BTreeSet::from(["lamp-a".to_string()])),
+                external_id: Some("grouped-light".to_string()),
+            })]
+        );
+    }
+
+    #[test]
+    fn services_without_a_grouped_light_leave_the_external_id_unset() {
+        let room =
+            RoomChanged { services: Some(vec![service("motion-service", "motion")]), ..room(None, Some(&["lamp-a"])) };
+
+        let events = map_rooms_changed(room, DataType::Update, &snapshot());
+
+        assert_eq!(events, vec![group_changed(None, Some(&["lamp-a"]))]);
     }
 
     #[test]

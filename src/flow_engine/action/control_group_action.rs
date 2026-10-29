@@ -57,6 +57,7 @@ impl Action for ControlGroupAction {
             let device_command = command_map.entry(device_id.clone()).or_default();
             device_command.set_properties(device, &evaluated);
             device_command.set_claim(self.claim);
+            device_command.set_group_id(self.group_id.clone());
         }
     }
 
@@ -144,6 +145,7 @@ mod tests {
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
             owner: GroupOwner::Integration,
+            external_id: None,
         };
         let groups: GroupMap = HashMap::from([(group.id.clone(), Arc::new(group))]);
 
@@ -172,6 +174,7 @@ mod tests {
 
     fn device_command(claim: Option<ClaimMode>, properties: &[(&str, Value)]) -> DeviceCommand {
         DeviceCommand {
+            group_id: Some("room".to_string()),
             claim,
             properties: properties
                 .iter()

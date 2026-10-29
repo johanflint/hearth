@@ -59,4 +59,5 @@ pub struct GroupChanged {
     pub id: String,
     pub name: Option<String>,
     pub device_ids: Option<BTreeSet<String>>,
+    pub external_id: Option<String>,
 }

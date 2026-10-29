@@ -8,6 +8,7 @@ pub struct Group {
     pub device_ids: BTreeSet<String>,
     pub revision: u64,
     pub owner: GroupOwner,
+    pub external_id: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
