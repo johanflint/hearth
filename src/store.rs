@@ -130,7 +130,7 @@ impl Store {
                     |property: &mut BooleanProperty| property.set_value(value),
                 );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "boolean", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange {
+                result.unwrap_or(false).then_some(PropertyChange {
                     device_id,
                     property_id: resolved_property_id,
                     initiated_by,
@@ -158,7 +158,7 @@ impl Store {
                     |property: &mut DateTimeProperty| property.set_value(value),
                 );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "date_time", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange {
+                result.unwrap_or(false).then_some(PropertyChange {
                     device_id,
                     property_id: resolved_property_id,
                     initiated_by,
@@ -181,7 +181,7 @@ impl Store {
                     |property: &mut ColorProperty| property.set_value(xy, gamut),
                 );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "color", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange {
+                result.unwrap_or(false).then_some(PropertyChange {
                     device_id,
                     property_id: resolved_property_id,
                     initiated_by,
@@ -204,7 +204,7 @@ impl Store {
                     move |property: &mut NumberProperty| property.set_value(value),
                 );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "number", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange {
+                result.unwrap_or(false).then_some(PropertyChange {
                     device_id,
                     property_id: resolved_property_id,
                     initiated_by,
@@ -227,7 +227,7 @@ impl Store {
                     move |property: &mut EnumProperty| property.set_value(value),
                 );
                 counter!(Metric::StorePropertyChanges.name(), "property_type" => "enum", "result" => result.metric_label()).increment(1);
-                result.unwrap_or(false).then(|| PropertyChange {
+                result.unwrap_or(false).then_some(PropertyChange {
                     device_id,
                     property_id: resolved_property_id,
                     initiated_by,
@@ -725,7 +725,7 @@ mod tests {
         let device = snapshot.devices.get("device").expect("device should exist in snapshot");
         let on_property = device.get_property::<BooleanProperty>("on").expect("property should exist");
 
-        assert_eq!(on_property.value(), true, "expected the store snapshot to reflect the property change");
+        assert!(on_property.value(), "expected the store snapshot to reflect the property change");
     }
 
     #[tokio::test]
