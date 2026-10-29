@@ -1,7 +1,7 @@
 use crate::domain::property::{
     BooleanProperty, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyLocator,
 };
-use crate::domain::{Device, Event, Group, GroupChanged, GroupOwner, InitiatedBy};
+use crate::domain::{Device, Event, Group, GroupChanged, GroupOwner, InitiatedBy, Zone};
 use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::property_changed_reducer::reduce_property_changed_event;
 use metrics::{counter, gauge};
@@ -14,11 +14,13 @@ use tracing::{debug, error, info, instrument, warn};
 
 pub type DeviceMap = HashMap<String, Arc<Device>>;
 pub type GroupMap = HashMap<String, Arc<Group>>;
+pub type ZoneMap = HashMap<String, Arc<Zone>>;
 
 #[derive(Default, Clone, Debug)]
 pub struct StoreSnapshot {
     pub devices: Arc<DeviceMap>,
     pub groups: Arc<GroupMap>,
+    pub zones: Arc<ZoneMap>,
 }
 
 // Delivered in event order to the reactive flow listener. Unlike the watch
@@ -42,6 +44,7 @@ pub struct PropertyChange {
 pub struct Store {
     devices: DeviceMap,
     groups: GroupMap,
+    zones: ZoneMap,
     rx: Receiver<Event>,
     notifier_tx: WatchSender<StoreSnapshot>,
     notifier_rx: WatchReceiver<StoreSnapshot>,
@@ -61,11 +64,16 @@ impl Store {
     pub fn new(rx: Receiver<Event>) -> (Self, Receiver<ReactiveUpdate>) {
         let devices = HashMap::new();
         let groups = HashMap::new();
-        let snapshot = StoreSnapshot { devices: Arc::new(devices.clone()), groups: Arc::new(groups.clone()) };
+        let zones = HashMap::new();
+        let snapshot = StoreSnapshot {
+            devices: Arc::new(devices.clone()),
+            groups: Arc::new(groups.clone()),
+            zones: Arc::new(zones.clone()),
+        };
         let (notifier_tx, notifier_rx) = watch::channel::<StoreSnapshot>(snapshot);
         let (reactive_tx, reactive_rx) = mpsc::channel::<ReactiveUpdate>(REACTIVE_CHANNEL_CAPACITY);
 
-        let store = Store { devices, groups, rx, notifier_tx, notifier_rx, reactive_tx };
+        let store = Store { devices, groups, zones, rx, notifier_tx, notifier_rx, reactive_tx };
         // Returning the receiver makes is impossible to forget to wire it
         (store, reactive_rx)
     }
@@ -78,8 +86,11 @@ impl Store {
     pub async fn listen(&mut self) {
         while let Some(event) = self.rx.recv().await {
             let changed = self.apply_event(event);
-            let snapshot =
-                StoreSnapshot { devices: Arc::new(self.devices.clone()), groups: Arc::new(self.groups.clone()) };
+            let snapshot = StoreSnapshot {
+                devices: Arc::new(self.devices.clone()),
+                groups: Arc::new(self.groups.clone()),
+                zones: Arc::new(self.zones.clone()),
+            };
             self.notifier_tx.send(snapshot.clone()).unwrap_or_default();
             if let Err(e) = self.reactive_tx.send(ReactiveUpdate { snapshot, changed }).await {
                 error!("⚠️ Unable to deliver reactive update, reactive flows will not run for this change: {}", e);
@@ -274,6 +285,16 @@ impl Store {
                 gauge!(Metric::StoreGroupCount.name()).set(self.groups.len() as f64);
                 None
             }
+            Event::DiscoveredZones(discovered_zones) => {
+                let num_zones = discovered_zones.len();
+                debug!("🔵 Registering {} new zone(s)...", num_zones);
+                self.zones.extend(discovered_zones.into_iter().map(|zone| (zone.id.clone(), Arc::new(zone))));
+                info!("🔵 Registering {} new zone(s)... OK", num_zones);
+
+                counter!(Metric::StoreZoneDiscoveries.name()).increment(num_zones as u64);
+                gauge!(Metric::StoreZoneCount.name()).set(self.zones.len() as f64);
+                None
+            }
         }
     }
 }
@@ -291,7 +312,7 @@ fn resolve_property_id<T: 'static + Property>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Group, GroupOwner, InitiatedBy};
+    use crate::domain::{Group, GroupOwner, InitiatedBy, Zone};
     use crate::test_support::DeviceBuilder;
     use std::collections::BTreeSet;
     use tokio::sync::mpsc::channel;
@@ -376,6 +397,111 @@ mod tests {
 
         assert_eq!(update.snapshot.groups.len(), 1);
         assert!(update.snapshot.groups.contains_key("group"));
+        assert_eq!(update.snapshot.devices.len(), 1);
+    }
+
+    fn zone(id: &str, name: &str, device_ids: &[&str]) -> Zone {
+        Zone {
+            id: id.to_string(),
+            name: name.to_string(),
+            group_ids: BTreeSet::new(),
+            device_ids: device_ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>(),
+            revision: 0,
+            owner: GroupOwner::Integration,
+            external_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn discovered_zones_are_stored_without_changing_the_devices() {
+        let (tx, mut reactive_rx) = start_store();
+
+        let device = DeviceBuilder::new("device").with_boolean_property("on", false).build();
+        tx.send(Event::DiscoveredDevices(vec![device])).await.unwrap();
+        reactive_rx.recv().await.expect("devices should produce a reactive update");
+
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "Zone", &["device"])])).await.unwrap();
+        let update = reactive_rx.recv().await.expect("zones should produce a reactive update");
+
+        assert_eq!(update.changed, None);
+        assert_eq!(update.snapshot.zones.len(), 1);
+        assert_eq!(*update.snapshot.zones["zone"], zone("zone", "Zone", &["device"]));
+        assert_eq!(update.snapshot.devices.len(), 1);
+        assert!(update.snapshot.devices.contains_key("device"));
+    }
+
+    #[tokio::test]
+    async fn discovered_zones_replace_a_zone_with_the_same_id() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "Old name", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "New name", &["a", "b"])])).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones.len(), 1);
+        assert_eq!(*update.snapshot.zones["zone"], zone("zone", "New name", &["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn discovered_zones_are_added_to_existing_zones() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::DiscoveredZones(vec![zone("first", "First", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(Event::DiscoveredZones(vec![zone("second", "Second", &["b"])])).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let mut ids: Vec<_> = update.snapshot.zones.keys().cloned().collect();
+        ids.sort();
+        assert_eq!(ids, vec!["first", "second"]);
+    }
+
+    #[tokio::test]
+    async fn discovered_zones_leave_the_groups_unchanged() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::DiscoveredGroups(vec![group("group", "Group", &["device"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "Zone", &["device"])])).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.groups.len(), 1);
+        assert!(update.snapshot.groups.contains_key("group"));
+        assert_eq!(update.snapshot.zones.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discovered_groups_leave_the_zones_unchanged() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "Zone", &["device"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(Event::DiscoveredGroups(vec![group("group", "Group", &["device"])])).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones.len(), 1);
+        assert!(update.snapshot.zones.contains_key("zone"));
+        assert_eq!(update.snapshot.groups.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discovered_devices_leave_the_zones_unchanged() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "Zone", &["device"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        let device = DeviceBuilder::new("device").with_boolean_property("on", false).build();
+        tx.send(Event::DiscoveredDevices(vec![device])).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones.len(), 1);
+        assert!(update.snapshot.zones.contains_key("zone"));
         assert_eq!(update.snapshot.devices.len(), 1);
     }
 

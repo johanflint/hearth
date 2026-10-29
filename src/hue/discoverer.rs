@@ -1,7 +1,7 @@
 use crate::app_config::AppConfig;
 use crate::hue::domain::{
     ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, RoomGet,
-    TemperatureGet, ZigbeeConnectivityGet,
+    TemperatureGet, ZigbeeConnectivityGet, ZoneGet,
 };
 use crate::hue::enrich_devices::enrich_devices;
 use crate::hue::map_contact_sensors::{MapContactSensorsError, map_contact_sensors};
@@ -9,6 +9,7 @@ use crate::hue::map_lights::{MapLightsError, map_lights};
 use crate::hue::map_motion_sensors::{MapMotionSensorsError, map_motion_sensors};
 use crate::hue::map_remotes::{MapRemotesError, map_remotes};
 use crate::hue::map_rooms::map_rooms;
+use crate::hue::map_zones::{MapZonesError, map_zones};
 use crate::integration::Discovery;
 use reqwest::{Client, StatusCode};
 use serde::de::DeserializeOwned;
@@ -54,8 +55,12 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Discovery, 
     let room_response = fetch_resources::<RoomGet>(client, hue_url, "room").await?;
     info!("Retrieving rooms... OK, {} found", room_response.data.len());
 
+    let zones_response = fetch_resources::<ZoneGet>(client, hue_url, "zone").await?;
+    info!("Retrieving zones... OK, {} found", zones_response.data.len());
+
     let light_device_ids: HashSet<String> = light_response.data.iter().map(|light| light.owner.rid.clone()).collect();
     let groups = map_rooms(room_response.data, &light_device_ids);
+    let zones = map_zones(zones_response.data, &light_response.data)?;
 
     let mut device_map = device_response.data.into_iter().map(|device| (device.id.clone(), device)).collect();
 
@@ -82,7 +87,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Discovery, 
         log_unmapped_devices(&device_map);
     }
 
-    Ok(Discovery { devices, groups })
+    Ok(Discovery { devices, groups, zones })
 }
 
 async fn fetch_resources<T>(client: &Client, hue_url: &str, name: &'static str) -> Result<HueResponse<T>, DiscoverError>
@@ -133,6 +138,8 @@ pub enum DiscoverError {
     MapRemotes(#[from] MapRemotesError),
     #[error(transparent)]
     MapContactSensors(#[from] MapContactSensorsError),
+    #[error(transparent)]
+    MapZones(#[from] MapZonesError),
 }
 
 #[cfg(test)]
@@ -142,7 +149,7 @@ mod tests {
     use crate::domain::property::{
         BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit,
     };
-    use crate::domain::{BatteryState, Connectivity, ContactState, Device, DeviceType, Group, GroupOwner};
+    use crate::domain::{BatteryState, Connectivity, ContactState, Device, DeviceType, Group, GroupOwner, Zone};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;
@@ -270,6 +277,14 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(include_str!("../../tests/resources/hue_room_simplified_response.json"))
+            .create_async()
+            .await;
+
+        server
+            .mock("GET", "/clip/v2/resource/zone")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_zone_simplified_response.json"))
             .create_async()
             .await;
 
@@ -496,6 +511,18 @@ mod tests {
                 revision: 0,
                 owner: GroupOwner::Integration,
                 external_id: Some("6c1524d8-1fd7-40fc-a6f4-77e5a4146d89".to_string()),
+            }]
+        );
+        assert_eq!(
+            response.zones,
+            vec![Zone {
+                id: "5c0b6f1e-3a64-4d2b-9a55-7d1c2f8e4b10".to_string(),
+                name: "Beneden".to_string(),
+                group_ids: BTreeSet::new(),
+                device_ids: BTreeSet::from(["079e0321-7e18-46bc-bc16-fcbc3dd09e30".to_string()]),
+                revision: 0,
+                owner: GroupOwner::Integration,
+                external_id: Some("e2b6a1c4-8f0d-4c39-b7a2-1d9f5e3c6a88".to_string()),
             }]
         );
 

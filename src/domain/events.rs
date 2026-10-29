@@ -1,6 +1,6 @@
 use crate::domain::device::Device;
 use crate::domain::property::{CartesianCoordinate, Gamut, PropertyLocator};
-use crate::domain::{Group, Number};
+use crate::domain::{Group, Number, Zone};
 use chrono::{DateTime, Utc};
 use std::collections::BTreeSet;
 
@@ -43,6 +43,7 @@ pub enum Event {
     GroupRemoved {
         group_id: String,
     },
+    DiscoveredZones(Vec<Zone>),
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]

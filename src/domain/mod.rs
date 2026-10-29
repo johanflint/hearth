@@ -19,6 +19,7 @@ mod value;
 mod versioned_preset;
 mod weekday;
 mod weekday_condition;
+mod zone;
 
 pub use battery_state::BatteryState;
 pub use claim_mode::ClaimMode;
@@ -42,3 +43,4 @@ pub use value::Value;
 pub use versioned_preset::VersionedPreset;
 pub use weekday::Weekday;
 pub use weekday_condition::WeekdayCondition;
+pub use zone::Zone;

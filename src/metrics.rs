@@ -22,6 +22,8 @@ pub enum Metric {
     StoreDeviceDiscoveries,
     StoreGroupCount,
     StoreGroupDiscoveries,
+    StoreZoneCount,
+    StoreZoneDiscoveries,
     StorePropertyChanges,
 }
 
@@ -36,6 +38,8 @@ impl Metric {
             Metric::StoreDeviceDiscoveries => "hearth_store_device_discoveries_total",
             Metric::StoreGroupCount => "hearth_store_group_count",
             Metric::StoreGroupDiscoveries => "hearth_store_group_discoveries_total",
+            Metric::StoreZoneCount => "hearth_store_zone_count",
+            Metric::StoreZoneDiscoveries => "hearth_store_zone_discoveries_total",
             Metric::StorePropertyChanges => "hearth_store_property_changes_total",
         }
     }
@@ -43,7 +47,7 @@ impl Metric {
     const fn kind(&self) -> MetricKind {
         match self {
             Metric::FlowExecutionDuration => MetricKind::Histogram,
-            Metric::StoreDeviceCount | Metric::StoreGroupCount => MetricKind::Gauge,
+            Metric::StoreDeviceCount | Metric::StoreGroupCount | Metric::StoreZoneCount => MetricKind::Gauge,
             _ => MetricKind::Counter,
         }
     }
@@ -66,6 +70,8 @@ impl Metric {
             Metric::StorePropertyChanges => "Number of times a property changed event is processed",
             Metric::StoreGroupCount => "Total number of groups",
             Metric::StoreGroupDiscoveries => "Newly discovered groups",
+            Metric::StoreZoneCount => "Total number of zones",
+            Metric::StoreZoneDiscoveries => "Newly discovered zones",
         }
     }
 }

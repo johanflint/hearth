@@ -10,6 +10,7 @@ mod room_get;
 mod sse_payload;
 mod temperature_get;
 mod zigbee_connectivity_get;
+mod zone_get;
 
 pub(super) use button_get::*;
 pub(super) use contact_get::*;
@@ -23,3 +24,4 @@ pub(super) use room_get::*;
 pub(super) use sse_payload::*;
 pub(super) use temperature_get::*;
 pub(super) use zigbee_connectivity_get::*;
+pub(super) use zone_get::*;

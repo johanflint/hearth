@@ -150,11 +150,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("✅  Initialized server");
 
     for integration in &integrations {
-        let Discovery { devices, groups } = integration.discover().await?;
+        let Discovery { devices, groups, zones } = integration.discover().await?;
         trace!("Discovered devices: {:?}", &devices);
         trace!("Discovered groups: {:?}", &groups);
+        trace!("Discovered zones: {:?}", &zones);
         tx.send(Event::DiscoveredDevices(devices)).await?;
         tx.send(Event::DiscoveredGroups(groups)).await?;
+        tx.send(Event::DiscoveredZones(zones)).await?;
     }
     info!("✅  Discovered all devices");
 
