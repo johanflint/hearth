@@ -1,4 +1,4 @@
-use crate::domain::{ClaimMode, Problem, find_device, find_group, find_zone, validate_property_command};
+use crate::domain::{ClaimMode, Problem, find_device, find_zone, validate_property_command};
 use crate::flow_engine::action::Action;
 use crate::flow_engine::action::device_command::evaluate_commands;
 use crate::flow_engine::property_command::PropertyCommand;
@@ -45,16 +45,11 @@ impl Action for ControlZoneAction {
         };
 
         let evaluated = evaluate_commands(&self.property, context);
-        let mut device_ids = zone.device_ids.clone();
-        for group_id in &zone.group_ids {
-            let Some(group) = snapshot.groups.get(group_id) else {
-                warn!(group_id, "⚠️ Zone '{}' ({}) refers to unknown group '{}'", zone.id, zone.name, group_id);
-                continue;
-            };
-            device_ids.extend(group.device_ids.clone());
+        for group_id in zone.unknown_group_ids(&snapshot.groups) {
+            warn!(group_id, "⚠️ Zone '{}' ({}) refers to unknown group '{}'", zone.id, zone.name, group_id);
         }
 
-        for device_id in &device_ids {
+        for device_id in &zone.members(&snapshot.groups) {
             let Some(device) = snapshot.devices.get(device_id) else {
                 warn!(
                     zone_id = self.zone_id,
@@ -76,21 +71,12 @@ impl Action for ControlZoneAction {
             Err(problem) => return vec![problem],
         };
 
-        let mut problems = vec![];
-        let mut device_ids = zone.device_ids.clone();
-        for group_id in &zone.group_ids {
-            let group = match find_group(group_id, snapshot) {
-                Ok(group) => group,
-                Err(problem) => {
-                    problems.push(problem);
-                    continue;
-                }
-            };
+        let mut problems: Vec<Problem> = zone
+            .unknown_group_ids(&snapshot.groups)
+            .map(|group_id| Problem::UnknownGroup { group_id: group_id.clone() })
+            .collect();
 
-            device_ids.extend(group.device_ids.clone());
-        }
-
-        for device_id in &device_ids {
+        for device_id in &zone.members(&snapshot.groups) {
             let device = match find_device(device_id, snapshot) {
                 Ok(device) => device,
                 Err(problem) => {

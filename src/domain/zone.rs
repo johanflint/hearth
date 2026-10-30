@@ -23,6 +23,13 @@ impl Zone {
         }
         members
     }
+
+    pub fn unknown_group_ids<'a>(
+        &'a self,
+        groups: &'a HashMap<String, Arc<Group>>,
+    ) -> impl Iterator<Item = &'a String> {
+        self.group_ids.iter().filter(|id| !groups.contains_key(*id))
+    }
 }
 
 #[cfg(test)]
@@ -111,5 +118,46 @@ mod tests {
     #[test]
     fn members_of_an_empty_zone_is_empty() {
         assert!(zone(&[], &[]).members(&HashMap::new()).is_empty());
+    }
+
+    fn unknown_group_ids(zone: &Zone, groups: &HashMap<String, Arc<Group>>) -> Vec<String> {
+        zone.unknown_group_ids(groups).cloned().collect()
+    }
+
+    #[test]
+    fn unknown_group_ids_is_empty_when_every_group_is_known() {
+        let zone = zone(&["lamp1"], &["room", "hall"]);
+        let groups = groups(vec![group("room", &["lamp2"]), group("hall", &["lamp3"])]);
+
+        assert!(unknown_group_ids(&zone, &groups).is_empty());
+    }
+
+    #[test]
+    fn unknown_group_ids_returns_the_groups_that_are_not_in_the_store() {
+        let zone = zone(&[], &["ghost", "room", "phantom"]);
+        let groups = groups(vec![group("room", &["lamp1"])]);
+
+        assert_eq!(unknown_group_ids(&zone, &groups), ["ghost", "phantom"]);
+    }
+
+    #[test]
+    fn unknown_group_ids_returns_every_group_when_the_store_has_none() {
+        let zone = zone(&[], &["room", "hall"]);
+
+        assert_eq!(unknown_group_ids(&zone, &HashMap::new()), ["hall", "room"]);
+    }
+
+    #[test]
+    fn unknown_group_ids_is_empty_for_a_zone_without_groups() {
+        let zone = zone(&["lamp1"], &[]);
+
+        assert!(unknown_group_ids(&zone, &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn unknown_group_ids_ignores_unknown_devices() {
+        let zone = zone(&["ghost"], &[]);
+
+        assert!(unknown_group_ids(&zone, &HashMap::new()).is_empty());
     }
 }
