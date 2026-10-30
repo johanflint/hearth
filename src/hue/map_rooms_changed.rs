@@ -48,7 +48,7 @@ mod tests {
             [DeviceBuilder::new("lamp-a").build(), DeviceBuilder::new("lamp-b").build(), motion_sensor("sensor")];
         StoreSnapshot {
             devices: Arc::new(devices.into_iter().map(|device| (device.id.clone(), Arc::new(device))).collect()),
-            groups: Arc::default(),
+            ..Default::default()
         }
     }
 

@@ -19,6 +19,7 @@ mod value;
 mod versioned_preset;
 mod weekday;
 mod weekday_condition;
+mod zone;
 
 pub use battery_state::BatteryState;
 pub use claim_mode::ClaimMode;
@@ -28,17 +29,18 @@ pub use connectivity::Connectivity;
 pub use contact_state::ContactState;
 pub use controller::Controller;
 pub use device::{Device, DeviceType};
-pub use events::{Event, GroupChanged, InitiatedBy};
+pub use events::{Event, GroupChanged, InitiatedBy, ZoneChanged};
 pub use geo_location::GeoLocation;
 pub use group::{Group, GroupOwner};
 pub use number::Number;
 pub use preset::Preset;
 pub use time::Time;
 pub use validator::{
-    FlowValidationError, Location, Problem, ValidationIssue, find_device, find_group, find_property, validate,
-    validate_property_command,
+    FlowValidationError, Location, Problem, ValidationIssue, find_device, find_group, find_property, find_zone,
+    validate, validate_property_command,
 };
 pub use value::Value;
 pub use versioned_preset::VersionedPreset;
 pub use weekday::Weekday;
 pub use weekday_condition::WeekdayCondition;
+pub use zone::Zone;

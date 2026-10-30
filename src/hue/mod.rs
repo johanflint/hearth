@@ -22,6 +22,8 @@ mod map_remotes_changed;
 mod map_rooms;
 mod map_rooms_changed;
 mod map_temperature_changed;
+mod map_zones;
+mod map_zones_changed;
 mod observer;
 mod pending_writes;
 

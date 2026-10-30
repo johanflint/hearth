@@ -11,6 +11,7 @@ use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
 use crate::hue::map_remotes_changed::map_remote_changed;
 use crate::hue::map_rooms_changed::map_rooms_changed;
 use crate::hue::map_temperature_changed::map_temperature_changed;
+use crate::hue::map_zones_changed::map_zones_changed;
 use crate::hue::pending_writes::PendingWrites;
 use crate::integration::IntegrationError;
 use crate::sse;
@@ -185,6 +186,14 @@ async fn handle_changed_property(
             for event in map_rooms_changed(property, data_type, &snapshot) {
                 tx.send(event).await.unwrap_or_else(|e| {
                     warn!("⚠️ Unable to send changed room event: {}", e);
+                });
+            }
+        }
+        ChangedProperty::Zone(property) => {
+            let snapshot = store_rx.borrow().clone(); // Cheap: clones the Arcs
+            for event in map_zones_changed(property, data_type, &snapshot) {
+                tx.send(event).await.unwrap_or_else(|e| {
+                    warn!("⚠️ Unable to send changed zone event: {}", e);
                 });
             }
         }

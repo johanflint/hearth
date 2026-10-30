@@ -1,6 +1,6 @@
 use crate::hue::domain::{
     ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, LightLevelChanged, MotionChanged, RoomChanged,
-    TemperatureChanged, ZigbeeConnectivityChanged,
+    TemperatureChanged, ZigbeeConnectivityChanged, ZoneChanged,
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, to_string_pretty};
@@ -36,6 +36,7 @@ pub enum ChangedProperty {
     Temperature(TemperatureChanged),
     Contact(ContactChanged),
     Room(RoomChanged),
+    Zone(ZoneChanged),
     #[serde(untagged)]
     Unknown(UnknownProperty),
 }
@@ -153,6 +154,41 @@ mod tests {
         assert_eq!(room.metadata.as_ref().and_then(|metadata| metadata.name.as_deref()), Some("Werkkamer"));
         assert!(room.children.is_none());
         assert!(matches!(&result[0].data[1], ChangedProperty::Unknown(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_a_zone_rename_as_a_zone() -> Result<(), serde_json::Error> {
+        let json = r#"
+        [
+          {
+            "creationtime": "2026-10-29T16:25:54Z",
+            "data": [
+              {
+                "id": "55657751-766f-47b2-9506-e3595ae0a422",
+                "id_v1": "/groups/22",
+                "metadata": {
+                  "name": "Beneden"
+                },
+                "type": "zone"
+              }
+            ],
+            "id": "03665a79-befc-49eb-a3d4-ffb613a9f8bc",
+            "type": "update"
+          }
+        ]
+        "#;
+
+        let result = serde_json::from_str::<Vec<ServerSentEventPayload>>(json)?;
+
+        assert!(matches!(result[0].r#type, DataType::Update));
+        let ChangedProperty::Zone(zone) = &result[0].data[0] else {
+            panic!("expected a zone, got {:?}", result[0].data[0]);
+        };
+        assert_eq!(zone.id, "55657751-766f-47b2-9506-e3595ae0a422");
+        assert_eq!(zone.metadata.as_ref().and_then(|metadata| metadata.name.as_deref()), Some("Beneden"));
+        assert!(zone.children.is_none());
 
         Ok(())
     }

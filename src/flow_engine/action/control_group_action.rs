@@ -149,7 +149,7 @@ mod tests {
         };
         let groups: GroupMap = HashMap::from([(group.id.clone(), Arc::new(group))]);
 
-        StoreSnapshot { devices: Arc::new(devices), groups: Arc::new(groups) }
+        StoreSnapshot { devices: Arc::new(devices), groups: Arc::new(groups), ..Default::default() }
     }
 
     fn control_group(group_id: &str, claim: Option<ClaimMode>, properties: &[(&str, Value)]) -> ControlGroupAction {
@@ -180,6 +180,7 @@ mod tests {
                 .iter()
                 .map(|(id, value)| (id.to_string(), resolved_property_command(value.clone())))
                 .collect(),
+            ..Default::default()
         }
     }
 

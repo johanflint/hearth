@@ -1,4 +1,4 @@
-use crate::domain::{Controller, Device, Event, Group};
+use crate::domain::{Controller, Device, Event, Group, Zone};
 use async_trait::async_trait;
 use std::error::Error;
 use std::fmt::Debug;
@@ -19,9 +19,10 @@ pub trait Integration: Debug + Send + Sync {
     fn controller(&self) -> Arc<dyn Controller>;
 }
 
-/// The devices and groups an integration found when discovering.
+/// The devices, groups and zones an integration found when discovering.
 #[derive(Debug, PartialEq)]
 pub struct Discovery {
     pub devices: Vec<Device>,
     pub groups: Vec<Group>,
+    pub zones: Vec<Zone>,
 }

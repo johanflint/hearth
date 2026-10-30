@@ -1,6 +1,6 @@
 use crate::domain::device::Device;
 use crate::domain::property::{CartesianCoordinate, Gamut, PropertyLocator};
-use crate::domain::{Group, Number};
+use crate::domain::{Group, Number, Zone};
 use chrono::{DateTime, Utc};
 use std::collections::BTreeSet;
 
@@ -43,6 +43,11 @@ pub enum Event {
     GroupRemoved {
         group_id: String,
     },
+    DiscoveredZones(Vec<Zone>),
+    ZoneChanged(ZoneChanged),
+    ZoneRemoved {
+        zone_id: String,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -56,6 +61,14 @@ pub enum InitiatedBy {
 
 #[derive(PartialEq, Debug)]
 pub struct GroupChanged {
+    pub id: String,
+    pub name: Option<String>,
+    pub device_ids: Option<BTreeSet<String>>,
+    pub external_id: Option<String>,
+}
+
+#[derive(PartialEq, Debug)]
+pub struct ZoneChanged {
     pub id: String,
     pub name: Option<String>,
     pub device_ids: Option<BTreeSet<String>>,
