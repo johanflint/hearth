@@ -2,7 +2,7 @@ use crate::app_config::AppConfig;
 use crate::domain::property::{
     BooleanProperty, ColorProperty, NumberProperty, Property, PropertyError, PropertyType, ValidatedValue,
 };
-use crate::domain::{Color, Command, Controller, Device, DeviceType, Group};
+use crate::domain::{Color, Command, Controller, Device, DeviceType, Group, Zone};
 use crate::domain::{Number, Value};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
@@ -47,7 +47,7 @@ impl Controller for HueController {
                 DeviceType::ContactSensor => {}
             },
             Command::ControlGroup { group, devices, property } => self.control_group(&group, &devices, &property).await,
-            Command::ControlZone { .. } => {}
+            Command::ControlZone { zone, devices, property } => self.control_zone(&zone, &devices, &property).await,
         }
     }
 }
@@ -183,6 +183,36 @@ impl HueController {
         devices: &[Arc<Device>],
         property: &HashMap<String, ResolvedPropertyCommand>,
     ) {
+        let target = GroupedLightTarget {
+            kind: "group",
+            id: &group.id,
+            name: &group.name,
+            grouped_light_id: group.external_id.as_deref(),
+        };
+        self.control_grouped_light(&target, devices, property).await;
+    }
+
+    async fn control_zone(
+        &self,
+        zone: &Zone,
+        devices: &[Arc<Device>],
+        property: &HashMap<String, ResolvedPropertyCommand>,
+    ) {
+        let target = GroupedLightTarget {
+            kind: "zone",
+            id: &zone.id,
+            name: &zone.name,
+            grouped_light_id: zone.external_id.as_deref(),
+        };
+        self.control_grouped_light(&target, devices, property).await;
+    }
+
+    async fn control_grouped_light(
+        &self,
+        target: &GroupedLightTarget<'_>,
+        devices: &[Arc<Device>],
+        property: &HashMap<String, ResolvedPropertyCommand>,
+    ) {
         // A light that can't be controlled is skipped, the same as when it is controlled on its own
         let mut light_writes = Vec::new();
         for device in devices {
@@ -193,11 +223,11 @@ impl HueController {
 
         let Some(first) = light_writes.first() else { return };
 
-        let Some(grouped_light_id) = &group.external_id else {
+        let Some(grouped_light_id) = target.grouped_light_id else {
             return self.control_lights_separately(&light_writes).await;
         };
 
-        // The group would also control the lights that were skipped
+        // The grouped light would also control the lights that were skipped
         if light_writes.len() != devices.len() {
             return self.control_lights_separately(&light_writes).await;
         }
@@ -212,9 +242,16 @@ impl HueController {
             self.pending_writes.record(&light_write.light_id, &first.request, now);
         }
 
-        info!(group_id = group.id, "🏠 Control group '{}' with {} lights", group.name, devices.len());
+        info!(
+            id = target.id,
+            kind = target.kind,
+            "🏠 Control {} '{}' with {} lights",
+            target.kind,
+            target.name,
+            devices.len()
+        );
         let url = format!("{}/clip/v2/resource/grouped_light/{}", self.config.hue().url(), grouped_light_id);
-        self.send_request(&first.request, &url, &first.device, "group").await;
+        self.send_request(&first.request, &url, &first.device, target.kind).await;
     }
 
     async fn control_lights_separately(&self, light_writes: &[LightWrite]) {
@@ -329,6 +366,14 @@ fn clamp_transition(device_id: &str, transition: Duration) -> Duration {
     transition
 }
 
+// The identity of a Hue room or zone, which both have a `grouped_light`
+struct GroupedLightTarget<'a> {
+    kind: &'static str,
+    id: &'a str,
+    name: &'a str,
+    grouped_light_id: Option<&'a str>,
+}
+
 // The request for one light of a group, so it is only built once
 struct LightWrite {
     device: Arc<Device>,
@@ -348,6 +393,7 @@ mod tests {
     use mockito::{Matcher, Mock, ServerGuard};
     use rstest::rstest;
     use serde_json::json;
+    use std::collections::BTreeSet;
     use std::fmt::Debug;
     use std::sync::Mutex;
     use tracing::Subscriber;
@@ -476,6 +522,76 @@ mod tests {
         assert_eq!(logs.count("Unable to control"), 0);
     }
 
+    #[tokio::test]
+    async fn control_zone_sends_one_zone_request_when_every_light_gets_the_same_request() {
+        let mut server = mockito::Server::new_async().await;
+        let zone_mock = turn_on_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 1).await;
+        let light1_mock = turn_on_mock(&mut server, "light", "light1", 0).await;
+        let light2_mock = turn_on_mock(&mut server, "light", "light2", 0).await;
+        let (controller, pending_writes) = controller(&server);
+        let devices = vec![light("device1", Some("light1"), None), light("device2", Some("light2"), None)];
+        let logs = LogMessages::default();
+
+        {
+            let _guard = logs.capture();
+            controller.execute(control_zone(Some(GROUPED_LIGHT_ID), devices, turn_on())).await;
+        }
+
+        zone_mock.assert_async().await;
+        light1_mock.assert_async().await;
+        light2_mock.assert_async().await;
+        assert_eq!(logs.count("🟢 Turn on light"), 2);
+        assert_eq!(logs.count("🏠 Control zone"), 1);
+        assert_eq!(logs.count("🏠 Control group"), 0);
+        assert_eq!(logs.count("Unable to control"), 0);
+        assert_recorded_once(&pending_writes, "light1");
+        assert_recorded_once(&pending_writes, "light2");
+    }
+
+    #[tokio::test]
+    async fn control_zone_sends_a_request_per_light_when_the_zone_has_no_grouped_light() {
+        let mut server = mockito::Server::new_async().await;
+        let light1_mock = turn_on_mock(&mut server, "light", "light1", 1).await;
+        let light2_mock = turn_on_mock(&mut server, "light", "light2", 1).await;
+        let (controller, pending_writes) = controller(&server);
+        let devices = vec![light("device1", Some("light1"), None), light("device2", Some("light2"), None)];
+        let logs = LogMessages::default();
+
+        {
+            let _guard = logs.capture();
+            controller.execute(control_zone(None, devices, turn_on())).await;
+        }
+
+        light1_mock.assert_async().await;
+        light2_mock.assert_async().await;
+        assert_eq!(logs.count("🟢 Turn on light"), 2);
+        assert_eq!(logs.count("🏠 Control zone"), 0);
+        assert_eq!(logs.count("Unable to control"), 0);
+        assert_recorded_once(&pending_writes, "light1");
+        assert_recorded_once(&pending_writes, "light2");
+    }
+
+    #[tokio::test]
+    async fn control_zone_sends_a_request_per_light_when_a_light_cannot_be_controlled() {
+        let mut server = mockito::Server::new_async().await;
+        let zone_mock = turn_on_mock(&mut server, "grouped_light", GROUPED_LIGHT_ID, 0).await;
+        let light1_mock = turn_on_mock(&mut server, "light", "light1", 1).await;
+        let (controller, pending_writes) = controller(&server);
+        let devices = vec![light("device1", Some("light1"), None), light("device2", None, None)];
+        let logs = LogMessages::default();
+
+        {
+            let _guard = logs.capture();
+            controller.execute(control_zone(Some(GROUPED_LIGHT_ID), devices, turn_on())).await;
+        }
+
+        zone_mock.assert_async().await;
+        light1_mock.assert_async().await;
+        assert_eq!(logs.count("🏠 Control zone"), 0);
+        assert_eq!(logs.count("Unable to control"), 0);
+        assert_recorded_once(&pending_writes, "light1");
+    }
+
     async fn turn_on_mock(server: &mut ServerGuard, resource: &str, id: &str, expected_requests: usize) -> Mock {
         server
             .mock("PUT", format!("/clip/v2/resource/{resource}/{id}").as_str())
@@ -534,6 +650,23 @@ mod tests {
             external_id: external_id.map(str::to_string),
         };
         Command::ControlGroup { group: Arc::new(group), devices, property: Arc::new(property) }
+    }
+
+    fn control_zone(
+        external_id: Option<&str>,
+        devices: Vec<Arc<Device>>,
+        property: HashMap<String, ResolvedPropertyCommand>,
+    ) -> Command {
+        let zone = Zone {
+            id: "zone".to_string(),
+            name: "Zone".to_string(),
+            group_ids: BTreeSet::new(),
+            device_ids: devices.iter().map(|device| device.id.clone()).collect(),
+            revision: 1,
+            owner: GroupOwner::Integration,
+            external_id: external_id.map(str::to_string),
+        };
+        Command::ControlZone { zone: Arc::new(zone), devices, property: Arc::new(property) }
     }
 
     // A pending write is consumed when it is confirmed, so a second confirm only succeeds if it was recorded twice
