@@ -11,6 +11,20 @@ pub struct ZoneGet {
     pub metadata: Metadata,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ZoneChanged {
+    pub id: String,
+    pub children: Option<Vec<Owner>>,
+    pub services: Option<Vec<Owner>>,
+    pub metadata: Option<ZoneMetadataChanged>,
+}
+
+// An update only carries the changed metadata fields, so unlike `Metadata` nothing is required
+#[derive(Debug, Deserialize)]
+pub struct ZoneMetadataChanged {
+    pub name: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,5 +71,45 @@ mod tests {
 
         assert!(zone_get.children.is_empty());
         assert!(zone_get.services.is_empty());
+    }
+
+    #[test]
+    fn deserialize_zone_changed_with_only_a_name() {
+        let json = json!({
+            "id": "zone-id",
+            "id_v1": "/groups/22",
+            "metadata": { "name": "Upstairs" },
+            "type": "zone"
+        });
+
+        let zone: ZoneChanged = serde_json::from_value(json).unwrap();
+
+        assert_eq!(zone.id, "zone-id");
+        assert_eq!(zone.metadata.unwrap().name, Some("Upstairs".to_string()));
+        assert!(zone.children.is_none());
+        assert!(zone.services.is_none());
+    }
+
+    #[test]
+    fn deserialize_zone_changed_with_only_an_archetype() {
+        let json = json!({ "id": "zone-id", "metadata": { "archetype": "upstairs" }, "type": "zone" });
+
+        let zone: ZoneChanged = serde_json::from_value(json).unwrap();
+
+        assert_eq!(zone.metadata.unwrap().name, None);
+    }
+
+    #[test]
+    fn deserialize_zone_changed_with_only_children() {
+        let json = json!({
+            "id": "zone-id",
+            "children": [{ "rid": "light-1", "rtype": "light" }],
+            "type": "zone"
+        });
+
+        let zone: ZoneChanged = serde_json::from_value(json).unwrap();
+
+        assert_eq!(zone.children.unwrap().len(), 1);
+        assert!(zone.metadata.is_none());
     }
 }

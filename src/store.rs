@@ -1,11 +1,11 @@
 use crate::domain::property::{
     BooleanProperty, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyLocator,
 };
-use crate::domain::{Device, Event, Group, GroupChanged, GroupOwner, InitiatedBy, Zone};
+use crate::domain::{Device, Event, Group, GroupChanged, GroupOwner, InitiatedBy, Zone, ZoneChanged};
 use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::property_changed_reducer::reduce_property_changed_event;
 use metrics::{counter, gauge};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
@@ -292,6 +292,49 @@ impl Store {
                 info!("🔵 Registering {} new zone(s)... OK", num_zones);
 
                 counter!(Metric::StoreZoneDiscoveries.name()).increment(num_zones as u64);
+                gauge!(Metric::StoreZoneCount.name()).set(self.zones.len() as f64);
+                None
+            }
+            Event::ZoneChanged(ZoneChanged { id, name, device_ids, external_id }) => {
+                let zone = match self.zones.get(&id) {
+                    Some(existing) => {
+                        let existing = Zone::clone(existing);
+                        Zone {
+                            name: name.unwrap_or(existing.name),
+                            device_ids: device_ids.unwrap_or(existing.device_ids),
+                            external_id: external_id.or(existing.external_id),
+                            ..existing
+                        }
+                    }
+                    None => match (name, device_ids) {
+                        (Some(name), Some(device_ids)) => Zone {
+                            id: id.clone(),
+                            name,
+                            group_ids: BTreeSet::new(),
+                            device_ids,
+                            revision: 0,
+                            owner: GroupOwner::Integration,
+                            external_id,
+                        },
+                        _ => {
+                            warn!("⚠️ Ignoring partial update for an unknown zone '{id}'");
+                            return None;
+                        }
+                    },
+                };
+
+                // Discovery skips zones without groups and devices, so a zone that lost its last member is removed
+                if zone.group_ids.is_empty() && zone.device_ids.is_empty() {
+                    self.zones.remove(&id);
+                } else {
+                    self.zones.insert(id, Arc::new(zone));
+                }
+
+                gauge!(Metric::StoreZoneCount.name()).set(self.zones.len() as f64);
+                None
+            }
+            Event::ZoneRemoved { zone_id } => {
+                self.zones.remove(&zone_id);
                 gauge!(Metric::StoreZoneCount.name()).set(self.zones.len() as f64);
                 None
             }
@@ -690,6 +733,225 @@ mod tests {
         reactive_rx.recv().await.unwrap();
 
         tx.send(Event::GroupRemoved { group_id: "unknown".to_string() }).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.groups.len(), 1);
+    }
+
+    fn zone_changed(id: &str, name: Option<&str>, device_ids: Option<&[&str]>) -> Event {
+        Event::ZoneChanged(ZoneChanged {
+            id: id.to_string(),
+            name: name.map(str::to_string),
+            device_ids: device_ids.map(|ids| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>()),
+            external_id: None,
+        })
+    }
+
+    fn zone_changed_with_external_id(id: &str, external_id: &str) -> Event {
+        Event::ZoneChanged(ZoneChanged {
+            id: id.to_string(),
+            name: None,
+            device_ids: None,
+            external_id: Some(external_id.to_string()),
+        })
+    }
+
+    #[tokio::test]
+    async fn zone_changed_with_name_and_devices_creates_an_unknown_zone() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(zone_changed("zone", Some("Zone"), Some(&["a", "b"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.changed, None);
+        assert_eq!(update.snapshot.zones.len(), 1);
+        assert_eq!(*update.snapshot.zones["zone"], zone("zone", "Zone", &["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn zone_changed_creates_a_zone_with_the_external_id() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::ZoneChanged(ZoneChanged {
+            id: "zone".to_string(),
+            name: Some("Zone".to_string()),
+            device_ids: Some(BTreeSet::from(["a".to_string(), "b".to_string()])),
+            external_id: Some("grouped-light".to_string()),
+        }))
+        .await
+        .unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let expected = Zone { external_id: Some("grouped-light".to_string()), ..zone("zone", "Zone", &["a", "b"]) };
+        assert_eq!(*update.snapshot.zones["zone"], expected);
+    }
+
+    #[tokio::test]
+    async fn zone_changed_without_an_external_id_keeps_the_existing_one() {
+        let (tx, mut reactive_rx) = start_store();
+        let existing = Zone { external_id: Some("grouped-light".to_string()), ..zone("zone", "Zone", &["a"]) };
+        tx.send(Event::DiscoveredZones(vec![existing])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(zone_changed("zone", Some("Renamed"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones["zone"].external_id.as_deref(), Some("grouped-light"));
+    }
+
+    #[tokio::test]
+    async fn zone_changed_with_an_external_id_replaces_the_existing_one() {
+        let (tx, mut reactive_rx) = start_store();
+        let existing = Zone { external_id: Some("old".to_string()), ..zone("zone", "Zone", &["a"]) };
+        tx.send(Event::DiscoveredZones(vec![existing])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(zone_changed_with_external_id("zone", "new")).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones["zone"].external_id.as_deref(), Some("new"));
+    }
+
+    #[tokio::test]
+    async fn zone_changed_with_only_a_name_keeps_the_devices() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "Old name", &["a", "b"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(zone_changed("zone", Some("New name"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(*update.snapshot.zones["zone"], zone("zone", "New name", &["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn zone_changed_with_only_devices_keeps_the_name() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "Zone", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(zone_changed("zone", None, Some(&["a", "b"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(*update.snapshot.zones["zone"], zone("zone", "Zone", &["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn zone_changed_keeps_the_revision_and_owner() {
+        let (tx, mut reactive_rx) = start_store();
+        let existing = Zone { revision: 3, owner: GroupOwner::Hearth, ..zone("zone", "Zone", &["a"]) };
+        tx.send(Event::DiscoveredZones(vec![existing])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(zone_changed("zone", Some("Renamed"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let stored = &update.snapshot.zones["zone"];
+        assert_eq!(stored.revision, 3);
+        assert_eq!(stored.owner, GroupOwner::Hearth);
+    }
+
+    #[tokio::test]
+    async fn zone_changed_leaves_other_zones_and_the_groups_unchanged() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredZones(vec![zone("first", "First", &["a"]), zone("second", "Second", &["b"])]))
+            .await
+            .unwrap();
+        reactive_rx.recv().await.unwrap();
+        tx.send(Event::DiscoveredGroups(vec![group("first", "Group", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(zone_changed("first", Some("Renamed"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(*update.snapshot.zones["second"], zone("second", "Second", &["b"]));
+        assert_eq!(*update.snapshot.groups["first"], group("first", "Group", &["a"]));
+    }
+
+    #[tokio::test]
+    async fn zone_changed_without_devices_and_groups_removes_the_zone() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "Zone", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(zone_changed("zone", None, Some(&[]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert!(update.snapshot.zones.is_empty());
+    }
+
+    #[tokio::test]
+    async fn zone_changed_without_devices_keeps_a_zone_that_still_has_groups() {
+        let (tx, mut reactive_rx) = start_store();
+        let existing = Zone { group_ids: BTreeSet::from(["group".to_string()]), ..zone("zone", "Zone", &["a"]) };
+        tx.send(Event::DiscoveredZones(vec![existing])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(zone_changed("zone", None, Some(&[]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let expected = Zone { group_ids: BTreeSet::from(["group".to_string()]), ..zone("zone", "Zone", &[]) };
+        assert_eq!(*update.snapshot.zones["zone"], expected);
+    }
+
+    #[tokio::test]
+    async fn zone_changed_for_a_new_zone_without_devices_creates_nothing() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(zone_changed("zone", Some("Zone"), Some(&[]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert!(update.snapshot.zones.is_empty());
+    }
+
+    #[tokio::test]
+    async fn partial_zone_changed_for_an_unknown_zone_is_ignored() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(zone_changed("zone", Some("Zone"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+        assert!(update.snapshot.zones.is_empty());
+
+        tx.send(zone_changed("zone", None, Some(&["a"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+        assert!(update.snapshot.zones.is_empty());
+    }
+
+    #[tokio::test]
+    async fn zone_removed_removes_only_that_zone() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredZones(vec![zone("first", "First", &["a"]), zone("second", "Second", &["b"])]))
+            .await
+            .unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(Event::ZoneRemoved { zone_id: "first".to_string() }).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.changed, None);
+        assert_eq!(update.snapshot.zones.len(), 1);
+        assert!(update.snapshot.zones.contains_key("second"));
+    }
+
+    #[tokio::test]
+    async fn zone_removed_for_an_unknown_zone_changes_nothing() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredZones(vec![zone("zone", "Zone", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(Event::ZoneRemoved { zone_id: "unknown".to_string() }).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn zone_removed_leaves_a_group_with_the_same_id() {
+        let (tx, mut reactive_rx) = start_store();
+        tx.send(Event::DiscoveredGroups(vec![group("same", "Group", &["a"])])).await.unwrap();
+        reactive_rx.recv().await.unwrap();
+
+        tx.send(Event::ZoneRemoved { zone_id: "same".to_string() }).await.unwrap();
         let update = reactive_rx.recv().await.unwrap();
 
         assert_eq!(update.snapshot.groups.len(), 1);
