@@ -342,7 +342,7 @@ mod tests {
 
     fn validate_command(property_id: &str, command: PropertyCommand) -> Result<(), Problem> {
         let snapshot = snapshot();
-        let device = find_device(KNOWN_DEVICE_ID, &snapshot).unwrap();
+        let device = find_device(KNOWN_DEVICE_ID, &snapshot)?;
         validate_property_command(&snapshot, &preset_registry_with_presets(), device, property_id, &command)
     }
 
