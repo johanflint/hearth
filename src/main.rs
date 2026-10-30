@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let flow_registry = Arc::new(FlowRegistry::new(flows));
     info!("✅  Loaded flows");
 
-    let preset_store = Arc::new(PresetStore::new(database));
+    let preset_store = Arc::new(PresetStore::new(database.clone()));
     let presets = preset_loader::load_presets_from_store(&preset_store).await?;
     let preset_registry = Arc::new(PresetRegistry::new(presets));
     info!("✅  Loaded presets");
@@ -145,7 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         store_rx_clone,
     ));
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, flow_registry));
-    let api_state = ApiState::new(prometheus_handle, flow_service, preset_service);
+    let api_state = ApiState::new(prometheus_handle, database, flow_service, preset_service);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 
