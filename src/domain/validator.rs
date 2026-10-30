@@ -1,6 +1,6 @@
 use crate::domain::device::Device;
 use crate::domain::property::{NumberProperty, Property, PropertyError, ValidatedValue, ValueKind};
-use crate::domain::{Group, Number, Value};
+use crate::domain::{Group, Number, Value, Zone};
 use crate::flow_engine::Expression;
 use crate::flow_engine::flow::{Flow, FlowNodeKind};
 use crate::flow_engine::property_command::PropertyCommand;
@@ -42,6 +42,14 @@ pub fn validate(
     }
 
     FlowValidationError::from_issues(issues)
+}
+
+pub fn find_zone<'a>(zone_id: &str, snapshot: &'a StoreSnapshot) -> Result<&'a Zone, Problem> {
+    snapshot
+        .zones
+        .get(zone_id)
+        .map(|zone| zone.as_ref())
+        .ok_or_else(|| Problem::UnknownZone { zone_id: zone_id.to_string() })
 }
 
 pub fn find_group<'a>(group_id: &str, snapshot: &'a StoreSnapshot) -> Result<&'a Group, Problem> {
@@ -175,6 +183,8 @@ impl fmt::Display for Location {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum Problem {
+    #[error("unknown zone '{zone_id}'")]
+    UnknownZone { zone_id: String },
     #[error("unknown group '{group_id}'")]
     UnknownGroup { group_id: String },
     #[error("unknown device '{device_id}'")]
@@ -207,7 +217,7 @@ impl Problem {
 mod tests {
     use super::*;
     use crate::domain::property::{BooleanProperty, CartesianCoordinate, NumberProperty, PropertyType};
-    use crate::domain::{Color, Number, Preset, Value, VersionedPreset};
+    use crate::domain::{Color, GroupOwner, Number, Preset, Value, VersionedPreset};
     use crate::flow_engine::Expression::*;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
@@ -215,7 +225,7 @@ mod tests {
     use crate::store::DeviceMap;
     use crate::test_support::{DeviceBuilder, property_command};
     use rstest::rstest;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -908,5 +918,87 @@ mod tests {
     )]
     fn validation_issue_displays_the_location_and_the_problem(#[case] issue: ValidationIssue, #[case] expected: &str) {
         assert_eq!(issue.to_string(), expected);
+    }
+
+    fn snapshot_with_group_and_zone() -> StoreSnapshot {
+        let group = Group {
+            id: "room".to_string(),
+            name: "Room".to_string(),
+            device_ids: BTreeSet::from([KNOWN_DEVICE_ID.to_string()]),
+            revision: 0,
+            owner: GroupOwner::Integration,
+            external_id: None,
+        };
+        let zone = Zone {
+            id: "downstairs".to_string(),
+            name: "Downstairs".to_string(),
+            group_ids: BTreeSet::from(["room".to_string()]),
+            device_ids: BTreeSet::new(),
+            revision: 0,
+            owner: GroupOwner::Hearth,
+            external_id: None,
+        };
+
+        StoreSnapshot {
+            groups: Arc::new(HashMap::from([(group.id.clone(), Arc::new(group))])),
+            zones: Arc::new(HashMap::from([(zone.id.clone(), Arc::new(zone))])),
+            ..snapshot()
+        }
+    }
+
+    #[test]
+    fn find_group_returns_the_group() {
+        let snapshot = snapshot_with_group_and_zone();
+
+        let group = find_group("room", &snapshot).unwrap();
+
+        assert_eq!(group.id, "room");
+        assert_eq!(group.device_ids, BTreeSet::from([KNOWN_DEVICE_ID.to_string()]));
+    }
+
+    #[test]
+    fn find_group_reports_an_unknown_group() {
+        let snapshot = snapshot_with_group_and_zone();
+
+        let problem = find_group("unknown", &snapshot).unwrap_err();
+
+        assert_eq!(problem, Problem::UnknownGroup { group_id: "unknown".to_string() });
+    }
+
+    #[test]
+    fn find_group_does_not_find_a_zone() {
+        let snapshot = snapshot_with_group_and_zone();
+
+        let problem = find_group("downstairs", &snapshot).unwrap_err();
+
+        assert_eq!(problem, Problem::UnknownGroup { group_id: "downstairs".to_string() });
+    }
+
+    #[test]
+    fn find_zone_returns_the_zone() {
+        let snapshot = snapshot_with_group_and_zone();
+
+        let zone = find_zone("downstairs", &snapshot).unwrap();
+
+        assert_eq!(zone.id, "downstairs");
+        assert_eq!(zone.group_ids, BTreeSet::from(["room".to_string()]));
+    }
+
+    #[test]
+    fn find_zone_reports_an_unknown_zone() {
+        let snapshot = snapshot_with_group_and_zone();
+
+        let problem = find_zone("unknown", &snapshot).unwrap_err();
+
+        assert_eq!(problem, Problem::UnknownZone { zone_id: "unknown".to_string() });
+    }
+
+    #[test]
+    fn find_zone_does_not_find_a_group() {
+        let snapshot = snapshot_with_group_and_zone();
+
+        let problem = find_zone("room", &snapshot).unwrap_err();
+
+        assert_eq!(problem, Problem::UnknownZone { zone_id: "room".to_string() });
     }
 }

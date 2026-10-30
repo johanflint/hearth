@@ -8,6 +8,7 @@ use tracing::{info, warn};
 
 #[derive(PartialEq, Default, Debug)]
 pub struct DeviceCommand {
+    pub zone_id: Option<String>,
     pub group_id: Option<String>,
     pub claim: Option<ClaimMode>,
     pub properties: HashMap<String, ResolvedPropertyCommand>,
@@ -16,6 +17,10 @@ pub struct DeviceCommand {
 pub type CommandMap = HashMap<String, DeviceCommand>;
 
 impl DeviceCommand {
+    pub fn set_zone_id(&mut self, zone_id: String) {
+        self.zone_id = Some(zone_id);
+    }
+
     pub fn set_group_id(&mut self, group_id: String) {
         self.group_id = Some(group_id);
     }
@@ -293,5 +298,16 @@ mod tests {
         device_command.set_group_id("zone".to_string());
 
         assert_eq!(device_command.group_id, Some("zone".to_string()));
+    }
+
+    #[test]
+    fn set_zone_id_keeps_the_last_zone() {
+        let mut device_command = DeviceCommand::default();
+
+        device_command.set_zone_id("zone1".to_string());
+        device_command.set_zone_id("zone2".to_string());
+
+        assert_eq!(device_command.zone_id, Some("zone2".to_string()));
+        assert_eq!(device_command.group_id, None);
     }
 }

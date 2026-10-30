@@ -180,6 +180,7 @@ mod tests {
                 .iter()
                 .map(|(id, value)| (id.to_string(), resolved_property_command(value.clone())))
                 .collect(),
+            ..Default::default()
         }
     }
 

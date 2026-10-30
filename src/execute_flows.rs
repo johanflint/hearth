@@ -332,7 +332,7 @@ mod tests {
         claim: Option<ClaimMode>,
         properties: HashMap<String, ResolvedPropertyCommand>,
     ) -> FlowExecutionReport {
-        create_report_with_command(device_id, DeviceCommand { group_id: None, claim, properties })
+        create_report_with_command(device_id, DeviceCommand { group_id: None, claim, properties, ..Default::default() })
     }
 
     fn create_report_with_group(
@@ -340,7 +340,8 @@ mod tests {
         group_id: &str,
         properties: HashMap<String, ResolvedPropertyCommand>,
     ) -> FlowExecutionReport {
-        let device_command = DeviceCommand { group_id: Some(group_id.to_string()), claim: None, properties };
+        let device_command =
+            DeviceCommand { group_id: Some(group_id.to_string()), claim: None, properties, ..Default::default() };
         create_report_with_command(device_id, device_command)
     }
 

@@ -344,7 +344,8 @@ mod tests {
                 DeviceCommand {
                     group_id: None,
                     claim: None,
-                    properties: HashMap::from([("brightness".to_string(), expected)])
+                    properties: HashMap::from([("brightness".to_string(), expected)]),
+                    ..Default::default()
                 }
             )]))
         );
@@ -370,14 +371,18 @@ mod tests {
                 DeviceCommand {
                     group_id: None,
                     claim: None,
-                    properties: HashMap::from([("brightness".to_string(), expected)])
+                    properties: HashMap::from([("brightness".to_string(), expected)]),
+                    ..Default::default()
                 }
             )]))
         );
     }
 
     fn lamp_command(properties: HashMap<String, ResolvedPropertyCommand>) -> Option<CommandMap> {
-        Some(HashMap::from([("lamp".to_string(), DeviceCommand { group_id: None, claim: None, properties })]))
+        Some(HashMap::from([(
+            "lamp".to_string(),
+            DeviceCommand { group_id: None, claim: None, properties, ..Default::default() },
+        )]))
     }
 
     #[rstest]
@@ -469,7 +474,7 @@ mod tests {
             command_map,
             Some(HashMap::from([(
                 "lamp".to_string(),
-                DeviceCommand { group_id: None, claim: None, properties: HashMap::new() }
+                DeviceCommand { group_id: None, claim: None, properties: HashMap::new(), ..Default::default() }
             )]))
         );
     }
@@ -482,7 +487,7 @@ mod tests {
             command_map,
             Some(HashMap::from([(
                 "lamp".to_string(),
-                DeviceCommand { group_id: None, claim: None, properties: HashMap::new() }
+                DeviceCommand { group_id: None, claim: None, properties: HashMap::new(), ..Default::default() }
             )]))
         );
     }
