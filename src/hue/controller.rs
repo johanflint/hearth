@@ -47,6 +47,7 @@ impl Controller for HueController {
                 DeviceType::ContactSensor => {}
             },
             Command::ControlGroup { group, devices, property } => self.control_group(&group, &devices, &property).await,
+            Command::ControlZone { .. } => {}
         }
     }
 }

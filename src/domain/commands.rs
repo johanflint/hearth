@@ -1,5 +1,5 @@
-use crate::domain::Group;
 use crate::domain::device::Device;
+use crate::domain::{Group, Zone};
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,6 +12,11 @@ pub enum Command {
     },
     ControlGroup {
         group: Arc<Group>,
+        devices: Vec<Arc<Device>>,
+        property: Arc<HashMap<String, ResolvedPropertyCommand>>,
+    },
+    ControlZone {
+        zone: Arc<Zone>,
         devices: Vec<Arc<Device>>,
         property: Arc<HashMap<String, ResolvedPropertyCommand>>,
     },
