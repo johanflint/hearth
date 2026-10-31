@@ -1,4 +1,5 @@
 use crate::api::ApiState;
+use crate::core_tasks::CoreTasks;
 use crate::database::{Database, DatabaseError};
 use crate::flow_engine::SchedulerCommand;
 use crate::flow_registry::FlowRegistry;
@@ -57,7 +58,13 @@ pub(super) fn create_state_with_database(flow_registry: FlowRegistry) -> (Fixtur
         snapshot_rx,
     ));
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, Arc::clone(&flow_registry)));
-    let state = ApiState::new(handle, database.clone(), flow_service, preset_service);
+    // Tasks that keep running until a test aborts them
+    let core_tasks = CoreTasks {
+        store: tokio::spawn(std::future::pending()),
+        scheduler: tokio::spawn(std::future::pending()),
+        store_listener: tokio::spawn(std::future::pending()),
+    };
+    let state = ApiState::new(handle, database.clone(), Arc::new(core_tasks), flow_service, preset_service);
     (Fixture { state, flow_store, flow_registry, scheduler_rx }, database)
 }
 
