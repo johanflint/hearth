@@ -1,10 +1,12 @@
 use crate::api::ApiState;
+use crate::integration::IntegrationStatus;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use tokio::task::JoinHandle;
 use tracing::warn;
 
@@ -18,6 +20,11 @@ async fn health(State(state): State<ApiState>) -> impl IntoResponse {
         store: task_status("store", &state.core_tasks.store),
         scheduler: task_status("scheduler", &state.core_tasks.scheduler),
         store_listener: task_status("storeListener", &state.core_tasks.store_listener),
+        integrations: state
+            .integrations
+            .iter()
+            .map(|integration| (integration.name(), ComponentStatus { status: integration.status().into() }))
+            .collect(),
     };
     let response = HealthStatusResponse::new(components);
     (response.status.http_status(), Json(response))
@@ -45,14 +52,25 @@ fn task_status(name: &str, handle: &JoinHandle<()>) -> ComponentStatus {
 #[serde(rename_all = "UPPERCASE")]
 enum HealthStatus {
     Up,
+    Degraded,
     Down,
 }
 
 impl HealthStatus {
     fn http_status(&self) -> StatusCode {
         match self {
-            HealthStatus::Up => StatusCode::OK,
+            HealthStatus::Up | HealthStatus::Degraded => StatusCode::OK,
             HealthStatus::Down => StatusCode::SERVICE_UNAVAILABLE,
+        }
+    }
+}
+
+impl From<IntegrationStatus> for HealthStatus {
+    fn from(status: IntegrationStatus) -> Self {
+        match status {
+            IntegrationStatus::Up => HealthStatus::Up,
+            IntegrationStatus::Degraded => HealthStatus::Degraded,
+            IntegrationStatus::Down => HealthStatus::Down,
         }
     }
 }
@@ -85,6 +103,7 @@ struct Components {
     store: ComponentStatus,
     scheduler: ComponentStatus,
     store_listener: ComponentStatus,
+    integrations: BTreeMap<&'static str, ComponentStatus>,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,13 +116,71 @@ mod tests {
     use super::*;
     use crate::api::test_support::{Fixture, body_json, create_state_with_database};
     use crate::database::DatabaseError;
+    use crate::domain::{Command, Controller, Event};
     use crate::flow_registry::FlowRegistry;
+    use crate::integration::{Discovery, Integration, IntegrationError};
+    use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::Request;
     use axum::response::Response;
     use rstest::rstest;
     use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::mpsc::Sender;
     use tower::ServiceExt;
+
+    #[derive(Debug)]
+    struct StubIntegration {
+        name: &'static str,
+        status: IntegrationStatus,
+    }
+
+    #[derive(Debug)]
+    struct StubController;
+
+    #[async_trait]
+    impl Controller for StubController {
+        fn id(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn execute(&self, _command: Command) {}
+    }
+
+    #[async_trait]
+    impl Integration for StubIntegration {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn enabled(&self) -> bool {
+            true
+        }
+
+        async fn discover(&self) -> Result<Discovery, IntegrationError> {
+            unimplemented!()
+        }
+
+        async fn observe(&self, _tx: Sender<Event>) -> Result<(), IntegrationError> {
+            unimplemented!()
+        }
+
+        fn controller(&self) -> Arc<dyn Controller> {
+            Arc::new(StubController)
+        }
+
+        fn status(&self) -> IntegrationStatus {
+            self.status
+        }
+    }
+
+    fn with_integrations(mut state: ApiState, integrations: Vec<(&'static str, IntegrationStatus)>) -> ApiState {
+        state.integrations = integrations
+            .into_iter()
+            .map(|(name, status)| Arc::new(StubIntegration { name, status }) as Arc<dyn Integration>)
+            .collect();
+        state
+    }
 
     async fn call_health(state: ApiState) -> Response {
         let request = Request::builder().method("GET").uri("/health").body(Body::empty()).unwrap();
@@ -120,7 +197,7 @@ mod tests {
     }
 
     fn components(database: ComponentStatus, store: ComponentStatus) -> Components {
-        Components { database, store, scheduler: up(), store_listener: up() }
+        Components { database, store, scheduler: up(), store_listener: up(), integrations: BTreeMap::new() }
     }
 
     async fn stop(handle: &JoinHandle<()>) {
@@ -146,9 +223,38 @@ mod tests {
                     "store": {"status": "UP"},
                     "scheduler": {"status": "UP"},
                     "storeListener": {"status": "UP"},
+                    "integrations": {},
                 }
             })
         );
+    }
+
+    #[tokio::test]
+    async fn health_lists_each_integration_under_its_name() {
+        let (Fixture { state, .. }, _database) = create_state_with_database(FlowRegistry::new(vec![]));
+        let state =
+            with_integrations(state, vec![("Hue", IntegrationStatus::Up), ("Zigbee", IntegrationStatus::Degraded)]);
+
+        let response = call_health(state).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            body_json(response).await["components"]["integrations"],
+            json!({"Hue": {"status": "UP"}, "Zigbee": {"status": "DEGRADED"}})
+        );
+    }
+
+    #[tokio::test]
+    async fn health_stays_200_and_up_when_an_integration_is_down() {
+        let (Fixture { state, .. }, _database) = create_state_with_database(FlowRegistry::new(vec![]));
+        let state = with_integrations(state, vec![("Hue", IntegrationStatus::Down)]);
+
+        let response = call_health(state).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["status"], "UP");
+        assert_eq!(body["components"]["integrations"]["Hue"]["status"], "DOWN");
     }
 
     #[tokio::test]
@@ -239,8 +345,30 @@ mod tests {
 
     #[rstest]
     #[case::up(HealthStatus::Up, StatusCode::OK)]
+    #[case::degraded(HealthStatus::Degraded, StatusCode::OK)]
     #[case::down(HealthStatus::Down, StatusCode::SERVICE_UNAVAILABLE)]
     fn http_status_follows_the_health_status(#[case] status: HealthStatus, #[case] expected: StatusCode) {
         assert_eq!(status.http_status(), expected);
+    }
+
+    #[rstest]
+    #[case::up(IntegrationStatus::Up, HealthStatus::Up)]
+    #[case::degraded(IntegrationStatus::Degraded, HealthStatus::Degraded)]
+    #[case::down(IntegrationStatus::Down, HealthStatus::Down)]
+    fn an_integration_status_maps_to_the_same_health_status(
+        #[case] status: IntegrationStatus,
+        #[case] expected: HealthStatus,
+    ) {
+        assert_eq!(HealthStatus::from(status), expected);
+    }
+
+    #[test]
+    fn the_response_ignores_integrations_that_are_down() {
+        let mut components = components(up(), up());
+        components.integrations.insert("Hue", down());
+
+        let response = HealthStatusResponse::new(components);
+
+        assert_eq!(response.status, HealthStatus::Up);
     }
 }

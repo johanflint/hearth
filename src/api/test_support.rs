@@ -64,7 +64,7 @@ pub(super) fn create_state_with_database(flow_registry: FlowRegistry) -> (Fixtur
         scheduler: tokio::spawn(std::future::pending()),
         store_listener: tokio::spawn(std::future::pending()),
     };
-    let state = ApiState::new(handle, database.clone(), Arc::new(core_tasks), flow_service, preset_service);
+    let state = ApiState::new(handle, database.clone(), Arc::new(core_tasks), vec![], flow_service, preset_service);
     (Fixture { state, flow_store, flow_registry, scheduler_rx }, database)
 }
 

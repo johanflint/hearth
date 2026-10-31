@@ -4,7 +4,7 @@ use crate::hue;
 use crate::hue::client::new_client;
 use crate::hue::controller::HueController;
 use crate::hue::pending_writes::PendingWrites;
-use crate::integration::{Discovery, Integration, IntegrationError};
+use crate::integration::{Discovery, Integration, IntegrationError, IntegrationStatus, SharedStatus};
 use crate::store::StoreSnapshot;
 use async_trait::async_trait;
 use reqwest::Client;
@@ -18,13 +18,15 @@ pub struct HueIntegration {
     config: Arc<AppConfig>,
     store_rx: WatchReceiver<StoreSnapshot>,
     pending_writes: Arc<PendingWrites>,
+    status: SharedStatus,
 }
 
 impl HueIntegration {
     pub fn new(config: Arc<AppConfig>, store_rx: WatchReceiver<StoreSnapshot>) -> Result<Self, IntegrationError> {
         let client = new_client(&config)?;
         let pending_writes = Arc::new(PendingWrites::default());
-        Ok(HueIntegration { client, config, store_rx, pending_writes })
+        let status = SharedStatus::new(IntegrationStatus::Down); // Until the event stream connects
+        Ok(HueIntegration { client, config, store_rx, pending_writes, status })
     }
 }
 
@@ -43,11 +45,23 @@ impl Integration for HueIntegration {
     }
 
     async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError> {
-        hue::observe(tx, self.pending_writes.clone(), self.store_rx.clone(), &self.client, &self.config).await
+        hue::observe(
+            tx,
+            self.pending_writes.clone(),
+            self.store_rx.clone(),
+            self.status.clone(),
+            &self.client,
+            &self.config,
+        )
+        .await
     }
 
     fn controller(&self) -> Arc<dyn Controller> {
         Arc::new(HueController::new(self.client.clone(), self.pending_writes.clone(), self.config.clone()))
+    }
+
+    fn status(&self) -> IntegrationStatus {
+        self.status.get()
     }
 }
 
@@ -75,6 +89,13 @@ mod tests {
         let integration = HueIntegration::new(config, store_rx).unwrap();
 
         assert_eq!(integration.enabled(), enabled);
+    }
+
+    #[test]
+    fn status_is_down_until_the_observer_connects() {
+        let integration = hue_integration("https://hue.url".to_string());
+
+        assert_eq!(integration.status(), IntegrationStatus::Down);
     }
 
     #[test]

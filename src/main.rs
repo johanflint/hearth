@@ -149,7 +149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, flow_registry));
     let core_tasks =
         Arc::new(CoreTasks { store: store_handle, scheduler: scheduler_handle, store_listener: store_listener_handle });
-    let api_state = ApiState::new(prometheus_handle, database, core_tasks, flow_service, preset_service);
+    let api_state =
+        ApiState::new(prometheus_handle, database, core_tasks, integrations.clone(), flow_service, preset_service);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 
