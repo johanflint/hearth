@@ -1,5 +1,6 @@
 mod error;
 mod flows;
+mod health;
 mod metrics;
 mod parse_request;
 mod presets;
@@ -11,7 +12,8 @@ use axum::Router;
 pub use state::ApiState;
 
 pub fn router(state: ApiState) -> Router {
-    Router::new() // Merge all routes
+    Router::new()
+        .merge(health::router())
         .merge(metrics::router())
         .merge(flows::router())
         .merge(presets::router())

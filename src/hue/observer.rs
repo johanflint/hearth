@@ -13,7 +13,7 @@ use crate::hue::map_rooms_changed::map_rooms_changed;
 use crate::hue::map_temperature_changed::map_temperature_changed;
 use crate::hue::map_zones_changed::map_zones_changed;
 use crate::hue::pending_writes::PendingWrites;
-use crate::integration::IntegrationError;
+use crate::integration::{IntegrationError, IntegrationStatus, SharedStatus};
 use crate::sse;
 use crate::sse::{Config, ServerSentEvent};
 use crate::store::StoreSnapshot;
@@ -34,6 +34,7 @@ pub async fn observe(
     tx: Sender<Event>,
     pending_writes: Arc<PendingWrites>,
     store_rx: WatchReceiver<StoreSnapshot>,
+    status: SharedStatus,
     client: &Client,
     config: &AppConfig,
 ) -> Result<(), IntegrationError> {
@@ -46,7 +47,7 @@ pub async fn observe(
     };
     let buffer_size = config.core().store_buffer_size();
     let client = client.clone();
-    task::spawn(supervise_hue_pipeline(tx, client, pending_writes, store_rx, sse_config, buffer_size));
+    task::spawn(supervise_hue_pipeline(tx, client, pending_writes, store_rx, sse_config, buffer_size, status));
 
     Ok(())
 }
@@ -61,6 +62,7 @@ async fn supervise_hue_pipeline(
     store_rx: WatchReceiver<StoreSnapshot>,
     sse_config: Config,
     buffer_size: usize,
+    status: SharedStatus,
 ) {
     loop {
         let (sse_tx, sse_rx) = mpsc::channel::<HueEvent>(buffer_size);
@@ -69,9 +71,19 @@ async fn supervise_hue_pipeline(
         let mut listener = {
             let cloned_client = client.clone();
             let cloned_sse_config = sse_config.clone();
+            let cloned_status = status.clone();
             task::spawn(async move {
-                if let Err(e) =
-                    sse::listen::<Vec<ServerSentEventPayload>>(sse_tx, &cloned_client, &cloned_sse_config).await
+                let on_connection_change = |connected| match connected {
+                    true => cloned_status.set(IntegrationStatus::Up),
+                    false => cloned_status.degrade(),
+                };
+                if let Err(e) = sse::listen::<Vec<ServerSentEventPayload>>(
+                    sse_tx,
+                    &cloned_client,
+                    &cloned_sse_config,
+                    on_connection_change,
+                )
+                .await
                 {
                     warn!("⚠️ SSE listener exited with error: {}", e);
                 }
@@ -80,10 +92,12 @@ async fn supervise_hue_pipeline(
 
         tokio::select! {
             result = &mut processor => {
+                status.set(IntegrationStatus::Down);
                 warn!("⚠️ Hue event processor {}. Rebuilding Hue pipeline...", describe(result));
                 listener.abort();
             }
             result = &mut listener => {
+                status.set(IntegrationStatus::Down);
                 warn!("⚠️ Hue SSE listener {}. Rebuilding Hue pipeline...", describe(result));
                 processor.abort();
             }
