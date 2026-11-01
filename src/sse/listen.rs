@@ -25,8 +25,15 @@ pub struct Config {
     pub send_timeout_ms: Duration,
 }
 
+/// Listens to the SSE stream and reconnects with backoff when it drops.
+/// `on_connection_change` is called with `true` once connected and with `false` when the connection is lost or fails.
 #[instrument(skip_all)]
-pub async fn listen<T>(tx: Sender<ServerSentEvent<T>>, client: &Client, config: &Config) -> Result<(), Box<dyn Error>>
+pub async fn listen<T>(
+    tx: Sender<ServerSentEvent<T>>,
+    client: &Client,
+    config: &Config,
+    on_connection_change: impl Fn(bool) + Send + Sync,
+) -> Result<(), Box<dyn Error>>
 where
     T: DeserializeOwned + Debug + 'static,
 {
@@ -35,18 +42,21 @@ where
 
     info!("Connecting to SSE stream {}...", config.url);
     let last_event_id = Arc::new(Mutex::new(None::<String>));
+    let on_connection_change = &on_connection_change;
     Retry::start(strategy, || {
         let tx = tx.clone();
         let client = client.clone();
         let last_event_id = last_event_id.clone();
 
         async move {
-            match connect_sse_stream::<T>(tx, &client, &config, last_event_id).await {
+            match connect_sse_stream::<T>(tx, &client, &config, last_event_id, on_connection_change).await {
                 Ok(_) => {
+                    on_connection_change(false);
                     info!("✅ SSE stream ended gracefully. Restarting...");
                     Err("Stream ended") // Triggers retry
                 }
                 Err(e) => {
+                    on_connection_change(false);
                     warn!("⚠️ SSE error: {:?}. Retrying...", e);
                     Err("SSE failed") // Triggers retry
                 }
@@ -63,6 +73,7 @@ async fn connect_sse_stream<T>(
     client: &Client,
     config: &Config,
     last_event_id: Arc<Mutex<Option<String>>>,
+    on_connection_change: &impl Fn(bool),
 ) -> Result<(), Box<dyn Error>>
 where
     T: DeserializeOwned + Debug + 'static,
@@ -81,6 +92,7 @@ where
     counter!(Metric::SseConnectionAttempts.name(), "result" => result.metric_label()).increment(1);
 
     let response = result?;
+    on_connection_change(true);
     if response.status() == StatusCode::OK {
         info!(status = %response.status(), "Connecting to SSE stream {}... OK", config.url);
     }
@@ -165,4 +177,68 @@ fn find_separator(buf: &[u8]) -> Option<(usize, usize)> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+    use tokio::sync::mpsc;
+    use tokio::task::JoinHandle;
+
+    fn config(url: String) -> Config {
+        Config {
+            url,
+            retry_ms: 1,
+            retry_max_delay: Duration::from_millis(10),
+            stale_connection_timeout_ms: Duration::from_secs(5),
+            send_timeout_ms: Duration::from_secs(1),
+        }
+    }
+
+    /// Spawns `listen` and returns the connection changes it reports, in order. It retries forever, so abort it.
+    fn spawn_listen(url: String) -> (JoinHandle<()>, mpsc::UnboundedReceiver<bool>) {
+        let (event_tx, event_rx) = mpsc::channel::<ServerSentEvent<Value>>(8);
+        let (change_tx, change_rx) = mpsc::unbounded_channel();
+        let handle = tokio::spawn(async move {
+            let _event_rx = event_rx; // Keeps the channel open
+            let _ = listen(event_tx, &Client::new(), &config(url), move |connected| {
+                let _ = change_tx.send(connected);
+            })
+            .await;
+        });
+        (handle, change_rx)
+    }
+
+    async fn next_change(changes: &mut mpsc::UnboundedReceiver<bool>) -> bool {
+        timeout(Duration::from_secs(5), changes.recv()).await.expect("timed out").expect("listen stopped")
+    }
+
+    #[tokio::test]
+    async fn listen_reports_connected_and_then_disconnected_when_the_stream_ends() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/eventstream/clip/v2")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body("id: 1\ndata: []\n\n")
+            .create_async()
+            .await;
+        let (handle, mut changes) = spawn_listen(server.url());
+
+        assert!(next_change(&mut changes).await);
+        assert!(!next_change(&mut changes).await);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn listen_keeps_reporting_disconnected_when_the_server_responds_with_an_error() {
+        let mut server = mockito::Server::new_async().await;
+        server.mock("GET", "/eventstream/clip/v2").with_status(500).expect_at_least(2).create_async().await;
+        let (handle, mut changes) = spawn_listen(server.url());
+
+        assert!(!next_change(&mut changes).await);
+        assert!(!next_change(&mut changes).await);
+        handle.abort();
+    }
 }

@@ -7,7 +7,7 @@ use crate::domain::{Number, Value};
 use crate::extensions::unsigned_ints_ext::MirekConversions;
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::hue::clip_to_gamut::clip_to_gamut;
-use crate::hue::domain::{LightRequest, MotionRequest, On, SetSensitivity};
+use crate::hue::domain::{HueResponse, LightRequest, MotionRequest, On, SetSensitivity};
 use crate::hue::pending_writes::PendingWrites;
 use crate::metrics::Metric;
 use async_trait::async_trait;
@@ -330,26 +330,36 @@ impl HueController {
     async fn send_request<T: Serialize + ?Sized>(&self, request: &T, url: &str, device: &Device, device_kind: &str) {
         let request_result = self.client.put(url).json(request).send().await;
 
-        let (result, status) = match &request_result {
-            Err(_) => ("failure", "n/a".to_string()),
-            Ok(response) if response.status().is_success() => ("success", "n/a".to_string()),
-            Ok(response) => ("failure", response.status().as_u16().to_string()),
-        };
-        counter!(Metric::DeviceCommandDispatches.name(), "system" => "hue", "result" => result, "status" => status)
-            .increment(1);
-
-        match request_result {
+        let response = match request_result {
+            Ok(response) => response,
             Err(e) => {
+                counter_command_dispatches("failure", "n/a".to_string());
                 warn!(device_id = device.id, "⚠️ Unable to control the {}: {:?}", device_kind, e);
+                return;
             }
-            Ok(response) if !response.status().is_success() => {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                warn!(device_id = device.id, status_code = %status, "⚠️ Unable to control the {}, request to the Hue bridge failed. Response: {}", device_kind, body);
-            }
-            _ => {}
+        };
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+
+        // The bridge returns a 207 Multi-status with `errors` in the body when it accepts a request but can't reach the device
+        if status.is_success() && !has_errors(&body) {
+            counter_command_dispatches("success", "n/a".to_string());
+            return;
         }
+
+        counter_command_dispatches("failure", status.as_u16().to_string());
+        warn!(device_id = device.id, status_code = %status, "⚠️ Unable to control the {}, request failed: {:?}", device_kind, body);
     }
+}
+
+fn counter_command_dispatches(result: &'static str, status: String) {
+    counter!(Metric::DeviceCommandDispatches.name(), "system" => "hue", "result" => result, "status" => status)
+        .increment(1);
+}
+
+fn has_errors(body: &str) -> bool {
+    serde_json::from_str::<HueResponse<serde_json::Value>>(body).is_ok_and(|response| !response.errors.is_empty())
 }
 
 fn clamp_transition(device_id: &str, transition: Duration) -> Duration {
@@ -590,6 +600,41 @@ mod tests {
         assert_eq!(logs.count("🏠 Control zone"), 0);
         assert_eq!(logs.count("Unable to control"), 0);
         assert_recorded_once(&pending_writes, "light1");
+    }
+
+    #[rstest]
+    #[case::accepted(200, r#"{"data":[{"rid":"light1","rtype":"light"}],"errors":[]}"#, 0)]
+    #[case::accepted_without_a_body(200, "", 0)]
+    #[case::device_cannot_be_reached(
+        207,
+        r#"{"data":[],"errors":[{"description":"device (light) light1 has communication issues"}]}"#,
+        1
+    )]
+    #[case::rejected(500, r#"{"errors":[{"description":"internal error"}]}"#, 1)]
+    #[tokio::test]
+    async fn control_group_warns_only_when_the_bridge_reports_a_failure(
+        #[case] status: usize,
+        #[case] body: &str,
+        #[case] expected_warnings: usize,
+    ) {
+        let mut server = mockito::Server::new_async().await;
+        let light_mock = server
+            .mock("PUT", "/clip/v2/resource/light/light1")
+            .with_status(status)
+            .with_body(body)
+            .expect(1)
+            .create_async()
+            .await;
+        let (controller, _) = controller(&server);
+        let logs = LogMessages::default();
+
+        {
+            let _guard = logs.capture();
+            controller.execute(control_group(None, vec![light("device1", Some("light1"), None)], turn_on())).await;
+        }
+
+        light_mock.assert_async().await;
+        assert_eq!(logs.count("Unable to control the light"), expected_warnings);
     }
 
     async fn turn_on_mock(server: &mut ServerGuard, resource: &str, id: &str, expected_requests: usize) -> Mock {

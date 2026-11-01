@@ -22,6 +22,10 @@ impl Database {
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
+    pub async fn ping(&self) -> Result<(), DatabaseError> {
+        self.call(|conn| conn.query_row("SELECT 1", [], |_| Ok(())).map_err(DatabaseError::from)).await
+    }
+
     pub async fn call<T, E>(&self, f: impl FnOnce(&mut Connection) -> Result<T, E> + Send + 'static) -> Result<T, E>
     where
         T: Send + 'static,
@@ -199,6 +203,25 @@ mod tests {
         let result = database.call(|_| -> Result<(), TestError> { panic!("closure panicked") }).await;
 
         assert!(matches!(result, Err(TestError::Database(DatabaseError::Join(_)))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn ping_succeeds_on_an_open_database() {
+        let database = open_in_memory();
+
+        let result = database.ping().await;
+
+        assert!(result.is_ok(), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn ping_returns_poisoned_connection_after_a_closure_panicked() {
+        let database = open_in_memory();
+        let _ = database.call(|_| -> Result<(), TestError> { panic!("closure panicked") }).await;
+
+        let result = database.ping().await;
+
+        assert!(matches!(result, Err(DatabaseError::PoisonedConnection)), "got {result:?}");
     }
 
     #[tokio::test]

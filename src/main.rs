@@ -1,5 +1,6 @@
 use crate::api::ApiState;
 use crate::app_config::AppConfig;
+use crate::core_tasks::CoreTasks;
 use crate::database::Database;
 use crate::domain::{Event, controller_registry};
 use crate::flow_engine::{SchedulerCommand, scheduler};
@@ -27,6 +28,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod api;
 mod app_config;
 mod claim_registry;
+mod core_tasks;
 mod database;
 mod domain;
 mod execute_flows;
@@ -77,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let flow_registry = Arc::new(FlowRegistry::new(flows));
     info!("✅  Loaded flows");
 
-    let preset_store = Arc::new(PresetStore::new(database));
+    let preset_store = Arc::new(PresetStore::new(database.clone()));
     let presets = preset_loader::load_presets_from_store(&preset_store).await?;
     let preset_registry = Arc::new(PresetRegistry::new(presets));
     info!("✅  Loaded presets");
@@ -91,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
     let geo_location_clone = config.geo_location().clone();
-    task::spawn(async move {
+    let scheduler_handle = task::spawn(async move {
         scheduler(
             scheduler_tx_clone,
             scheduler_rx,
@@ -118,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
     let scheduler_tx_clone = scheduler_tx.clone();
-    task::spawn(async move {
+    let store_listener_handle = task::spawn(async move {
         store_listener(store_reactive_rx, flow_registry_clone, preset_registry_clone, scheduler_tx_clone, geo_location)
             .await;
     });
@@ -126,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let store_rx_clone = store.notifier();
     let integrations_rx_clone = store.notifier();
-    task::spawn(async move {
+    let store_handle = task::spawn(async move {
         store.listen().await;
     });
     info!("✅  Initialized store");
@@ -145,7 +147,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         store_rx_clone,
     ));
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, flow_registry));
-    let api_state = ApiState::new(prometheus_handle, flow_service, preset_service);
+    let core_tasks =
+        Arc::new(CoreTasks { store: store_handle, scheduler: scheduler_handle, store_listener: store_listener_handle });
+    let api_state =
+        ApiState::new(prometheus_handle, database, core_tasks, integrations.clone(), flow_service, preset_service);
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 
