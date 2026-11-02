@@ -1,6 +1,7 @@
 use crate::domain::Group;
 use crate::store::StoreSnapshot;
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::watch::Receiver;
 
 #[derive(Debug)]
@@ -20,6 +21,16 @@ impl GroupService {
         groups.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
         groups
     }
+
+    pub fn retrieve_group(&self, id: &str) -> Result<Arc<Group>, RetrieveGroupError> {
+        self.snapshot_rx.borrow().groups.get(id).cloned().ok_or(RetrieveGroupError::NotFound)
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum RetrieveGroupError {
+    #[error("group not found")]
+    NotFound,
 }
 
 #[cfg(test)]
@@ -87,5 +98,52 @@ mod tests {
         tx.send(snapshot(vec![group("1", "Kitchen"), group("2", "Hall")])).unwrap();
 
         assert_eq!(names(&service.list()), vec!["Hall", "Kitchen"]);
+    }
+
+    #[test]
+    fn list_orders_groups_with_the_same_name_by_id() {
+        let (_tx, rx) = watch::channel(snapshot(vec![group("c", "Room"), group("a", "Room"), group("b", "Room")]));
+
+        let groups = GroupService::new(rx).list();
+
+        let ids: Vec<_> = groups.iter().map(|group| group.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn retrieve_group_returns_the_group_with_the_id() {
+        let (_tx, rx) = watch::channel(snapshot(vec![group("1", "Kitchen"), group("2", "Hall")]));
+
+        let found = GroupService::new(rx).retrieve_group("2").unwrap();
+
+        assert_eq!(found.name, "Hall");
+    }
+
+    #[test]
+    fn retrieve_group_returns_not_found_for_an_unknown_id() {
+        let (_tx, rx) = watch::channel(snapshot(vec![group("1", "Kitchen")]));
+
+        let result = GroupService::new(rx).retrieve_group("unknown");
+
+        assert!(matches!(result, Err(RetrieveGroupError::NotFound)));
+    }
+
+    #[test]
+    fn retrieve_group_does_not_match_on_the_name() {
+        let (_tx, rx) = watch::channel(snapshot(vec![group("1", "Kitchen")]));
+
+        let result = GroupService::new(rx).retrieve_group("Kitchen");
+
+        assert!(matches!(result, Err(RetrieveGroupError::NotFound)));
+    }
+
+    #[test]
+    fn retrieve_group_follows_the_latest_snapshot() {
+        let (tx, rx) = watch::channel(StoreSnapshot::default());
+        let service = GroupService::new(rx);
+
+        tx.send(snapshot(vec![group("1", "Kitchen")])).unwrap();
+
+        assert!(service.retrieve_group("1").is_ok());
     }
 }

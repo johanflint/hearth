@@ -1,12 +1,10 @@
 use crate::api::ApiState;
-use crate::domain::{Group, GroupOwner};
+use crate::api::groups::group_view::GroupView;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 pub(super) async fn list_groups(State(state): State<ApiState>) -> Result<Response, Response> {
     let groups: Vec<GroupView> = state.group_service.list().into_iter().map(GroupView::from).collect();
@@ -19,50 +17,12 @@ struct ListGroupsResponse {
     groups: Vec<GroupView>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GroupView {
-    id: String,
-    name: String,
-    device_ids: BTreeSet<String>,
-    revision: u64,
-    owner: GroupOwnerView,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-enum GroupOwnerView {
-    Hearth,
-    Integration,
-}
-
-impl From<Arc<Group>> for GroupView {
-    fn from(group: Arc<Group>) -> Self {
-        Self {
-            id: group.id.clone(),
-            name: group.name.clone(),
-            device_ids: group.device_ids.clone(),
-            revision: group.revision,
-            owner: (&group.owner).into(),
-        }
-    }
-}
-
-impl From<&GroupOwner> for GroupOwnerView {
-    fn from(owner: &GroupOwner) -> Self {
-        match owner {
-            GroupOwner::Hearth => GroupOwnerView::Hearth,
-            GroupOwner::Integration => GroupOwnerView::Integration,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::groups::router;
     use crate::api::test_support::{body_json, create_state, create_state_with_snapshot};
-    use crate::domain::Group;
+    use crate::domain::{Group, GroupOwner};
     use crate::flow_registry::FlowRegistry;
     use crate::store::StoreSnapshot;
     use axum::body::Body;
