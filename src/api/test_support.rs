@@ -5,6 +5,7 @@ use crate::flow_engine::SchedulerCommand;
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
+use crate::group_service::GroupService;
 use crate::preset_registry::PresetRegistry;
 use crate::preset_service::PresetService;
 use crate::preset_store::PresetStore;
@@ -40,8 +41,17 @@ pub(super) fn create_state(flow_registry: FlowRegistry) -> Fixture {
     create_state_with_database(flow_registry).0
 }
 
+/// The API state with the given store snapshot, e.g. to seed groups
+pub(super) fn create_state_with_snapshot(snapshot: StoreSnapshot) -> ApiState {
+    build_state(FlowRegistry::new(vec![]), snapshot).0.state
+}
+
 /// Also returns the database behind the stores, to seed rows the stores can't write
 pub(super) fn create_state_with_database(flow_registry: FlowRegistry) -> (Fixture, Database) {
+    build_state(flow_registry, StoreSnapshot::default())
+}
+
+fn build_state(flow_registry: FlowRegistry, snapshot: StoreSnapshot) -> (Fixture, Database) {
     let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
     let handle = PrometheusBuilder::new().build_recorder().handle();
     let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
@@ -49,14 +59,15 @@ pub(super) fn create_state_with_database(flow_registry: FlowRegistry) -> (Fixtur
     let flow_registry = Arc::new(flow_registry);
     let preset_store = Arc::new(PresetStore::new(database.clone()));
     let preset_registry = Arc::new(PresetRegistry::new(vec![]));
-    let (_, snapshot_rx) = watch::channel(StoreSnapshot::default());
+    let (_, snapshot_rx) = watch::channel(snapshot);
     let flow_service = Arc::new(FlowService::new(
         Arc::clone(&flow_store),
         Arc::clone(&flow_registry),
         preset_registry.clone(),
         scheduler_tx,
-        snapshot_rx,
+        snapshot_rx.clone(),
     ));
+    let group_service = Arc::new(GroupService::new(snapshot_rx));
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, Arc::clone(&flow_registry)));
     // Tasks that keep running until a test aborts them
     let core_tasks = CoreTasks {
@@ -64,7 +75,15 @@ pub(super) fn create_state_with_database(flow_registry: FlowRegistry) -> (Fixtur
         scheduler: tokio::spawn(std::future::pending()),
         store_listener: tokio::spawn(std::future::pending()),
     };
-    let state = ApiState::new(handle, database.clone(), Arc::new(core_tasks), vec![], flow_service, preset_service);
+    let state = ApiState::new(
+        handle,
+        database.clone(),
+        Arc::new(core_tasks),
+        vec![],
+        flow_service,
+        group_service,
+        preset_service,
+    );
     (Fixture { state, flow_store, flow_registry, scheduler_rx }, database)
 }
 

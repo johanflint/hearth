@@ -371,13 +371,80 @@ mod tests {
         }
     }
 
+    fn hearth_group(id: &str, name: &str, device_ids: &[&str]) -> Group {
+        Group { owner: GroupOwner::Hearth, ..group(id, name, device_ids) }
+    }
+
     fn start_store() -> (Sender<Event>, Receiver<ReactiveUpdate>) {
+        start_store_with_groups(vec![])
+    }
+
+    fn start_store_with_groups(groups: Vec<Group>) -> (Sender<Event>, Receiver<ReactiveUpdate>) {
         let (tx, rx) = channel::<Event>(8);
-        let (mut store, reactive_rx) = Store::new(rx);
+        let (mut store, reactive_rx) = Store::new(rx, groups);
         tokio::spawn(async move {
             store.listen().await;
         });
         (tx, reactive_rx)
+    }
+
+    #[test]
+    fn new_store_starts_with_the_initial_groups_in_its_snapshot() {
+        let (_tx, rx) = channel::<Event>(8);
+
+        let (store, _reactive_rx) =
+            Store::new(rx, vec![hearth_group("first", "First", &["a"]), hearth_group("second", "Second", &["b", "c"])]);
+
+        let snapshot = store.notifier().borrow().clone();
+        assert_eq!(snapshot.groups.len(), 2);
+        assert_eq!(*snapshot.groups["first"], hearth_group("first", "First", &["a"]));
+        assert_eq!(*snapshot.groups["second"], hearth_group("second", "Second", &["b", "c"]));
+        assert!(snapshot.devices.is_empty());
+        assert!(snapshot.zones.is_empty());
+    }
+
+    #[test]
+    fn new_store_without_initial_groups_starts_empty() {
+        let (_tx, rx) = channel::<Event>(8);
+
+        let (store, _reactive_rx) = Store::new(rx, vec![]);
+
+        assert!(store.notifier().borrow().groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn initial_groups_do_not_produce_a_reactive_update() {
+        let (tx, mut reactive_rx) = start_store_with_groups(vec![hearth_group("group", "Group", &["device"])]);
+
+        let device = DeviceBuilder::new("device").with_boolean_property("on", false).build();
+        tx.send(Event::DiscoveredDevices(vec![device])).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        // The first update is for the device, so flows never ran against a store without devices
+        assert_eq!(update.snapshot.devices.len(), 1);
+        assert_eq!(update.snapshot.groups.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discovered_groups_are_added_to_the_initial_groups() {
+        let (tx, mut reactive_rx) = start_store_with_groups(vec![hearth_group("hearth", "Hearth", &["a"])]);
+
+        tx.send(Event::DiscoveredGroups(vec![group("hue", "Hue", &["b"])])).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.groups.len(), 2);
+        assert_eq!(update.snapshot.groups["hearth"].owner, GroupOwner::Hearth);
+        assert_eq!(update.snapshot.groups["hue"].owner, GroupOwner::Integration);
+    }
+
+    #[tokio::test]
+    async fn group_changed_keeps_the_owner_of_an_initial_group() {
+        let (tx, mut reactive_rx) = start_store_with_groups(vec![hearth_group("group", "Group", &["a"])]);
+
+        tx.send(group_changed("group", Some("Renamed"), Some(&["a", "b"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(*update.snapshot.groups["group"], hearth_group("group", "Renamed", &["a", "b"]));
     }
 
     #[tokio::test]
@@ -960,7 +1027,7 @@ mod tests {
     #[tokio::test]
     async fn property_change_is_persisted_in_the_store() {
         let (tx, rx) = channel::<Event>(8);
-        let (mut store, _reactive_rx) = Store::new(rx);
+        let (mut store, _reactive_rx) = Store::new(rx, vec![]);
         let mut notifier = store.notifier();
 
         tokio::spawn(async move {
@@ -996,7 +1063,7 @@ mod tests {
         // order, with no merging/dropping - even when several events are sent
         // before the store has a chance to process the first one.
         let (tx, rx) = channel::<Event>(8);
-        let (mut store, mut reactive_rx) = Store::new(rx);
+        let (mut store, mut reactive_rx) = Store::new(rx, vec![]);
 
         tokio::spawn(async move {
             store.listen().await;
@@ -1053,7 +1120,7 @@ mod tests {
     #[tokio::test]
     async fn reactive_update_reports_no_change_when_the_event_is_rejected() {
         let (tx, rx) = channel::<Event>(8);
-        let (mut store, mut reactive_rx) = Store::new(rx);
+        let (mut store, mut reactive_rx) = Store::new(rx, vec![]);
 
         tokio::spawn(async move {
             store.listen().await;
@@ -1081,7 +1148,7 @@ mod tests {
         // no update is ever dropped or merged, and order is preserved.
         let num_events = REACTIVE_CHANNEL_CAPACITY * 2;
         let (tx, rx) = channel::<Event>(num_events + 8);
-        let (mut store, mut reactive_rx) = Store::new(rx);
+        let (mut store, mut reactive_rx) = Store::new(rx, vec![]);
 
         tokio::spawn(async move {
             store.listen().await;

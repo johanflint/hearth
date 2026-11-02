@@ -7,6 +7,7 @@ use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
+use crate::group_service::GroupService;
 use crate::group_store::GroupStore;
 use crate::integration::Discovery;
 use crate::integration_list::{enabled_only, integrations};
@@ -40,6 +41,7 @@ mod flow_registry;
 mod flow_service;
 mod flow_store;
 mod geo_location_deserializer;
+mod group_service;
 mod group_store;
 mod hue;
 mod integration;
@@ -132,6 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let store_rx_clone = store.notifier();
     let integrations_rx_clone = store.notifier();
+    let group_service_rx_clone = store.notifier();
     let store_handle = task::spawn(async move {
         store.listen().await;
     });
@@ -153,8 +156,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, flow_registry));
     let core_tasks =
         Arc::new(CoreTasks { store: store_handle, scheduler: scheduler_handle, store_listener: store_listener_handle });
-    let api_state =
-        ApiState::new(prometheus_handle, database, core_tasks, integrations.clone(), flow_service, preset_service);
+    let group_service = Arc::new(GroupService::new(group_service_rx_clone));
+    let api_state = ApiState::new(
+        prometheus_handle,
+        database,
+        core_tasks,
+        integrations.clone(),
+        flow_service,
+        group_service,
+        preset_service,
+    );
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 

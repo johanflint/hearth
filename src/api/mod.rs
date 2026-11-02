@@ -1,5 +1,6 @@
 mod error;
 mod flows;
+mod groups;
 mod health;
 mod metrics;
 mod parse_request;
@@ -16,6 +17,7 @@ pub fn router(state: ApiState) -> Router {
         .merge(health::router())
         .merge(metrics::router())
         .merge(flows::router())
+        .merge(groups::router())
         .merge(presets::router())
         .with_state(state)
 }
