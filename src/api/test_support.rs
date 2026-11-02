@@ -1,6 +1,7 @@
 use crate::api::ApiState;
 use crate::core_tasks::CoreTasks;
 use crate::database::{Database, DatabaseError};
+use crate::domain::Event;
 use crate::flow_engine::SchedulerCommand;
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
@@ -44,15 +45,36 @@ pub(super) fn create_state(flow_registry: FlowRegistry) -> Fixture {
 
 /// The API state with the given store snapshot, e.g. to seed groups
 pub(super) fn create_state_with_snapshot(snapshot: StoreSnapshot) -> ApiState {
-    build_state(FlowRegistry::new(vec![]), snapshot).0.state
+    build_state(FlowRegistry::new(vec![]), snapshot, draining_store_tx()).0.state
+}
+
+/// The API state with the given snapshot and store event sender, to inspect the events a handler sends.
+/// Also returns the database behind the stores.
+pub(super) fn create_state_with_store_tx(
+    snapshot: StoreSnapshot,
+    store_tx: mpsc::Sender<Event>,
+) -> (ApiState, Database) {
+    let (fixture, database) = build_state(FlowRegistry::new(vec![]), snapshot, store_tx);
+    (fixture.state, database)
+}
+
+/// A store event sender whose events are discarded, for tests that don't look at them
+fn draining_store_tx() -> mpsc::Sender<Event> {
+    let (store_tx, mut store_rx) = mpsc::channel(8);
+    tokio::spawn(async move { while store_rx.recv().await.is_some() {} });
+    store_tx
 }
 
 /// Also returns the database behind the stores, to seed rows the stores can't write
 pub(super) fn create_state_with_database(flow_registry: FlowRegistry) -> (Fixture, Database) {
-    build_state(flow_registry, StoreSnapshot::default())
+    build_state(flow_registry, StoreSnapshot::default(), draining_store_tx())
 }
 
-fn build_state(flow_registry: FlowRegistry, snapshot: StoreSnapshot) -> (Fixture, Database) {
+fn build_state(
+    flow_registry: FlowRegistry,
+    snapshot: StoreSnapshot,
+    store_tx: mpsc::Sender<Event>,
+) -> (Fixture, Database) {
     let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
     let handle = PrometheusBuilder::new().build_recorder().handle();
     let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
@@ -68,7 +90,7 @@ fn build_state(flow_registry: FlowRegistry, snapshot: StoreSnapshot) -> (Fixture
         scheduler_tx,
         snapshot_rx.clone(),
     ));
-    let group_service = Arc::new(GroupService::new(snapshot_rx, Arc::new(GroupStore::new(database.clone()))));
+    let group_service = Arc::new(GroupService::new(snapshot_rx, Arc::new(GroupStore::new(database.clone())), store_tx));
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, Arc::clone(&flow_registry)));
     // Tasks that keep running until a test aborts them
     let core_tasks = CoreTasks {

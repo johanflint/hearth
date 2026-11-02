@@ -39,6 +39,7 @@ pub enum Event {
         initiated_by: InitiatedBy,
     },
     DiscoveredGroups(Vec<Group>),
+    GroupCreated(Group),
     GroupChanged(GroupChanged),
     GroupRemoved {
         group_id: String,

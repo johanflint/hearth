@@ -243,6 +243,11 @@ impl Store {
                 gauge!(Metric::StoreGroupCount.name()).set(self.groups.len() as f64);
                 None
             }
+            Event::GroupCreated(group) => {
+                self.groups.insert(group.id.clone(), Arc::new(group));
+                gauge!(Metric::StoreGroupCount.name()).set(self.groups.len() as f64);
+                None
+            }
             Event::GroupChanged(GroupChanged { id, name, device_ids, external_id }) => {
                 let group = match self.groups.get(&id) {
                     Some(existing) => {
@@ -445,6 +450,28 @@ mod tests {
         let update = reactive_rx.recv().await.unwrap();
 
         assert_eq!(*update.snapshot.groups["group"], hearth_group("group", "Renamed", &["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn group_created_adds_a_hearth_group_to_the_snapshot() {
+        let (tx, mut reactive_rx) = start_store_with_groups(vec![hearth_group("first", "First", &["a"])]);
+
+        tx.send(Event::GroupCreated(hearth_group("second", "Second", &["b"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.groups.len(), 2);
+        assert_eq!(*update.snapshot.groups["second"], hearth_group("second", "Second", &["b"]));
+        assert_eq!(*update.snapshot.groups["first"], hearth_group("first", "First", &["a"]));
+    }
+
+    #[tokio::test]
+    async fn group_created_does_not_report_a_property_change() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::GroupCreated(hearth_group("group", "Group", &["a"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert!(update.changed.is_none());
     }
 
     #[tokio::test]

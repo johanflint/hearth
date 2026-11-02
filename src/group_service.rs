@@ -1,20 +1,22 @@
-use crate::domain::{Group, GroupOwner};
+use crate::domain::{Event, Group, GroupOwner};
 use crate::group_store::{GroupStore, GroupStoreError, InsertError, StoredGroup};
 use crate::store::StoreSnapshot;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use thiserror::Error;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::watch::Receiver;
 
 #[derive(Debug)]
 pub struct GroupService {
     snapshot_rx: Receiver<StoreSnapshot>,
     group_store: Arc<GroupStore>,
+    store_tx: Sender<Event>,
 }
 
 impl GroupService {
-    pub fn new(snapshot_rx: Receiver<StoreSnapshot>, group_store: Arc<GroupStore>) -> Self {
-        GroupService { snapshot_rx, group_store }
+    pub fn new(snapshot_rx: Receiver<StoreSnapshot>, group_store: Arc<GroupStore>, store_tx: Sender<Event>) -> Self {
+        GroupService { snapshot_rx, group_store, store_tx }
     }
 
     pub fn list(&self) -> Vec<Arc<Group>> {
@@ -56,10 +58,15 @@ impl GroupService {
             return Err(CreateGroupError::UnknownDevices { device_ids: unknown_device_ids });
         }
 
-        self.group_store.insert(id, name, &group.device_ids).await.map_err(|err| match err {
+        let permit = self.store_tx.reserve().await.map_err(|_| CreateGroupError::StoreUnavailable)?;
+
+        let stored_group = self.group_store.insert(id, name, &group.device_ids).await.map_err(|err| match err {
             InsertError::NameAlreadyExists => CreateGroupError::NameAlreadyExists,
             InsertError::Store(err) => CreateGroupError::Internal(err),
-        })
+        })?;
+
+        permit.send(Event::GroupCreated(Group { revision: stored_group.revision, ..group }));
+        Ok(stored_group)
     }
 }
 
@@ -73,10 +80,12 @@ pub enum RetrieveGroupError {
 pub enum CreateGroupError {
     #[error("a group with this id already exists")]
     IdAlreadyExists,
-    #[error("a preset with this name already exists")]
+    #[error("a group with this name already exists")]
     NameAlreadyExists,
     #[error("unknown device ids: '{}'", device_ids.iter().map(String::as_str).collect::<Vec<_>>().join(", "))]
     UnknownDevices { device_ids: BTreeSet<String> },
+    #[error("store is unavailable")]
+    StoreUnavailable,
     #[error(transparent)]
     Internal(#[from] GroupStoreError),
 }
@@ -86,9 +95,11 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::domain::GroupOwner;
+    use crate::test_support::DeviceBuilder;
+    use rstest::rstest;
     use std::collections::{BTreeSet, HashMap};
     use std::path::Path;
-    use tokio::sync::watch;
+    use tokio::sync::{mpsc, watch};
 
     fn group(id: &str, name: &str) -> Arc<Group> {
         Arc::new(Group {
@@ -108,7 +119,39 @@ mod tests {
 
     fn service(rx: Receiver<StoreSnapshot>) -> GroupService {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
-        GroupService::new(rx, Arc::new(GroupStore::new(database)))
+        let (store_tx, _store_rx) = mpsc::channel(1);
+        GroupService::new(rx, Arc::new(GroupStore::new(database)), store_tx)
+    }
+
+    /// Bind `store_rx` when the service sends events: dropping it, e.g. by leaving it out with `..`,
+    /// makes the store unavailable.
+    struct Fixture {
+        service: GroupService,
+        group_store: Arc<GroupStore>,
+        store_rx: mpsc::Receiver<Event>,
+    }
+
+    fn create_service(snapshot: StoreSnapshot) -> Fixture {
+        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
+        let group_store = Arc::new(GroupStore::new(database));
+        let (store_tx, store_rx) = mpsc::channel(8);
+        let (_tx, rx) = watch::channel(snapshot);
+        let service = GroupService::new(rx, Arc::clone(&group_store), store_tx);
+        Fixture { service, group_store, store_rx }
+    }
+
+    fn snapshot_with_devices(device_ids: &[&str]) -> StoreSnapshot {
+        let devices: HashMap<_, _> =
+            device_ids.iter().map(|id| (id.to_string(), Arc::new(DeviceBuilder::new(id).build()))).collect();
+        StoreSnapshot { devices: Arc::new(devices), ..Default::default() }
+    }
+
+    fn ids(device_ids: &[&str]) -> Vec<String> {
+        device_ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    fn set(device_ids: &[&str]) -> BTreeSet<String> {
+        device_ids.iter().map(|id| id.to_string()).collect()
     }
 
     fn names(groups: &[Arc<Group>]) -> Vec<&str> {
@@ -200,5 +243,133 @@ mod tests {
         tx.send(snapshot(vec![group("1", "Kitchen")])).unwrap();
 
         assert!(service.retrieve_group("1").is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_group_returns_the_stored_group() {
+        let Fixture { service, store_rx: _store_rx, .. } = create_service(snapshot_with_devices(&["a", "b"]));
+
+        let stored = service.create_group("group", "Kitchen", ids(&["b", "a"])).await.unwrap();
+
+        assert_eq!(stored.id, "group");
+        assert_eq!(stored.name, "Kitchen");
+        assert_eq!(stored.device_ids, set(&["a", "b"]));
+        assert_eq!(stored.revision, 0);
+    }
+
+    #[tokio::test]
+    async fn create_group_persists_the_group() {
+        let Fixture { service, group_store, store_rx: _store_rx } = create_service(snapshot_with_devices(&["a"]));
+
+        service.create_group("group", "Kitchen", ids(&["a"])).await.unwrap();
+
+        let stored = group_store.list().await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!((stored[0].id.as_str(), stored[0].name.as_str()), ("group", "Kitchen"));
+        assert_eq!(stored[0].device_ids, set(&["a"]));
+    }
+
+    #[tokio::test]
+    async fn create_group_deduplicates_the_device_ids() {
+        let Fixture { service, store_rx: _store_rx, .. } = create_service(snapshot_with_devices(&["a"]));
+
+        let stored = service.create_group("group", "Kitchen", ids(&["a", "a"])).await.unwrap();
+
+        assert_eq!(stored.device_ids, set(&["a"]));
+    }
+
+    #[tokio::test]
+    async fn create_group_allows_a_group_without_devices() {
+        let Fixture { service, store_rx: _store_rx, .. } = create_service(StoreSnapshot::default());
+
+        let stored = service.create_group("group", "Empty", vec![]).await.unwrap();
+
+        assert!(stored.device_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_group_sends_a_group_created_event_for_a_hearth_group() {
+        let Fixture { service, mut store_rx, .. } = create_service(snapshot_with_devices(&["a"]));
+
+        service.create_group("group", "Kitchen", ids(&["a"])).await.unwrap();
+
+        let Event::GroupCreated(group) = store_rx.try_recv().expect("an event was sent") else {
+            panic!("expected a GroupCreated event");
+        };
+        assert_eq!(
+            group,
+            Group {
+                id: "group".to_string(),
+                name: "Kitchen".to_string(),
+                device_ids: set(&["a"]),
+                revision: 0,
+                owner: GroupOwner::Hearth,
+                external_id: None,
+            }
+        );
+        assert!(store_rx.try_recv().is_err(), "only one event must be sent");
+    }
+
+    #[tokio::test]
+    async fn create_group_rejects_an_existing_id() {
+        let snapshot = snapshot(vec![group("group", "Existing")]);
+        let Fixture { service, group_store, mut store_rx } = create_service(snapshot);
+
+        let result = service.create_group("group", "Kitchen", vec![]).await;
+
+        assert!(matches!(result, Err(CreateGroupError::IdAlreadyExists)));
+        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[rstest]
+    #[case::same_case("Kitchen")]
+    #[case::different_case("kitchen")]
+    #[tokio::test]
+    async fn create_group_rejects_a_name_in_use_by_another_group(#[case] name: &str) {
+        let Fixture { service, group_store, mut store_rx } = create_service(snapshot(vec![group("other", "Kitchen")]));
+
+        let result = service.create_group("group", name, vec![]).await;
+
+        assert!(matches!(result, Err(CreateGroupError::NameAlreadyExists)));
+        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn create_group_rejects_a_name_stored_but_not_yet_in_the_snapshot() {
+        let Fixture { service, group_store, mut store_rx } = create_service(StoreSnapshot::default());
+        group_store.insert("other", "Kitchen", &BTreeSet::new()).await.unwrap();
+
+        let result = service.create_group("group", "kitchen", vec![]).await;
+
+        assert!(matches!(result, Err(CreateGroupError::NameAlreadyExists)));
+        assert_eq!(group_store.list().await.unwrap().len(), 1);
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn create_group_rejects_unknown_devices_and_lists_all_of_them_sorted() {
+        let Fixture { service, group_store, mut store_rx } = create_service(snapshot_with_devices(&["known"]));
+
+        let result = service.create_group("group", "Kitchen", ids(&["z", "known", "a"])).await;
+
+        let Err(err @ CreateGroupError::UnknownDevices { .. }) = result else {
+            panic!("expected UnknownDevices, got {result:?}");
+        };
+        assert_eq!(err.to_string(), "unknown device ids: 'a, z'");
+        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn create_group_fails_without_storing_when_the_store_is_gone() {
+        let Fixture { service, group_store, store_rx } = create_service(StoreSnapshot::default());
+        drop(store_rx);
+
+        let result = service.create_group("group", "Kitchen", vec![]).await;
+
+        assert!(matches!(result, Err(CreateGroupError::StoreUnavailable)));
+        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
     }
 }
