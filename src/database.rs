@@ -79,6 +79,15 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL,
         updated_at TEXT
     )",
+    // v3: groups owned by Hearth. Integration groups are discovered, not stored.
+    "CREATE TABLE groups (
+        id TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        device_ids TEXT NOT NULL, -- JSON array of device ids
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+    )",
 ];
 
 #[derive(Error, Debug)]

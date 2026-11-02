@@ -61,9 +61,9 @@ pub struct Store {
 const REACTIVE_CHANNEL_CAPACITY: usize = 32;
 
 impl Store {
-    pub fn new(rx: Receiver<Event>) -> (Self, Receiver<ReactiveUpdate>) {
+    pub fn new(rx: Receiver<Event>, groups: Vec<Group>) -> (Self, Receiver<ReactiveUpdate>) {
         let devices = HashMap::new();
-        let groups = HashMap::new();
+        let groups: GroupMap = groups.into_iter().map(|group| (group.id.clone(), Arc::new(group))).collect();
         let zones = HashMap::new();
         let snapshot = StoreSnapshot {
             devices: Arc::new(devices.clone()),
