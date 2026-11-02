@@ -156,7 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, flow_registry));
     let core_tasks =
         Arc::new(CoreTasks { store: store_handle, scheduler: scheduler_handle, store_listener: store_listener_handle });
-    let group_service = Arc::new(GroupService::new(group_service_rx_clone));
+    let group_service = Arc::new(GroupService::new(group_service_rx_clone, group_store));
     let api_state = ApiState::new(
         prometheus_handle,
         database,

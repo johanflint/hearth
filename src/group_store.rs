@@ -1,7 +1,7 @@
 use crate::database::{Database, DatabaseError};
 use crate::domain::{Group, GroupOwner};
 use chrono::{DateTime, Utc};
-use rusqlite::Row;
+use rusqlite::{Row, params};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
@@ -23,6 +23,32 @@ impl GroupStore {
                     .prepare("SELECT id, revision, name, device_ids, created_at, updated_at FROM groups ORDER BY id")?;
                 let rows = statement.query_map([], row_to_stored_group)?;
                 Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+    }
+
+    pub async fn insert(
+        &self,
+        id: &str,
+        name: &str,
+        device_ids: &BTreeSet<String>,
+    ) -> Result<StoredGroup, InsertError> {
+        let id = id.to_string();
+        let name = name.to_string();
+        let device_ids = serde_json::json!(device_ids);
+        self.database
+            .call(move |conn| {
+                let now = Utc::now().to_rfc3339();
+                let stored_group = conn
+                    .query_row(
+                        "INSERT INTO groups (id, revision, name, device_ids, created_at, updated_at)
+                        VALUES (?1, 0, ?2, ?3, ?4, ?4)
+                        RETURNING id, revision, name, device_ids, created_at, updated_at",
+                        params![id, name, device_ids, now],
+                        row_to_stored_group,
+                    )
+                    .map_err(|err| if is_name_conflict(&err) { InsertError::NameAlreadyExists } else { err.into() })?;
+                Ok(stored_group)
             })
             .await
     }
@@ -52,6 +78,10 @@ fn row_to_stored_group(row: &Row) -> rusqlite::Result<StoredGroup> {
         .transpose()?;
 
     Ok(StoredGroup { id, revision, name, device_ids, created_at, updated_at })
+}
+
+fn is_name_conflict(err: &rusqlite::Error) -> bool {
+    matches!(err, rusqlite::Error::SqliteFailure(err, _) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE)
 }
 
 fn to_revision(revision: i64) -> Result<u64, GroupStoreError> {
@@ -90,6 +120,27 @@ pub enum GroupStoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("stored revision {0} is out of range for u64")]
     InvalidRevision(i64),
+}
+
+#[derive(Error, Debug)]
+pub enum InsertError {
+    #[error("a group with this name already exists")]
+    NameAlreadyExists,
+    #[error(transparent)]
+    Store(#[from] GroupStoreError),
+}
+
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `GroupStoreError` on their own
+impl From<DatabaseError> for InsertError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+impl From<rusqlite::Error> for InsertError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
 }
 
 #[cfg(test)]
@@ -299,5 +350,96 @@ mod tests {
             matches!(result, Err(DatabaseError::Sqlite(rusqlite::Error::SqliteFailure(err, _))) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE),
             "got {result:?}"
         );
+    }
+
+    fn device_ids(ids: &[&str]) -> BTreeSet<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[tokio::test]
+    async fn insert_returns_the_stored_group_at_revision_zero() {
+        let store = open_in_memory();
+
+        let inserted = store.insert("group", "Reading lights", &device_ids(&["lamp", "desk"])).await;
+
+        let inserted = inserted.expect("insert succeeded");
+        assert_eq!(inserted.id, "group");
+        assert_eq!(inserted.revision, 0);
+        assert_eq!(inserted.name, "Reading lights");
+        assert_eq!(inserted.device_ids, device_ids(&["desk", "lamp"]));
+        assert_eq!(inserted.updated_at, Some(inserted.created_at));
+    }
+
+    #[tokio::test]
+    async fn insert_persists_the_group_and_leaves_others_untouched() {
+        let store = open_in_memory();
+        insert_row(&store, "other", "Other", r#"["a"]"#, None).await;
+
+        store.insert("group", "Group", &device_ids(&["b", "c"])).await.expect("insert succeeded");
+
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "group");
+        assert_eq!(rows[0].name, "Group");
+        assert_eq!(rows[0].revision, 0);
+        assert_eq!(rows[0].device_ids, device_ids(&["b", "c"]));
+        assert_eq!(rows[1].id, "other");
+        assert_eq!(rows[1].name, "Other");
+        assert_eq!(rows[1].device_ids, device_ids(&["a"]));
+    }
+
+    #[tokio::test]
+    async fn insert_accepts_a_group_without_devices() {
+        let store = open_in_memory();
+
+        let inserted = store.insert("group", "Group", &BTreeSet::new()).await.expect("insert succeeded");
+
+        assert!(inserted.device_ids.is_empty());
+        assert!(store.list().await.expect("list succeeded")[0].device_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn insert_stores_the_device_ids_as_a_json_array() {
+        let store = open_in_memory();
+
+        store.insert("group", "Group", &device_ids(&["b", "a"])).await.expect("insert succeeded");
+
+        let stored: String = store
+            .database
+            .call(|conn| {
+                conn.query_row("SELECT device_ids FROM groups", [], |row| row.get(0)).map_err(DatabaseError::from)
+            })
+            .await
+            .expect("query");
+        assert_eq!(stored, r#"["a","b"]"#);
+    }
+
+    #[rstest]
+    #[case::same_case("Lights")]
+    #[case::different_case("lIGHTS")]
+    #[tokio::test]
+    async fn insert_rejects_a_name_that_is_already_in_use(#[case] name: &str) {
+        let store = open_in_memory();
+        insert_row(&store, "group", "Lights", r#"["a"]"#, None).await;
+
+        let result = store.insert("duplicate", name, &device_ids(&["b"])).await;
+
+        assert!(matches!(result, Err(InsertError::NameAlreadyExists)), "got {result:?}");
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1, "nothing must be stored");
+        assert_eq!(rows[0].device_ids, device_ids(&["a"]));
+    }
+
+    #[tokio::test]
+    async fn insert_fails_for_an_id_that_is_already_in_use() {
+        let store = open_in_memory();
+        insert_row(&store, "group", "Lights", "[]", None).await;
+
+        let result = store.insert("group", "Other", &device_ids(&["a"])).await;
+
+        assert!(matches!(result, Err(InsertError::Store(GroupStoreError::Sqlite(_)))), "got {result:?}");
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Lights");
     }
 }

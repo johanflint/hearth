@@ -6,6 +6,7 @@ use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
 use crate::group_service::GroupService;
+use crate::group_store::GroupStore;
 use crate::preset_registry::PresetRegistry;
 use crate::preset_service::PresetService;
 use crate::preset_store::PresetStore;
@@ -67,7 +68,7 @@ fn build_state(flow_registry: FlowRegistry, snapshot: StoreSnapshot) -> (Fixture
         scheduler_tx,
         snapshot_rx.clone(),
     ));
-    let group_service = Arc::new(GroupService::new(snapshot_rx));
+    let group_service = Arc::new(GroupService::new(snapshot_rx, Arc::new(GroupStore::new(database.clone()))));
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, Arc::clone(&flow_registry)));
     // Tasks that keep running until a test aborts them
     let core_tasks = CoreTasks {

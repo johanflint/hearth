@@ -1,4 +1,5 @@
 use crate::domain::{Group, GroupOwner};
+use crate::group_store::StoredGroup;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -28,6 +29,18 @@ impl From<Arc<Group>> for GroupView {
             device_ids: group.device_ids.clone(),
             revision: group.revision,
             owner: (&group.owner).into(),
+        }
+    }
+}
+
+impl From<StoredGroup> for GroupView {
+    fn from(group: StoredGroup) -> Self {
+        Self {
+            id: group.id,
+            name: group.name,
+            device_ids: group.device_ids,
+            revision: group.revision,
+            owner: GroupOwnerView::Hearth,
         }
     }
 }
