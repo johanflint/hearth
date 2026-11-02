@@ -14,8 +14,8 @@ pub struct Database {
 impl Database {
     pub fn open(path: &Path) -> Result<Self, DatabaseError> {
         let mut conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", &"WAL")?;
-        conn.pragma_update(None, "foreign_keys", &"ON")?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "busy_timeout", 5000)?;
         run_migrations(&mut conn)?;
 
