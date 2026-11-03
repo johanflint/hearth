@@ -1,12 +1,12 @@
 use crate::api::ApiState;
-use crate::api::error::ErrorResponse;
+use crate::api::error::{ErrorResponse, InUseErrorResponse};
 use crate::group_service::DeleteGroupError;
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::{error, info};
 
 pub(super) async fn delete_group(
@@ -35,12 +35,7 @@ fn delete_error_response(err: DeleteGroupError) -> Response {
     let error_message = err.to_string();
     match err {
         DeleteGroupError::InUse(flows) => {
-            let flows = flows
-                .into_iter()
-                .map(|summary| FlowReference { id: summary.id, name: summary.name, revision: summary.revision })
-                .collect();
-            let body = InUseErrorResponse { code: "groupInUse", message: error_message, flows };
-            (StatusCode::CONFLICT, Json(body)).into_response()
+            (StatusCode::CONFLICT, Json(InUseErrorResponse::new("groupInUse", error_message, flows))).into_response()
         }
         DeleteGroupError::NotFound => {
             (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("groupNotFound"))).into_response()
@@ -60,21 +55,6 @@ fn delete_error_response(err: DeleteGroupError) -> Response {
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
-}
-
-#[derive(Debug, Serialize)]
-struct InUseErrorResponse {
-    pub code: &'static str,
-    pub message: String,
-    pub flows: Vec<FlowReference>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FlowReference {
-    id: String,
-    name: String,
-    revision: u64,
 }
 
 #[cfg(test)]

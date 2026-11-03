@@ -1,12 +1,12 @@
 use crate::api::ApiState;
-use crate::api::error::ErrorResponse;
+use crate::api::error::{ErrorResponse, InUseErrorResponse};
 use crate::preset_service::DeletePresetError;
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::{error, info};
 
 pub(super) async fn delete_preset(
@@ -35,12 +35,7 @@ fn delete_error_response(err: DeletePresetError) -> Response {
     let error_message = err.to_string();
     match err {
         DeletePresetError::InUse(flows) => {
-            let flows = flows
-                .into_iter()
-                .map(|summary| FlowReference { id: summary.id, name: summary.name, revision: summary.revision })
-                .collect();
-            let body = InUseErrorResponse { code: "presetInUse", message: error_message, flows };
-            (StatusCode::CONFLICT, Json(body)).into_response()
+            (StatusCode::CONFLICT, Json(InUseErrorResponse::new("presetInUse", error_message, flows))).into_response()
         }
         DeletePresetError::NotFound => {
             (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("presetNotFound"))).into_response()
@@ -53,21 +48,6 @@ fn delete_error_response(err: DeletePresetError) -> Response {
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
-}
-
-#[derive(Debug, Serialize)]
-struct InUseErrorResponse {
-    pub code: &'static str,
-    pub message: String,
-    pub flows: Vec<FlowReference>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FlowReference {
-    id: String,
-    name: String,
-    revision: u64,
 }
 
 #[cfg(test)]
