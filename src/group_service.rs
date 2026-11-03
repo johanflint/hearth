@@ -92,6 +92,10 @@ impl GroupService {
         }
 
         let snapshot = self.snapshot_rx.borrow().clone();
+        if snapshot.groups.values().any(|group| group.id != id && group.name.eq_ignore_ascii_case(name)) {
+            return Err(UpdateGroupError::NameAlreadyExists);
+        }
+
         let unknown_device_ids: BTreeSet<String> =
             device_ids.iter().filter(|id| !snapshot.devices.contains_key(*id)).cloned().collect();
         if !unknown_device_ids.is_empty() {
@@ -512,7 +516,21 @@ mod tests {
 
     /// A service with a stored group "group" named "Kitchen" with device "a", and the given devices in the snapshot
     async fn create_service_with_group(device_ids: &[&str]) -> Fixture {
-        let fixture = create_service(snapshot_with_devices(device_ids));
+        create_service_with_group_and_snapshot_groups(device_ids, vec![]).await
+    }
+
+    /// Like `create_service_with_group`, with the stored group also in the snapshot next to the other groups
+    async fn create_service_with_group_and_snapshot_groups(
+        device_ids: &[&str],
+        other_groups: Vec<Arc<Group>>,
+    ) -> Fixture {
+        let stored =
+            Arc::new(Group { device_ids: set(&["a"]), ..Arc::unwrap_or_clone(hearth_group("group", "Kitchen", 0)) });
+        let snapshot = StoreSnapshot {
+            groups: snapshot(other_groups.into_iter().chain([stored]).collect()).groups,
+            ..snapshot_with_devices(device_ids)
+        };
+        let fixture = create_service(snapshot);
         fixture.group_store.insert("group", "Kitchen", &set(&["a"])).await.unwrap();
         fixture
     }
@@ -561,13 +579,17 @@ mod tests {
         assert!(store_rx.try_recv().is_err(), "only one event must be sent");
     }
 
+    #[rstest]
+    #[case::same_case("Kitchen")]
+    #[case::different_case("kitchen")]
     #[tokio::test]
-    async fn update_group_allows_the_group_to_keep_its_own_name() {
-        let Fixture { service, store_rx: _store_rx, .. } = create_service_with_group(&["a"]).await;
+    async fn update_group_allows_the_group_to_keep_its_own_name(#[case] name: &str) {
+        let Fixture { service, store_rx: _store_rx, .. } =
+            create_service_with_group_and_snapshot_groups(&["a"], vec![]).await;
 
-        let stored = service.update_group("group", 0, "kitchen", ids(&["a"])).await.unwrap();
+        let stored = service.update_group("group", 0, name, ids(&["a"])).await.unwrap();
 
-        assert_eq!(stored.name, "kitchen");
+        assert_eq!(stored.name, name);
     }
 
     #[tokio::test]
@@ -641,6 +663,34 @@ mod tests {
 
         assert!(matches!(result, Err(UpdateGroupError::NameAlreadyExists)), "got {result:?}");
         assert_eq!(group_store.list().await.unwrap()[0].name, "Kitchen", "the group must be unchanged");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[rstest]
+    #[case::same_case("Hue room")]
+    #[case::different_case("hUE rOOM")]
+    #[tokio::test]
+    async fn update_group_rejects_a_name_in_use_by_an_integration_group(#[case] name: &str) {
+        let Fixture { service, group_store, mut store_rx } =
+            create_service_with_group_and_snapshot_groups(&["a"], vec![group("hue", "Hue room")]).await;
+
+        let result = service.update_group("group", 0, name, ids(&["a"])).await;
+
+        assert!(matches!(result, Err(UpdateGroupError::NameAlreadyExists)), "got {result:?}");
+        let stored = group_store.list().await.unwrap();
+        assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Kitchen", 0), "the group must be unchanged");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn update_group_rejects_a_name_in_use_by_another_hearth_group_in_the_snapshot() {
+        let other = hearth_group("other", "Other", 0);
+        let Fixture { service, mut store_rx, .. } =
+            create_service_with_group_and_snapshot_groups(&["a"], vec![other]).await;
+
+        let result = service.update_group("group", 0, "other", ids(&["a"])).await;
+
+        assert!(matches!(result, Err(UpdateGroupError::NameAlreadyExists)), "got {result:?}");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 

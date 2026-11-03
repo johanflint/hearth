@@ -71,7 +71,7 @@ mod tests {
     use crate::api::groups::router;
     use crate::api::test_support::{body_json, create_state_with_store_tx};
     use crate::database::Database;
-    use crate::domain::Event;
+    use crate::domain::{Event, Group, GroupOwner};
     use crate::group_store::{GroupStore, StoredGroup};
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
@@ -92,9 +92,35 @@ mod tests {
     /// Creates a state with a stored group "kitchen" named "Kitchen" with device "a".
     /// Bind `store_rx`: dropping it, e.g. by leaving it out with `..`, makes the store unavailable.
     async fn create_state(device_ids: &[&str]) -> Fixture {
+        create_state_with_groups(device_ids, vec![]).await
+    }
+
+    fn integration_group() -> Group {
+        Group {
+            id: "hue".to_string(),
+            name: "Hue room".to_string(),
+            device_ids: BTreeSet::from(["a".to_string()]),
+            revision: 0,
+            owner: GroupOwner::Integration,
+            external_id: None,
+        }
+    }
+
+    /// Like `create_state`, with the stored group also in the snapshot next to the other groups
+    async fn create_state_with_groups(device_ids: &[&str], other_groups: Vec<Group>) -> Fixture {
         let devices: HashMap<_, _> =
             device_ids.iter().map(|id| (id.to_string(), Arc::new(DeviceBuilder::new(id).build()))).collect();
-        let snapshot = StoreSnapshot { devices: Arc::new(devices), ..Default::default() };
+        let kitchen = Group {
+            id: "kitchen".to_string(),
+            name: "Kitchen".to_string(),
+            device_ids: BTreeSet::from(["a".to_string()]),
+            revision: 0,
+            owner: GroupOwner::Hearth,
+            external_id: None,
+        };
+        let groups: HashMap<_, _> =
+            other_groups.into_iter().chain([kitchen]).map(|group| (group.id.clone(), Arc::new(group))).collect();
+        let snapshot = StoreSnapshot { devices: Arc::new(devices), groups: Arc::new(groups), ..Default::default() };
         let (store_tx, store_rx) = mpsc::channel(8);
         let (state, database) = create_state_with_store_tx(snapshot, store_tx);
         GroupStore::new(database.clone())
@@ -223,6 +249,30 @@ mod tests {
         let stored = stored_groups(database).await;
         assert!(stored.iter().any(|group| group.id == "kitchen" && group.name == "Kitchen" && group.revision == 0));
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn update_group_returns_409_conflict_for_a_name_in_use_by_an_integration_group() {
+        let Fixture { state, database, mut store_rx } =
+            create_state_with_groups(&["a"], vec![integration_group()]).await;
+
+        let response =
+            call_update_group(state, "kitchen", r#"{"baseRevision":0,"name":"hue ROOM","deviceIds":["a"]}"#).await;
+
+        assert_error(response, StatusCode::CONFLICT, "groupNameAlreadyExists").await;
+        assert_unchanged(database).await;
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn update_group_allows_the_group_to_keep_its_own_name_when_it_is_in_the_store() {
+        let Fixture { state, store_rx: _store_rx, .. } = create_state_with_groups(&["a"], vec![]).await;
+
+        let response =
+            call_update_group(state, "kitchen", r#"{"baseRevision":0,"name":"KITCHEN","deviceIds":["a"]}"#).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_json(response).await["name"], "KITCHEN");
     }
 
     #[tokio::test]
