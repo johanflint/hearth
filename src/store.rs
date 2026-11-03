@@ -248,13 +248,14 @@ impl Store {
                 gauge!(Metric::StoreGroupCount.name()).set(self.groups.len() as f64);
                 None
             }
-            Event::GroupChanged(GroupChanged { id, name, device_ids, external_id }) => {
+            Event::GroupChanged(GroupChanged { id, name, device_ids, revision, external_id }) => {
                 let group = match self.groups.get(&id) {
                     Some(existing) => {
                         let existing = Group::clone(existing);
                         Group {
                             name: name.unwrap_or(existing.name),
                             device_ids: device_ids.unwrap_or(existing.device_ids),
+                            revision: revision.unwrap_or(existing.revision),
                             external_id: external_id.or(existing.external_id),
                             ..existing
                         }
@@ -440,6 +441,76 @@ mod tests {
         assert_eq!(update.snapshot.groups.len(), 2);
         assert_eq!(update.snapshot.groups["hearth"].owner, GroupOwner::Hearth);
         assert_eq!(update.snapshot.groups["hue"].owner, GroupOwner::Integration);
+    }
+
+    fn group_changed_with_revision(id: &str, revision: u64) -> Event {
+        Event::GroupChanged(GroupChanged {
+            id: id.to_string(),
+            name: None,
+            device_ids: None,
+            revision: Some(revision),
+            external_id: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn group_changed_with_a_revision_updates_the_revision_of_an_existing_group() {
+        let (tx, mut reactive_rx) = start_store_with_groups(vec![hearth_group("group", "Group", &["a"])]);
+
+        tx.send(group_changed_with_revision("group", 3)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let expected = Group { revision: 3, ..hearth_group("group", "Group", &["a"]) };
+        assert_eq!(*update.snapshot.groups["group"], expected);
+    }
+
+    #[tokio::test]
+    async fn group_changed_without_a_revision_keeps_the_existing_revision() {
+        let initial = Group { revision: 2, ..hearth_group("group", "Group", &["a"]) };
+        let (tx, mut reactive_rx) = start_store_with_groups(vec![initial]);
+
+        tx.send(group_changed("group", Some("Renamed"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.groups["group"].revision, 2);
+        assert_eq!(update.snapshot.groups["group"].name, "Renamed");
+    }
+
+    #[tokio::test]
+    async fn group_changed_ignores_the_revision_of_an_unknown_group() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::GroupChanged(GroupChanged {
+            id: "group".to_string(),
+            name: Some("Group".to_string()),
+            device_ids: Some(BTreeSet::from(["a".to_string()])),
+            revision: Some(5),
+            external_id: None,
+        }))
+        .await
+        .unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.groups["group"].revision, 0);
+    }
+
+    #[tokio::test]
+    async fn group_changed_with_a_revision_applies_the_name_and_devices_too() {
+        let (tx, mut reactive_rx) = start_store_with_groups(vec![hearth_group("group", "Group", &["a"])]);
+
+        tx.send(Event::GroupChanged(GroupChanged {
+            id: "group".to_string(),
+            name: Some("Renamed".to_string()),
+            device_ids: Some(BTreeSet::from(["b".to_string(), "c".to_string()])),
+            revision: Some(1),
+            external_id: None,
+        }))
+        .await
+        .unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let expected = Group { revision: 1, ..hearth_group("group", "Renamed", &["b", "c"]) };
+        assert_eq!(*update.snapshot.groups["group"], expected);
     }
 
     #[tokio::test]
@@ -647,6 +718,7 @@ mod tests {
             id: id.to_string(),
             name: name.map(str::to_string),
             device_ids: device_ids.map(|ids| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>()),
+            revision: None,
             external_id: None,
         })
     }
@@ -656,6 +728,7 @@ mod tests {
             id: id.to_string(),
             name: None,
             device_ids: None,
+            revision: None,
             external_id: Some(external_id.to_string()),
         })
     }
@@ -680,6 +753,7 @@ mod tests {
             id: "group".to_string(),
             name: Some("Group".to_string()),
             device_ids: Some(BTreeSet::from(["a".to_string(), "b".to_string()])),
+            revision: None,
             external_id: Some("grouped-light".to_string()),
         }))
         .await
