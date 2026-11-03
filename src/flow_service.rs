@@ -44,7 +44,7 @@ impl FlowService {
     }
 
     pub async fn create_flow(&self, document: serde_json::Value) -> Result<CreatedFlow, CreateFlowError> {
-        let flow = self.validate(&document).await?;
+        let flow = self.validate(&document)?;
         let permit = self.reserve_scheduler_permit().await.ok_or(CreateFlowError::SchedulerUnavailable)?;
 
         let flow_registry = Arc::clone(&self.flow_registry);
@@ -64,7 +64,7 @@ impl FlowService {
         base_revision: u64,
         document: serde_json::Value,
     ) -> Result<u64, UpdateFlowError> {
-        let flow = self.validate(&document).await?;
+        let flow = self.validate(&document)?;
         if id != flow.id() {
             return Err(UpdateFlowError::IdMismatch { id: id.to_string(), flow_id: flow.id().to_string() });
         }
@@ -112,7 +112,7 @@ impl FlowService {
         .await
     }
 
-    pub async fn validate(&self, document: &serde_json::Value) -> Result<Flow, ValidateError> {
+    pub fn validate(&self, document: &serde_json::Value) -> Result<Flow, ValidateError> {
         // Structural validation
         let flow = flow_loader::from_json(SerializedFlow::deserialize(document)?)?;
 
@@ -440,60 +440,60 @@ mod tests {
             vec![VersionedPreset { preset: Arc::new(preset), revision: 0 }]
         }
 
-        #[tokio::test]
-        async fn accepts_a_valid_flow() {
+        #[test]
+        fn accepts_a_valid_flow() {
             let Fixture { service, .. } = create_service(FlowRegistry::new(vec![]));
 
-            let result = service.validate(&flow_document()).await;
+            let result = service.validate(&flow_document());
 
             assert!(result.is_ok(), "got {result:?}");
         }
 
-        #[tokio::test]
-        async fn accepts_a_known_preset() {
+        #[test]
+        fn accepts_a_known_preset() {
             let Fixture { service, .. } = create_service_with_presets(FlowRegistry::new(vec![]), presets());
 
-            let result = service.validate(&flow_document_with_preset_trigger("known")).await;
+            let result = service.validate(&flow_document_with_preset_trigger("known"));
 
             assert!(result.is_ok(), "got {result:?}");
         }
 
-        #[tokio::test]
-        async fn reports_an_unknown_preset() {
+        #[test]
+        fn reports_an_unknown_preset() {
             let Fixture { service, .. } = create_service_with_presets(FlowRegistry::new(vec![]), presets());
 
-            let result = service.validate(&flow_document_with_preset_trigger("unknown")).await;
+            let result = service.validate(&flow_document_with_preset_trigger("unknown"));
 
             let Err(ValidateError::ValidationFailed(error)) = result else { panic!("got {result:?}") };
             assert_eq!(error.issues(), [Problem::PresetNotFound { id: "unknown".to_string() }.at(Location::Trigger)]);
         }
 
-        #[tokio::test]
-        async fn accepts_a_known_group() {
+        #[test]
+        fn accepts_a_known_group() {
             let Fixture { service, .. } =
                 create_service_with_snapshot(FlowRegistry::new(vec![]), snapshot_with_group("room"));
 
-            let result = service.validate(&flow_document_with_group_action("room")).await;
+            let result = service.validate(&flow_document_with_group_action("room"));
 
             assert!(result.is_ok(), "got {result:?}");
         }
 
-        #[tokio::test]
-        async fn reports_an_unknown_group() {
+        #[test]
+        fn reports_an_unknown_group() {
             let Fixture { service, .. } =
                 create_service_with_snapshot(FlowRegistry::new(vec![]), snapshot_with_group("room"));
 
-            let result = service.validate(&flow_document_with_group_action("unknown")).await;
+            let result = service.validate(&flow_document_with_group_action("unknown"));
 
             let Err(ValidateError::ValidationFailed(error)) = result else { panic!("got {result:?}") };
             assert_eq!(error.issues(), [unknown_group_issue("unknown")]);
         }
 
-        #[tokio::test]
-        async fn rejects_a_structurally_invalid_flow() {
+        #[test]
+        fn rejects_a_structurally_invalid_flow() {
             let Fixture { service, .. } = create_service(FlowRegistry::new(vec![]));
 
-            let result = service.validate(&invalid_flow_document()).await;
+            let result = service.validate(&invalid_flow_document());
 
             assert!(matches!(result, Err(ValidateError::InvalidFlow(_))), "got {result:?}");
         }

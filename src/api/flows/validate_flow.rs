@@ -10,7 +10,7 @@ use tracing::info;
 
 pub(super) async fn validate_flow(State(state): State<ApiState>, body: Bytes) -> Result<Response, Response> {
     let request: ValidateFlowRequest = parse_request(&body)?;
-    state.flow_service.validate(&request.flow).await.map_err(validate_error_response)?;
+    state.flow_service.validate(&request.flow).map_err(validate_error_response)?;
     info!("📥 Received request to validate flow... OK");
 
     Ok(StatusCode::OK.into_response())
