@@ -1,7 +1,7 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
-use crate::api::flows::flow_error::flow_factory_error_response;
-use crate::api::parse_request::{invalid_json, parse_request};
+use crate::api::flows::flow_error::validate_error_response;
+use crate::api::parse_request::parse_request;
 use crate::flow_service::{CreateFlowError, CreatedFlow};
 use axum::Json;
 use axum::body::Bytes;
@@ -36,8 +36,7 @@ struct CreateFlowResponse {
 
 fn create_error_response(err: CreateFlowError) -> Response {
     match err {
-        CreateFlowError::InvalidDocument(err) => invalid_json(err),
-        CreateFlowError::InvalidFlow(err) => flow_factory_error_response(err),
+        CreateFlowError::Invalid(err) => validate_error_response(err),
         CreateFlowError::SchedulerUnavailable => {
             error!("❌ Scheduler is unavailable");
             (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("schedulerUnavailable")))
@@ -62,7 +61,8 @@ mod tests {
     use super::*;
     use crate::api::flows::router;
     use crate::api::test_support::{
-        Fixture, INVALID_FLOW_JSON, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document,
+        Fixture, INVALID_FLOW_JSON, UNKNOWN_GROUP_FLOW_JSON, VALID_FLOW_ID, VALID_FLOW_JSON,
+        assert_unknown_group_validation_failure, body_json, create_state, valid_flow_document,
     };
     use crate::flow_engine::SchedulerCommand;
     use crate::flow_registry::FlowRegistry;
@@ -136,6 +136,19 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body_json(response).await["code"], "missingEndNode");
         assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+    }
+
+    #[tokio::test]
+    async fn create_flow_returns_422_validation_failed_for_a_flow_with_an_unknown_group() {
+        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_state(FlowRegistry::new(vec![]));
+
+        let response = call_create_flow(state, &create_request(UNKNOWN_GROUP_FLOW_JSON)).await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_unknown_group_validation_failure(&body_json(response).await);
+        assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(flow_registry.by_id("flow").is_none(), "nothing must be registered");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
     }
 

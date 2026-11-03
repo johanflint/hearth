@@ -25,6 +25,25 @@ pub(super) const VALID_FLOW_ID: &str = "01K7KK6H5R7Y72QJEJSJQCKMRQ";
 pub(super) const VALID_FLOW_JSON: &str = include_str!("../../tests/resources/flows/logFlow.json");
 pub(super) const INVALID_FLOW_JSON: &str = include_str!("../../tests/resources/flows/invalid/missingEndNodeFlow.json");
 
+/// A flow whose only action controls a group that doesn't exist in the default snapshot
+pub(super) const UNKNOWN_GROUP_FLOW_JSON: &str = r#"{"id":"flow","name":"Test","nodes":[
+    {"id":"startNode","type":"startNode","outgoingNode":"groupNode"},
+    {"id":"groupNode","type":"actionNode","outgoingNode":"endNode","action":{"type":"controlGroup","groupId":"unknown","property":{}}},
+    {"id":"endNode","type":"endNode"}
+]}"#;
+
+pub(super) fn assert_unknown_group_validation_failure(body: &serde_json::Value) {
+    assert_eq!(body["code"], "validationFailed");
+    assert_eq!(
+        body["issues"],
+        serde_json::json!([{
+            "location": { "type": "node", "nodeId": "groupNode" },
+            "code": "unknownGroup",
+            "message": "unknown group 'unknown'"
+        }])
+    );
+}
+
 pub(super) fn valid_flow_document() -> serde_json::Value {
     serde_json::from_str(VALID_FLOW_JSON).expect("valid flow JSON")
 }

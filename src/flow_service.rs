@@ -44,7 +44,7 @@ impl FlowService {
     }
 
     pub async fn create_flow(&self, document: serde_json::Value) -> Result<CreatedFlow, CreateFlowError> {
-        let flow = validate_flow_document::<CreateFlowError>(&document)?;
+        let flow = self.validate(&document).await?;
         let permit = self.reserve_scheduler_permit().await.ok_or(CreateFlowError::SchedulerUnavailable)?;
 
         let flow_registry = Arc::clone(&self.flow_registry);
@@ -64,7 +64,7 @@ impl FlowService {
         base_revision: u64,
         document: serde_json::Value,
     ) -> Result<u64, UpdateFlowError> {
-        let flow = validate_flow_document::<UpdateFlowError>(&document)?;
+        let flow = self.validate(&document).await?;
         if id != flow.id() {
             return Err(UpdateFlowError::IdMismatch { id: id.to_string(), flow_id: flow.id().to_string() });
         }
@@ -112,16 +112,16 @@ impl FlowService {
         .await
     }
 
-    pub async fn validate(&self, document: serde_json::Value) -> Result<(), ValidateError> {
+    pub async fn validate(&self, document: &serde_json::Value) -> Result<Flow, ValidateError> {
         // Structural validation
-        let flow = validate_flow_document::<ValidateError>(&document)?;
+        let flow = flow_loader::from_json(SerializedFlow::deserialize(document)?)?;
 
         let store_snapshot = self.snapshot_rx.borrow().clone(); // Cheap: clones the Arc<DeviceMap>
 
         // Semantic validation
         validate(&flow, &store_snapshot, &self.preset_registry).map_err(ValidateError::ValidationFailed)?;
 
-        Ok(())
+        Ok(flow)
     }
 
     /// Reserves capacity before mutating anything, so an unavailable scheduler is rejected
@@ -129,14 +129,6 @@ impl FlowService {
     async fn reserve_scheduler_permit(&self) -> Option<OwnedPermit<SchedulerCommand>> {
         self.scheduler_tx.clone().reserve_owned().await.ok()
     }
-}
-
-pub(super) fn validate_flow_document<E>(document: &serde_json::Value) -> Result<Flow, E>
-where
-    E: From<serde_json::Error> + From<FlowFactoryError>,
-{
-    let serialized_flow = SerializedFlow::deserialize(document)?;
-    Ok(flow_loader::from_json(serialized_flow)?)
 }
 
 /// Spawned so a client disconnect can't cancel the request between the store write and the registry update,
@@ -192,10 +184,8 @@ pub struct CreatedFlow {
 
 #[derive(Debug, Error)]
 pub enum CreateFlowError {
-    #[error("invalid flow document: {0}")]
-    InvalidDocument(#[from] serde_json::Error),
     #[error(transparent)]
-    InvalidFlow(#[from] FlowFactoryError),
+    Invalid(#[from] ValidateError),
     #[error("scheduler is unavailable")]
     SchedulerUnavailable,
     #[error("flow already exists")]
@@ -217,10 +207,8 @@ impl From<InsertError> for CreateFlowError {
 
 #[derive(Debug, Error)]
 pub enum UpdateFlowError {
-    #[error("invalid flow document: {0}")]
-    InvalidDocument(#[from] serde_json::Error),
     #[error(transparent)]
-    InvalidFlow(#[from] FlowFactoryError),
+    Invalid(#[from] ValidateError),
     #[error("flow id '{flow_id}' does not match id '{id}'")]
     IdMismatch { id: String, flow_id: String },
     #[error("scheduler is unavailable")]
@@ -291,8 +279,9 @@ pub enum ValidateError {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use crate::domain::{Location, Preset, Problem, Value, VersionedPreset};
+    use crate::domain::{Group, GroupOwner, Location, Preset, Problem, ValidationIssue, Value, VersionedPreset};
     use serde_json::json;
+    use std::collections::{BTreeSet, HashMap};
     use std::path::Path;
     use tokio::sync::{mpsc, watch};
 
@@ -316,7 +305,36 @@ mod tests {
     }
 
     fn flow() -> Flow {
-        validate_flow_document::<CreateFlowError>(&flow_document()).expect("valid flow")
+        flow_loader::from_json(SerializedFlow::deserialize(&flow_document()).expect("valid document"))
+            .expect("valid flow")
+    }
+
+    /// A flow whose only action controls the group
+    fn flow_document_with_group_action(group_id: &str) -> serde_json::Value {
+        json!({"id":"flow","name":"Test","nodes":[
+            {"id":"startNode","type":"startNode","outgoingNode":"groupNode"},
+            {"id":"groupNode","type":"actionNode","outgoingNode":"endNode","action":{"type":"controlGroup","groupId":group_id,"property":{}}},
+            {"id":"endNode","type":"endNode"}
+        ]})
+    }
+
+    fn unknown_group_issue(group_id: &str) -> ValidationIssue {
+        Problem::UnknownGroup { group_id: group_id.to_string() }.at(Location::Node { node_id: "groupNode".to_string() })
+    }
+
+    fn snapshot_with_group(group_id: &str) -> StoreSnapshot {
+        let group = Group {
+            id: group_id.to_string(),
+            name: "Room".to_string(),
+            device_ids: BTreeSet::new(),
+            revision: 0,
+            owner: GroupOwner::Hearth,
+            external_id: None,
+        };
+        StoreSnapshot {
+            groups: Arc::new(HashMap::from([(group_id.to_string(), Arc::new(group))])),
+            ..Default::default()
+        }
     }
 
     fn create_service(flow_registry: FlowRegistry) -> Fixture {
@@ -324,12 +342,24 @@ mod tests {
     }
 
     fn create_service_with_presets(flow_registry: FlowRegistry, presets: Vec<VersionedPreset>) -> Fixture {
+        create_service_with(flow_registry, presets, StoreSnapshot::default())
+    }
+
+    fn create_service_with_snapshot(flow_registry: FlowRegistry, snapshot: StoreSnapshot) -> Fixture {
+        create_service_with(flow_registry, vec![], snapshot)
+    }
+
+    fn create_service_with(
+        flow_registry: FlowRegistry,
+        presets: Vec<VersionedPreset>,
+        snapshot: StoreSnapshot,
+    ) -> Fixture {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
         let flow_store = Arc::new(FlowStore::new(database));
         let flow_registry = Arc::new(flow_registry);
         let preset_registry = Arc::new(PresetRegistry::new(presets));
         let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
-        let (_, snapshot_rx) = watch::channel(StoreSnapshot::default());
+        let (_, snapshot_rx) = watch::channel(snapshot);
 
         let service = FlowService::new(
             Arc::clone(&flow_store),
@@ -414,7 +444,7 @@ mod tests {
         async fn accepts_a_valid_flow() {
             let Fixture { service, .. } = create_service(FlowRegistry::new(vec![]));
 
-            let result = service.validate(flow_document()).await;
+            let result = service.validate(&flow_document()).await;
 
             assert!(result.is_ok(), "got {result:?}");
         }
@@ -423,7 +453,7 @@ mod tests {
         async fn accepts_a_known_preset() {
             let Fixture { service, .. } = create_service_with_presets(FlowRegistry::new(vec![]), presets());
 
-            let result = service.validate(flow_document_with_preset_trigger("known")).await;
+            let result = service.validate(&flow_document_with_preset_trigger("known")).await;
 
             assert!(result.is_ok(), "got {result:?}");
         }
@@ -432,17 +462,38 @@ mod tests {
         async fn reports_an_unknown_preset() {
             let Fixture { service, .. } = create_service_with_presets(FlowRegistry::new(vec![]), presets());
 
-            let result = service.validate(flow_document_with_preset_trigger("unknown")).await;
+            let result = service.validate(&flow_document_with_preset_trigger("unknown")).await;
 
             let Err(ValidateError::ValidationFailed(error)) = result else { panic!("got {result:?}") };
             assert_eq!(error.issues(), [Problem::PresetNotFound { id: "unknown".to_string() }.at(Location::Trigger)]);
         }
 
         #[tokio::test]
+        async fn accepts_a_known_group() {
+            let Fixture { service, .. } =
+                create_service_with_snapshot(FlowRegistry::new(vec![]), snapshot_with_group("room"));
+
+            let result = service.validate(&flow_document_with_group_action("room")).await;
+
+            assert!(result.is_ok(), "got {result:?}");
+        }
+
+        #[tokio::test]
+        async fn reports_an_unknown_group() {
+            let Fixture { service, .. } =
+                create_service_with_snapshot(FlowRegistry::new(vec![]), snapshot_with_group("room"));
+
+            let result = service.validate(&flow_document_with_group_action("unknown")).await;
+
+            let Err(ValidateError::ValidationFailed(error)) = result else { panic!("got {result:?}") };
+            assert_eq!(error.issues(), [unknown_group_issue("unknown")]);
+        }
+
+        #[tokio::test]
         async fn rejects_a_structurally_invalid_flow() {
             let Fixture { service, .. } = create_service(FlowRegistry::new(vec![]));
 
-            let result = service.validate(invalid_flow_document()).await;
+            let result = service.validate(&invalid_flow_document()).await;
 
             assert!(matches!(result, Err(ValidateError::InvalidFlow(_))), "got {result:?}");
         }
@@ -486,7 +537,10 @@ mod tests {
 
             let result = service.create_flow(json!({"id": "flow"})).await;
 
-            assert!(matches!(result, Err(CreateFlowError::InvalidDocument(_))), "got {result:?}");
+            assert!(
+                matches!(result, Err(CreateFlowError::Invalid(ValidateError::InvalidDocument(_)))),
+                "got {result:?}"
+            );
             assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
         }
 
@@ -501,11 +555,43 @@ mod tests {
             let result = service.create_flow(document).await;
 
             assert!(
-                matches!(result, Err(CreateFlowError::InvalidFlow(FlowFactoryError::MissingEndNode))),
+                matches!(
+                    result,
+                    Err(CreateFlowError::Invalid(ValidateError::InvalidFlow(FlowFactoryError::MissingEndNode)))
+                ),
                 "got {result:?}"
             );
             assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
             assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+        }
+
+        #[tokio::test]
+        async fn stores_a_flow_with_a_known_group() {
+            let Fixture { service, flow_store, scheduler_rx: _scheduler_rx, .. } =
+                create_service_with_snapshot(FlowRegistry::new(vec![]), snapshot_with_group("room"));
+
+            let result = service.create_flow(flow_document_with_group_action("room")).await;
+
+            assert!(result.is_ok(), "got {result:?}");
+            assert!(flow_store.by_id("flow").await.unwrap().is_some(), "flow must be stored");
+        }
+
+        #[tokio::test]
+        async fn returns_validation_failed_for_a_flow_with_an_unknown_group() {
+            let Fixture { service, flow_store, flow_registry, mut scheduler_rx } =
+                create_service_with_snapshot(FlowRegistry::new(vec![]), snapshot_with_group("room"));
+            let capacity = service.scheduler_tx.capacity();
+
+            let result = service.create_flow(flow_document_with_group_action("unknown")).await;
+
+            let Err(CreateFlowError::Invalid(ValidateError::ValidationFailed(error))) = result else {
+                panic!("got {result:?}")
+            };
+            assert_eq!(error.issues(), [unknown_group_issue("unknown")]);
+            assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
+            assert!(flow_registry.by_id("flow").is_none(), "registry must be unchanged");
+            assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
+            assert_eq!(service.scheduler_tx.capacity(), capacity, "no permit must be held");
         }
 
         #[tokio::test]
@@ -584,7 +670,10 @@ mod tests {
 
             let result = fixture.service.update_flow("flow", 0, json!({"id": "flow"})).await;
 
-            assert!(matches!(result, Err(UpdateFlowError::InvalidDocument(_))), "got {result:?}");
+            assert!(
+                matches!(result, Err(UpdateFlowError::Invalid(ValidateError::InvalidDocument(_)))),
+                "got {result:?}"
+            );
             assert_unchanged(&mut fixture, 0).await;
         }
 
@@ -595,9 +684,25 @@ mod tests {
             let result = fixture.service.update_flow("flow", 0, invalid_flow_document()).await;
 
             assert!(
-                matches!(result, Err(UpdateFlowError::InvalidFlow(FlowFactoryError::MissingEndNode))),
+                matches!(
+                    result,
+                    Err(UpdateFlowError::Invalid(ValidateError::InvalidFlow(FlowFactoryError::MissingEndNode)))
+                ),
                 "got {result:?}"
             );
+            assert_unchanged(&mut fixture, 0).await;
+        }
+
+        #[tokio::test]
+        async fn returns_validation_failed_for_a_flow_with_an_unknown_group() {
+            let mut fixture = create_seeded_service().await;
+
+            let result = fixture.service.update_flow("flow", 0, flow_document_with_group_action("unknown")).await;
+
+            let Err(UpdateFlowError::Invalid(ValidateError::ValidationFailed(error))) = result else {
+                panic!("got {result:?}")
+            };
+            assert_eq!(error.issues(), [unknown_group_issue("unknown")]);
             assert_unchanged(&mut fixture, 0).await;
         }
 
