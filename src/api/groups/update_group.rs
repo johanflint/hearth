@@ -73,7 +73,7 @@ mod tests {
     use super::*;
     use crate::api::groups::router;
     use crate::api::test_support::{body_json, create_state_with_store_tx};
-    use crate::database::Database;
+    use crate::database::{Database, DatabaseError};
     use crate::domain::{Event, Group, GroupOwner};
     use crate::group_store::{GroupStore, StoredGroup};
     use crate::store::StoreSnapshot;
@@ -289,6 +289,21 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(body_json(response).await["name"], "KITCHEN");
+    }
+
+    #[tokio::test]
+    async fn update_group_returns_500_internal_server_error_when_the_database_fails() {
+        let Fixture { state, database, mut store_rx } = create_state(&["a"]).await;
+        database
+            .call(|conn| conn.execute("DROP TABLE groups", []).map_err(DatabaseError::from))
+            .await
+            .expect("drop the table");
+
+        let response =
+            call_update_group(state, "kitchen", r#"{"baseRevision":0,"name":"Hall","deviceIds":["a"]}"#).await;
+
+        assert_error(response, StatusCode::INTERNAL_SERVER_ERROR, "storageError").await;
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]

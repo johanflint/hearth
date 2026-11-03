@@ -286,6 +286,20 @@ mod tests {
         Fixture { service, group_store, store_rx }
     }
 
+    /// A service whose `groups` table is gone, so every database call fails
+    async fn create_service_with_broken_database(snapshot: StoreSnapshot) -> (GroupService, mpsc::Receiver<Event>) {
+        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
+        let (store_tx, store_rx) = mpsc::channel(8);
+        let (_tx, rx) = watch::channel(snapshot);
+        let flow_registry = Arc::new(FlowRegistry::new(vec![]));
+        let service = GroupService::new(rx, Arc::new(GroupStore::new(database.clone())), flow_registry, store_tx);
+        database
+            .call(|conn| conn.execute("DROP TABLE groups", []).map_err(crate::database::DatabaseError::from))
+            .await
+            .unwrap();
+        (service, store_rx)
+    }
+
     fn snapshot_with_devices(device_ids: &[&str]) -> StoreSnapshot {
         let devices: HashMap<_, _> =
             device_ids.iter().map(|id| (id.to_string(), Arc::new(DeviceBuilder::new(id).build()))).collect();
@@ -521,6 +535,16 @@ mod tests {
         assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
     }
 
+    #[tokio::test]
+    async fn create_group_returns_an_internal_error_when_the_database_fails() {
+        let (service, mut store_rx) = create_service_with_broken_database(snapshot_with_devices(&["a"])).await;
+
+        let result = service.create_group("group", "Kitchen", ids(&["a"])).await;
+
+        assert!(matches!(result, Err(CreateGroupError::Internal(_))), "got {result:?}");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
     /// A service with a stored group "group" named "Kitchen" with device "a", and the given devices in the snapshot
     async fn create_service_with_group(device_ids: &[&str]) -> Fixture {
         create_service_with_group_and_snapshot_groups(device_ids, vec![]).await
@@ -735,6 +759,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_group_returns_an_internal_error_when_the_database_fails() {
+        let (service, mut store_rx) = create_service_with_broken_database(snapshot_with_devices(&["a"])).await;
+
+        let result = service.update_group("group", 0, "Hall", ids(&["a"])).await;
+
+        assert!(matches!(result, Err(UpdateGroupError::Internal(_))), "got {result:?}");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
     async fn update_group_fails_without_storing_when_the_store_is_gone() {
         let Fixture { service, group_store, store_rx } = create_service_with_group(&["a"]).await;
         drop(store_rx);
@@ -870,15 +904,8 @@ mod tests {
 
     #[tokio::test]
     async fn delete_group_returns_an_internal_error_when_the_database_fails() {
-        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
-        let (store_tx, mut store_rx) = mpsc::channel(8);
-        let (_tx, rx) = watch::channel(snapshot(vec![hearth_group("group", "Kitchen", 0)]));
-        let flow_registry = Arc::new(FlowRegistry::new(vec![]));
-        let service = GroupService::new(rx, Arc::new(GroupStore::new(database.clone())), flow_registry, store_tx);
-        database
-            .call(|conn| conn.execute("DROP TABLE groups", []).map_err(crate::database::DatabaseError::from))
-            .await
-            .unwrap();
+        let (service, mut store_rx) =
+            create_service_with_broken_database(snapshot(vec![hearth_group("group", "Kitchen", 0)])).await;
 
         let result = service.delete_group("group", 0).await;
 
@@ -908,6 +935,41 @@ mod tests {
         assert_eq!(summaries, [("a", "Flow A", 0), ("b", "Flow B", 2)]);
         assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_group_returns_not_found_before_checking_the_flows() {
+        let flows = vec![flow_using_groups("a", "Flow A", 0, &["unknown"])];
+        let Fixture { service, .. } = create_service_with_flows(snapshot(vec![]), flows);
+
+        let result = service.delete_group("unknown", 0).await;
+
+        assert!(matches!(result, Err(DeleteGroupError::NotFound)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_group_rejects_a_group_owned_by_an_integration_before_checking_the_flows() {
+        let flows = vec![flow_using_groups("a", "Flow A", 0, &["hue"])];
+        let Fixture { service, .. } = create_service_with_flows(snapshot(vec![group("hue", "Hue room")]), flows);
+
+        let result = service.delete_group("hue", 0).await;
+
+        assert!(matches!(result, Err(DeleteGroupError::NotOwned)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_group_returns_a_revision_conflict_before_checking_the_flows() {
+        let flows = vec![flow_using_groups("a", "Flow A", 0, &["group"])];
+        let Fixture { service, group_store, .. } =
+            create_service_with_flows(snapshot(vec![hearth_group("group", "Kitchen", 0)]), flows);
+        group_store.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
+
+        let result = service.delete_group("group", 1).await;
+
+        assert!(
+            matches!(result, Err(DeleteGroupError::RevisionConflict { base_revision: 1, current_revision: 0 })),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]

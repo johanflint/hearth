@@ -63,7 +63,7 @@ mod tests {
     use super::*;
     use crate::api::groups::router;
     use crate::api::test_support::{body_json, create_state_with_store_tx};
-    use crate::database::Database;
+    use crate::database::{Database, DatabaseError};
     use crate::domain::{Event, Group, GroupOwner};
     use crate::group_store::GroupStore;
     use crate::store::StoreSnapshot;
@@ -217,6 +217,20 @@ mod tests {
         assert_eq!(body["code"], "unknownDevices");
         assert_eq!(body["message"], "unknown device ids: 'a, z'");
         assert!(stored_group_ids(database).await.is_empty(), "nothing must be stored");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn create_group_returns_500_internal_server_error_when_the_database_fails() {
+        let Fixture { state, database, mut store_rx } = create_state(vec![], &["a"]);
+        database
+            .call(|conn| conn.execute("DROP TABLE groups", []).map_err(DatabaseError::from))
+            .await
+            .expect("drop the table");
+
+        let response = call_create_group(state, r#"{"id":"kitchen","name":"Kitchen","deviceIds":["a"]}"#).await;
+
+        assert_error(response, StatusCode::INTERNAL_SERVER_ERROR, "storageError").await;
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
