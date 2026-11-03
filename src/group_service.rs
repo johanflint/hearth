@@ -1,5 +1,6 @@
 use crate::domain::{Event, Group, GroupChanged, GroupOwner};
-use crate::group_store::{GroupStore, GroupStoreError, InsertError, StoredGroup, UpdateError};
+use crate::flow_registry::FlowSummary;
+use crate::group_store::{DeleteError, GroupStore, GroupStoreError, InsertError, StoredGroup, UpdateError};
 use crate::store::StoreSnapshot;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -104,6 +105,23 @@ impl GroupService {
         }));
         Ok(stored_group)
     }
+
+    pub async fn delete_group(&self, id: &str, base_revision: u64) -> Result<(), DeleteGroupError> {
+        let store_snapshot = self.snapshot_rx.borrow().clone(); // Cheap
+        let group = store_snapshot.groups.get(id).ok_or(DeleteGroupError::NotFound)?;
+        if group.owner == GroupOwner::Integration {
+            return Err(DeleteGroupError::NotOwned);
+        }
+        if group.revision != base_revision {
+            return Err(DeleteGroupError::RevisionConflict { base_revision, current_revision: group.revision });
+        }
+
+        let permit = self.store_tx.reserve().await.map_err(|_| DeleteGroupError::StoreUnavailable)?;
+        self.group_store.delete(id, base_revision).await?;
+        permit.send(Event::GroupRemoved { group_id: id.to_string() });
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -157,6 +175,36 @@ impl From<UpdateError> for UpdateGroupError {
             }
             UpdateError::NameAlreadyExists => Self::NameAlreadyExists,
             UpdateError::Store(err) => Self::Internal(err),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum DeleteGroupError {
+    #[error("group in use by {} flow(s)", .0.len())]
+    InUse(Vec<FlowSummary>),
+    #[error("group not found")]
+    NotFound,
+    #[error("group not owned")]
+    NotOwned,
+    #[error(
+        "revision conflict: delete is based on revision {base_revision}, but the current revision is {current_revision}"
+    )]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error("store is unavailable")]
+    StoreUnavailable,
+    #[error(transparent)]
+    Internal(#[from] GroupStoreError),
+}
+
+impl From<DeleteError> for DeleteGroupError {
+    fn from(err: DeleteError) -> Self {
+        match err {
+            DeleteError::NotFound => Self::NotFound,
+            DeleteError::RevisionConflict { base_revision, current_revision } => {
+                Self::RevisionConflict { base_revision, current_revision }
+            }
+            DeleteError::Store(err) => Self::Internal(err),
         }
     }
 }
@@ -590,5 +638,144 @@ mod tests {
         assert!(matches!(result, Err(UpdateGroupError::StoreUnavailable)), "got {result:?}");
         let stored = group_store.list().await.unwrap();
         assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Kitchen", 0), "nothing must be stored");
+    }
+
+    fn hearth_group(id: &str, name: &str, revision: u64) -> Arc<Group> {
+        Arc::new(Group { owner: GroupOwner::Hearth, revision, ..Arc::unwrap_or_clone(group(id, name)) })
+    }
+
+    /// A service with a stored Hearth group "group" named "Kitchen" at revision 0, that is also in the snapshot
+    async fn create_service_for_delete() -> Fixture {
+        let fixture = create_service(snapshot(vec![hearth_group("group", "Kitchen", 0)]));
+        fixture.group_store.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
+        fixture
+    }
+
+    #[tokio::test]
+    async fn delete_group_removes_the_stored_group() {
+        let Fixture { service, group_store, store_rx: _store_rx } = create_service_for_delete().await;
+
+        service.delete_group("group", 0).await.unwrap();
+
+        assert!(group_store.list().await.unwrap().is_empty(), "the group must be deleted");
+    }
+
+    #[tokio::test]
+    async fn delete_group_only_removes_the_given_group() {
+        let Fixture { service, group_store, store_rx: _store_rx } = create_service_for_delete().await;
+        group_store.insert("other", "Other", &BTreeSet::new()).await.unwrap();
+
+        service.delete_group("group", 0).await.unwrap();
+
+        let stored = group_store.list().await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id, "other");
+    }
+
+    #[tokio::test]
+    async fn delete_group_sends_a_group_removed_event() {
+        let Fixture { service, mut store_rx, .. } = create_service_for_delete().await;
+
+        service.delete_group("group", 0).await.unwrap();
+
+        assert_eq!(
+            store_rx.try_recv().expect("an event was sent"),
+            Event::GroupRemoved { group_id: "group".to_string() }
+        );
+        assert!(store_rx.try_recv().is_err(), "only one event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_group_returns_not_found_for_an_unknown_id() {
+        let Fixture { service, group_store, mut store_rx } = create_service_for_delete().await;
+
+        let result = service.delete_group("unknown", 0).await;
+
+        assert!(matches!(result, Err(DeleteGroupError::NotFound)), "got {result:?}");
+        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_group_returns_not_found_when_the_group_is_in_the_snapshot_but_not_stored() {
+        let Fixture { service, mut store_rx, .. } = create_service(snapshot(vec![hearth_group("group", "Kitchen", 0)]));
+
+        let result = service.delete_group("group", 0).await;
+
+        assert!(matches!(result, Err(DeleteGroupError::NotFound)), "got {result:?}");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_group_rejects_a_group_owned_by_an_integration() {
+        let Fixture { service, mut store_rx, .. } = create_service(snapshot(vec![group("group", "Kitchen")]));
+
+        let result = service.delete_group("group", 0).await;
+
+        assert!(matches!(result, Err(DeleteGroupError::NotOwned)), "got {result:?}");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[rstest]
+    #[case::behind(1)]
+    #[case::ahead(5)]
+    #[tokio::test]
+    async fn delete_group_returns_a_revision_conflict_for_a_mismatching_base_revision(#[case] base_revision: u64) {
+        let Fixture { service, group_store, mut store_rx } = create_service_for_delete().await;
+
+        let result = service.delete_group("group", base_revision).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(DeleteGroupError::RevisionConflict { base_revision: b, current_revision: 0 }) if b == base_revision
+            ),
+            "got {result:?}"
+        );
+        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_group_returns_a_revision_conflict_when_the_snapshot_is_behind_the_database() {
+        let Fixture { service, group_store, mut store_rx } = create_service_for_delete().await;
+        group_store.update("group", 0, "Kitchen", &BTreeSet::new()).await.unwrap();
+
+        let result = service.delete_group("group", 0).await;
+
+        assert!(
+            matches!(result, Err(DeleteGroupError::RevisionConflict { base_revision: 0, current_revision: 1 })),
+            "got {result:?}"
+        );
+        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent after a failed delete");
+    }
+
+    #[tokio::test]
+    async fn delete_group_fails_without_deleting_when_the_store_is_gone() {
+        let Fixture { service, group_store, store_rx } = create_service_for_delete().await;
+        drop(store_rx);
+
+        let result = service.delete_group("group", 0).await;
+
+        assert!(matches!(result, Err(DeleteGroupError::StoreUnavailable)), "got {result:?}");
+        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+    }
+
+    #[tokio::test]
+    async fn delete_group_returns_an_internal_error_when_the_database_fails() {
+        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
+        let (store_tx, mut store_rx) = mpsc::channel(8);
+        let (_tx, rx) = watch::channel(snapshot(vec![hearth_group("group", "Kitchen", 0)]));
+        let service = GroupService::new(rx, Arc::new(GroupStore::new(database.clone())), store_tx);
+        database
+            .call(|conn| conn.execute("DROP TABLE groups", []).map_err(crate::database::DatabaseError::from))
+            .await
+            .unwrap();
+
+        let result = service.delete_group("group", 0).await;
+
+        assert!(matches!(result, Err(DeleteGroupError::Internal(_))), "got {result:?}");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 }
