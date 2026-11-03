@@ -37,6 +37,10 @@ impl GroupService {
         name: &str,
         device_ids: Vec<String>,
     ) -> Result<StoredGroup, CreateGroupError> {
+        if device_ids.is_empty() {
+            return Err(CreateGroupError::GroupEmpty);
+        }
+
         let store_snapshot = self.snapshot_rx.borrow().clone(); // Cheap
         if store_snapshot.groups.contains_key(id) {
             return Err(CreateGroupError::IdAlreadyExists);
@@ -76,6 +80,10 @@ impl GroupService {
         name: &str,
         device_ids: Vec<String>,
     ) -> Result<StoredGroup, UpdateGroupError> {
+        if device_ids.is_empty() {
+            return Err(UpdateGroupError::GroupEmpty);
+        }
+
         let snapshot = self.snapshot_rx.borrow().clone();
         let unknown_device_ids: BTreeSet<String> =
             device_ids.iter().filter(|id| !snapshot.devices.contains_key(*id)).cloned().collect();
@@ -106,6 +114,8 @@ pub enum RetrieveGroupError {
 
 #[derive(Debug, Error)]
 pub enum CreateGroupError {
+    #[error("a group must contain at least one device")]
+    GroupEmpty,
     #[error("a group with this id already exists")]
     IdAlreadyExists,
     #[error("a group with this name already exists")]
@@ -120,6 +130,8 @@ pub enum CreateGroupError {
 
 #[derive(Debug, Error)]
 pub enum UpdateGroupError {
+    #[error("a group must contain at least one device")]
+    GroupEmpty,
     #[error("unknown device ids: '{}'", device_ids.iter().map(String::as_str).collect::<Vec<_>>().join(", "))]
     UnknownDevices { device_ids: BTreeSet<String> },
     #[error("group not found")]
@@ -338,12 +350,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_group_allows_a_group_without_devices() {
-        let Fixture { service, store_rx: _store_rx, .. } = create_service(StoreSnapshot::default());
+    async fn create_group_rejects_a_group_without_devices() {
+        let Fixture { service, group_store, mut store_rx } = create_service(StoreSnapshot::default());
 
-        let stored = service.create_group("group", "Empty", vec![]).await.unwrap();
+        let result = service.create_group("group", "Empty", vec![]).await;
 
-        assert!(stored.device_ids.is_empty());
+        assert!(matches!(result, Err(CreateGroupError::GroupEmpty)), "got {result:?}");
+        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
@@ -374,7 +388,7 @@ mod tests {
         let snapshot = snapshot(vec![group("group", "Existing")]);
         let Fixture { service, group_store, mut store_rx } = create_service(snapshot);
 
-        let result = service.create_group("group", "Kitchen", vec![]).await;
+        let result = service.create_group("group", "Kitchen", ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateGroupError::IdAlreadyExists)));
         assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
@@ -388,7 +402,7 @@ mod tests {
     async fn create_group_rejects_a_name_in_use_by_another_group(#[case] name: &str) {
         let Fixture { service, group_store, mut store_rx } = create_service(snapshot(vec![group("other", "Kitchen")]));
 
-        let result = service.create_group("group", name, vec![]).await;
+        let result = service.create_group("group", name, ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateGroupError::NameAlreadyExists)));
         assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
@@ -397,10 +411,10 @@ mod tests {
 
     #[tokio::test]
     async fn create_group_rejects_a_name_stored_but_not_yet_in_the_snapshot() {
-        let Fixture { service, group_store, mut store_rx } = create_service(StoreSnapshot::default());
-        group_store.insert("other", "Kitchen", &BTreeSet::new()).await.unwrap();
+        let Fixture { service, group_store, mut store_rx } = create_service(snapshot_with_devices(&["a"]));
+        group_store.insert("other", "Kitchen", &set(&["a"])).await.unwrap();
 
-        let result = service.create_group("group", "kitchen", vec![]).await;
+        let result = service.create_group("group", "kitchen", ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateGroupError::NameAlreadyExists)));
         assert_eq!(group_store.list().await.unwrap().len(), 1);
@@ -423,10 +437,10 @@ mod tests {
 
     #[tokio::test]
     async fn create_group_fails_without_storing_when_the_store_is_gone() {
-        let Fixture { service, group_store, store_rx } = create_service(StoreSnapshot::default());
+        let Fixture { service, group_store, store_rx } = create_service(snapshot_with_devices(&["a"]));
         drop(store_rx);
 
-        let result = service.create_group("group", "Kitchen", vec![]).await;
+        let result = service.create_group("group", "Kitchen", ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateGroupError::StoreUnavailable)));
         assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
@@ -490,6 +504,19 @@ mod tests {
         let stored = service.update_group("group", 0, "kitchen", ids(&["a"])).await.unwrap();
 
         assert_eq!(stored.name, "kitchen");
+    }
+
+    #[tokio::test]
+    async fn update_group_rejects_a_group_without_devices() {
+        let Fixture { service, group_store, mut store_rx } = create_service_with_group(&["a"]).await;
+
+        let result = service.update_group("group", 0, "Hall", vec![]).await;
+
+        assert!(matches!(result, Err(UpdateGroupError::GroupEmpty)), "got {result:?}");
+        let stored = group_store.list().await.unwrap();
+        assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Kitchen", 0), "the group must be unchanged");
+        assert_eq!(stored[0].device_ids, set(&["a"]));
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]

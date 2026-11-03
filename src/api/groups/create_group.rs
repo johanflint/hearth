@@ -32,6 +32,9 @@ fn create_error_response(err: CreateGroupError) -> Response {
         CreateGroupError::NameAlreadyExists => {
             (StatusCode::CONFLICT, Json(ErrorResponse::new_code_only("groupNameAlreadyExists"))).into_response()
         }
+        CreateGroupError::GroupEmpty => {
+            (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse::new("groupEmpty", err.to_string()))).into_response()
+        }
         CreateGroupError::UnknownDevices { .. } => {
             (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse::new("unknownDevices", err.to_string())))
                 .into_response()
@@ -168,9 +171,9 @@ mod tests {
 
     #[tokio::test]
     async fn create_group_returns_409_conflict_for_an_existing_id() {
-        let Fixture { state, database, mut store_rx } = create_state(vec![existing_group("kitchen", "Other")], &[]);
+        let Fixture { state, database, mut store_rx } = create_state(vec![existing_group("kitchen", "Other")], &["a"]);
 
-        let response = call_create_group(state, r#"{"id":"kitchen","name":"Kitchen","deviceIds":[]}"#).await;
+        let response = call_create_group(state, r#"{"id":"kitchen","name":"Kitchen","deviceIds":["a"]}"#).await;
 
         assert_error(response, StatusCode::CONFLICT, "groupIdAlreadyExists").await;
         assert!(stored_group_ids(database).await.is_empty(), "nothing must be stored");
@@ -179,11 +182,25 @@ mod tests {
 
     #[tokio::test]
     async fn create_group_returns_409_conflict_for_a_name_in_use_ignoring_case() {
-        let Fixture { state, database, mut store_rx } = create_state(vec![existing_group("other", "Kitchen")], &[]);
+        let Fixture { state, database, mut store_rx } = create_state(vec![existing_group("other", "Kitchen")], &["a"]);
 
-        let response = call_create_group(state, r#"{"id":"new","name":"kitchen","deviceIds":[]}"#).await;
+        let response = call_create_group(state, r#"{"id":"new","name":"kitchen","deviceIds":["a"]}"#).await;
 
         assert_error(response, StatusCode::CONFLICT, "groupNameAlreadyExists").await;
+        assert!(stored_group_ids(database).await.is_empty(), "nothing must be stored");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn create_group_returns_422_unprocessable_entity_for_a_group_without_devices() {
+        let Fixture { state, database, mut store_rx } = create_state(vec![], &["a"]);
+
+        let response = call_create_group(state, r#"{"id":"kitchen","name":"Kitchen","deviceIds":[]}"#).await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "groupEmpty");
+        assert_eq!(body["message"], "a group must contain at least one device");
         assert!(stored_group_ids(database).await.is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
@@ -205,10 +222,10 @@ mod tests {
 
     #[tokio::test]
     async fn create_group_returns_503_service_unavailable_when_the_store_is_gone() {
-        let Fixture { state, database, store_rx } = create_state(vec![], &[]);
+        let Fixture { state, database, store_rx } = create_state(vec![], &["a"]);
         drop(store_rx);
 
-        let response = call_create_group(state, r#"{"id":"kitchen","name":"Kitchen","deviceIds":[]}"#).await;
+        let response = call_create_group(state, r#"{"id":"kitchen","name":"Kitchen","deviceIds":["a"]}"#).await;
 
         assert_error(response, StatusCode::SERVICE_UNAVAILABLE, "storeUnavailable").await;
         assert!(stored_group_ids(database).await.is_empty(), "nothing must be stored");

@@ -38,6 +38,9 @@ struct UpdateGroupRequest {
 
 fn update_error_response(err: UpdateGroupError) -> Response {
     match err {
+        UpdateGroupError::GroupEmpty => {
+            (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse::new("groupEmpty", err.to_string()))).into_response()
+        }
         UpdateGroupError::UnknownDevices { .. } => {
             (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse::new("unknownDevices", err.to_string())))
                 .into_response()
@@ -219,6 +222,20 @@ mod tests {
         assert_error(response, StatusCode::CONFLICT, "groupNameAlreadyExists").await;
         let stored = stored_groups(database).await;
         assert!(stored.iter().any(|group| group.id == "kitchen" && group.name == "Kitchen" && group.revision == 0));
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn update_group_returns_422_unprocessable_entity_for_a_group_without_devices() {
+        let Fixture { state, database, mut store_rx } = create_state(&["a"]).await;
+
+        let response = call_update_group(state, "kitchen", r#"{"baseRevision":0,"name":"Hall","deviceIds":[]}"#).await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "groupEmpty");
+        assert_eq!(body["message"], "a group must contain at least one device");
+        assert_unchanged(database).await;
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
