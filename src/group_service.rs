@@ -92,6 +92,11 @@ impl GroupService {
         }
 
         let snapshot = self.snapshot_rx.borrow().clone();
+        match snapshot.groups.get(id) {
+            Some(group) if group.owner == GroupOwner::Integration => return Err(UpdateGroupError::NotOwned),
+            _ => {}
+        }
+
         if snapshot.groups.values().any(|group| group.id != id && group.name.eq_ignore_ascii_case(name)) {
             return Err(UpdateGroupError::NameAlreadyExists);
         }
@@ -165,6 +170,8 @@ pub enum CreateGroupError {
 pub enum UpdateGroupError {
     #[error("a group must contain at least one device")]
     GroupEmpty,
+    #[error("group not owned")]
+    NotOwned,
     #[error("unknown device ids: '{}'", device_ids.iter().map(String::as_str).collect::<Vec<_>>().join(", "))]
     UnknownDevices { device_ids: BTreeSet<String> },
     #[error("group not found")]
@@ -664,6 +671,39 @@ mod tests {
         assert!(matches!(result, Err(UpdateGroupError::NameAlreadyExists)), "got {result:?}");
         assert_eq!(group_store.list().await.unwrap()[0].name, "Kitchen", "the group must be unchanged");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn update_group_rejects_a_group_owned_by_an_integration() {
+        let Fixture { service, group_store, mut store_rx } =
+            create_service_with_group_and_snapshot_groups(&["a"], vec![group("hue", "Hue room")]).await;
+
+        let result = service.update_group("hue", 0, "Renamed", ids(&["a"])).await;
+
+        assert!(matches!(result, Err(UpdateGroupError::NotOwned)), "got {result:?}");
+        let stored = group_store.list().await.unwrap();
+        assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Kitchen", 0), "nothing must be stored");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn update_group_rejects_a_group_owned_by_an_integration_before_checking_the_name_and_devices() {
+        let Fixture { service, store_rx: _store_rx, .. } =
+            create_service_with_group_and_snapshot_groups(&["a"], vec![group("hue", "Hue room")]).await;
+
+        let result = service.update_group("hue", 0, "Kitchen", ids(&["unknown"])).await;
+
+        assert!(matches!(result, Err(UpdateGroupError::NotOwned)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn update_group_rejects_a_group_without_devices_before_checking_the_owner() {
+        let Fixture { service, store_rx: _store_rx, .. } =
+            create_service_with_group_and_snapshot_groups(&["a"], vec![group("hue", "Hue room")]).await;
+
+        let result = service.update_group("hue", 0, "Renamed", vec![]).await;
+
+        assert!(matches!(result, Err(UpdateGroupError::GroupEmpty)), "got {result:?}");
     }
 
     #[rstest]
