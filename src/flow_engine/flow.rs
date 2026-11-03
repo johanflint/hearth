@@ -72,6 +72,13 @@ impl Flow {
         let nodes = self.walk().flat_map(|node| node.expressions());
         std::iter::once(self.trigger()).chain(nodes).flat_map(Expression::walk)
     }
+
+    pub fn walk_actions(&self) -> impl Iterator<Item = &dyn Action> + '_ {
+        self.walk().filter_map(|node| match node.kind() {
+            FlowNodeKind::Action(action) => Some(action.action()),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -164,7 +171,7 @@ impl ActionFlowNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flow_engine::action::ControlDeviceAction;
+    use crate::flow_engine::action::{ControlDeviceAction, ControlGroupAction};
     use crate::flow_engine::property_command::PropertyCommand;
 
     fn node(id: &str, children: Vec<FlowNode>) -> FlowNode {
@@ -253,5 +260,56 @@ mod tests {
 
         assert!(preset_ids(flow.walk_expressions()).is_empty());
         assert_eq!(flow.walk_expressions().count(), 1);
+    }
+
+    fn control_group(group_id: &str) -> FlowNode {
+        let action: Box<dyn Action> = Box::new(ControlGroupAction::new(group_id.to_string(), None, HashMap::new()));
+        FlowNode::new(group_id.to_string(), vec![], FlowNodeKind::Action(ActionFlowNode::new(action)))
+    }
+
+    fn group_ids<'a>(actions: impl Iterator<Item = &'a dyn Action>) -> Vec<&'a str> {
+        actions
+            .filter_map(|action| action.as_any().downcast_ref::<ControlGroupAction>())
+            .map(ControlGroupAction::group_id)
+            .collect()
+    }
+
+    #[test]
+    fn walk_actions_visits_the_actions_depth_first_and_skips_other_nodes() {
+        let conditional = FlowNode::new(
+            "conditional".to_string(),
+            vec![link(control_group("first"))],
+            FlowNodeKind::Conditional(preset("condition")),
+        );
+        let start = FlowNode::new(
+            "start".to_string(),
+            vec![link(conditional), link(control_group("second"))],
+            FlowNodeKind::Start,
+        );
+        let flow = flow(None, start);
+
+        assert_eq!(flow.walk_actions().count(), 2);
+        assert_eq!(group_ids(flow.walk_actions()), ["first", "second"]);
+    }
+
+    #[test]
+    fn walk_actions_visits_actions_of_every_kind() {
+        let device =
+            ActionFlowNode::new(Box::new(ControlDeviceAction::new("device".to_string(), None, HashMap::new())));
+        let device =
+            FlowNode::new("device".to_string(), vec![link(control_group("group"))], FlowNodeKind::Action(device));
+        let start = FlowNode::new("start".to_string(), vec![link(device)], FlowNodeKind::Start);
+        let flow = flow(None, start);
+
+        assert_eq!(flow.walk_actions().count(), 2);
+        assert_eq!(group_ids(flow.walk_actions()), ["group"]);
+    }
+
+    #[test]
+    fn walk_actions_is_empty_for_a_flow_without_actions() {
+        let start = FlowNode::new("start".to_string(), vec![], FlowNodeKind::Start);
+        let flow = flow(None, start);
+
+        assert_eq!(flow.walk_actions().count(), 0);
     }
 }

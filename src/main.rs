@@ -2,11 +2,13 @@ use crate::api::ApiState;
 use crate::app_config::AppConfig;
 use crate::core_tasks::CoreTasks;
 use crate::database::Database;
-use crate::domain::{Event, controller_registry};
+use crate::domain::{Event, Group, controller_registry};
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
 use crate::flow_store::FlowStore;
+use crate::group_service::GroupService;
+use crate::group_store::GroupStore;
 use crate::integration::Discovery;
 use crate::integration_list::{enabled_only, integrations};
 use crate::metrics_layer::MetricsLayer;
@@ -39,6 +41,8 @@ mod flow_registry;
 mod flow_service;
 mod flow_store;
 mod geo_location_deserializer;
+mod group_service;
+mod group_store;
 mod hue;
 mod integration;
 mod integration_list;
@@ -85,7 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("✅  Loaded presets");
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
-    let (mut store, store_reactive_rx) = Store::new(rx);
+    let group_store = Arc::new(GroupStore::new(database.clone()));
+    let groups = group_store.list().await?.into_iter().map(Group::from).collect();
+    let (mut store, store_reactive_rx) = Store::new(rx, groups);
 
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let scheduler_tx_clone = scheduler_tx.clone();
@@ -128,6 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let store_rx_clone = store.notifier();
     let integrations_rx_clone = store.notifier();
+    let group_service_rx_clone = store.notifier();
     let store_handle = task::spawn(async move {
         store.listen().await;
     });
@@ -146,11 +153,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         scheduler_tx,
         store_rx_clone,
     ));
-    let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, flow_registry));
+    let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, flow_registry.clone()));
     let core_tasks =
         Arc::new(CoreTasks { store: store_handle, scheduler: scheduler_handle, store_listener: store_listener_handle });
-    let api_state =
-        ApiState::new(prometheus_handle, database, core_tasks, integrations.clone(), flow_service, preset_service);
+    let group_service = Arc::new(GroupService::new(group_service_rx_clone, group_store, flow_registry, tx.clone()));
+    let api_state = ApiState::new(
+        prometheus_handle,
+        database,
+        core_tasks,
+        integrations.clone(),
+        flow_service,
+        group_service,
+        preset_service,
+    );
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
 

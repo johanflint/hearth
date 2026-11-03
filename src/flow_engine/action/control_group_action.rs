@@ -103,6 +103,21 @@ impl Action for ControlGroupAction {
     }
 }
 
+impl ControlGroupAction {
+    #[cfg(test)]
+    pub fn new(
+        group_id: String,
+        claim: Option<ClaimMode>,
+        property: HashMap<String, PropertyCommand>,
+    ) -> ControlGroupAction {
+        ControlGroupAction { group_id, claim, property }
+    }
+
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +173,11 @@ mod tests {
             claim,
             property: properties.iter().map(|(id, value)| (id.to_string(), property_command(value.clone()))).collect(),
         }
+    }
+
+    #[test]
+    fn group_id_returns_the_id_of_the_controlled_group() {
+        assert_eq!(control_group("room", None, &[]).group_id(), "room");
     }
 
     async fn execute(action: &ControlGroupAction, snapshot: StoreSnapshot) -> CommandMap {

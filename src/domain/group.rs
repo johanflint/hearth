@@ -1,4 +1,6 @@
-use std::collections::BTreeSet;
+use crate::domain::Device;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 /// Represents a group of devices, to be controlled together
 #[derive(Clone, PartialEq, Debug)]
@@ -11,9 +13,17 @@ pub struct Group {
     pub external_id: Option<String>,
 }
 
+impl Group {
+    pub fn unknown_device_ids<'a>(
+        &'a self,
+        devices: &'a HashMap<String, Arc<Device>>,
+    ) -> impl Iterator<Item = &'a String> {
+        self.device_ids.iter().filter(|id| !devices.contains_key(*id))
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum GroupOwner {
-    #[allow(dead_code)]
     Hearth,
     Integration,
 }

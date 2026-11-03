@@ -10,7 +10,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tracing::error;
+use tracing::{error, info};
 
 pub(super) async fn update_preset(
     Path(id): Path<String>,
@@ -24,6 +24,7 @@ pub(super) async fn update_preset(
         .update_preset(&id, request.base_revision, &request.name, request.value)
         .await
         .map_err(update_error_response)?;
+    info!("📥 Received request to update preset '{}'... OK, revision {}", stored_preset.id, stored_preset.revision);
 
     let response = PresetResponse::from(stored_preset);
     Ok((StatusCode::OK, Json(response)).into_response())

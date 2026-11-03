@@ -39,6 +39,7 @@ pub enum Event {
         initiated_by: InitiatedBy,
     },
     DiscoveredGroups(Vec<Group>),
+    GroupCreated(Group),
     GroupChanged(GroupChanged),
     GroupRemoved {
         group_id: String,
@@ -64,6 +65,7 @@ pub struct GroupChanged {
     pub id: String,
     pub name: Option<String>,
     pub device_ids: Option<BTreeSet<String>>,
+    pub revision: Option<u64>,
     pub external_id: Option<String>,
 }
 

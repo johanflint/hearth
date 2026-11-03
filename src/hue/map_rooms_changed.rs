@@ -22,8 +22,13 @@ fn upsert(room: RoomChanged, snapshot: &StoreSnapshot) -> Vec<Event> {
             .collect::<BTreeSet<_>>()
     });
     let external_id = room.services.as_deref().and_then(grouped_light_id);
-    let group_changed =
-        GroupChanged { id: room.id, name: room.metadata.and_then(|metadata| metadata.name), device_ids, external_id };
+    let group_changed = GroupChanged {
+        id: room.id,
+        name: room.metadata.and_then(|metadata| metadata.name),
+        device_ids,
+        revision: None,
+        external_id,
+    };
     vec![Event::GroupChanged(group_changed)]
 }
 
@@ -70,6 +75,7 @@ mod tests {
             id: "room".to_string(),
             name: name.map(str::to_string),
             device_ids: device_ids.map(|ids| ids.iter().map(|id| id.to_string()).collect()),
+            revision: None,
             external_id: None,
         })
     }
@@ -131,6 +137,7 @@ mod tests {
                 id: "room".to_string(),
                 name: Some("Kitchen".to_string()),
                 device_ids: Some(BTreeSet::from(["lamp-a".to_string()])),
+                revision: None,
                 external_id: Some("grouped-light".to_string()),
             })]
         );

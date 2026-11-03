@@ -1,9 +1,9 @@
 use crate::domain::property::{BooleanProperty, CartesianCoordinate, ColorProperty, Gamut, Property, PropertyType};
 use crate::domain::{Device, DeviceType, Value};
 use crate::flow_engine::Expression::{self, Literal};
-use crate::flow_engine::VersionedFlow;
-use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
+use crate::flow_engine::flow::{ActionFlowNode, Flow, FlowLink, FlowNode, FlowNodeKind};
 use crate::flow_engine::property_command::{PropertyCommand, ResolvedPropertyCommand};
+use crate::flow_engine::{ControlGroupAction, VersionedFlow};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -59,6 +59,24 @@ pub(crate) fn property_command(value: Value) -> PropertyCommand {
 
 pub(crate) fn resolved_property_command(value: Value) -> ResolvedPropertyCommand {
     ResolvedPropertyCommand { value, transition: None }
+}
+
+/// A flow that only references the groups, through one control group action per group id, in a chain
+pub(crate) fn flow_using_groups(id: &str, name: &str, revision: u64, group_ids: &[&str]) -> VersionedFlow {
+    let end_node = FlowNode::new(format!("{id}_end"), vec![], FlowNodeKind::End);
+    let first_node = group_ids.iter().enumerate().rev().fold(end_node, |next, (index, group_id)| {
+        let action = ControlGroupAction::new(group_id.to_string(), None, HashMap::new());
+        let kind = FlowNodeKind::Action(ActionFlowNode::new(Box::new(action)));
+        FlowNode::new(format!("{id}_action_{index}"), vec![FlowLink::new(Arc::new(next), Value::None)], kind)
+    });
+    let start_node = FlowNode::new(
+        format!("{id}_start"),
+        vec![FlowLink::new(Arc::new(first_node), Value::None)],
+        FlowNodeKind::Start,
+    );
+    let flow = Flow::new(id.to_string(), name.to_string(), None, None, Arc::new(start_node), HashMap::new())
+        .expect("valid flow");
+    VersionedFlow { flow: Arc::new(flow), revision }
 }
 
 /// A flow that only references the preset, through its trigger
