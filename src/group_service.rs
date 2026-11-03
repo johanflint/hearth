@@ -1,5 +1,5 @@
 use crate::domain::{Event, Group, GroupChanged, GroupOwner};
-use crate::flow_registry::FlowSummary;
+use crate::flow_registry::{FlowRegistry, FlowSummary};
 use crate::group_store::{DeleteError, GroupStore, GroupStoreError, InsertError, StoredGroup, UpdateError};
 use crate::store::StoreSnapshot;
 use std::collections::BTreeSet;
@@ -12,12 +12,18 @@ use tokio::sync::watch::Receiver;
 pub struct GroupService {
     snapshot_rx: Receiver<StoreSnapshot>,
     group_store: Arc<GroupStore>,
+    flow_registry: Arc<FlowRegistry>,
     store_tx: Sender<Event>,
 }
 
 impl GroupService {
-    pub fn new(snapshot_rx: Receiver<StoreSnapshot>, group_store: Arc<GroupStore>, store_tx: Sender<Event>) -> Self {
-        GroupService { snapshot_rx, group_store, store_tx }
+    pub fn new(
+        snapshot_rx: Receiver<StoreSnapshot>,
+        group_store: Arc<GroupStore>,
+        flow_registry: Arc<FlowRegistry>,
+        store_tx: Sender<Event>,
+    ) -> Self {
+        GroupService { snapshot_rx, group_store, flow_registry, store_tx }
     }
 
     pub fn list(&self) -> Vec<Arc<Group>> {
@@ -114,6 +120,11 @@ impl GroupService {
         }
         if group.revision != base_revision {
             return Err(DeleteGroupError::RevisionConflict { base_revision, current_revision: group.revision });
+        }
+
+        let flows = self.flow_registry.flows_referencing_group(id);
+        if !flows.is_empty() {
+            return Err(DeleteGroupError::InUse(flows));
         }
 
         let permit = self.store_tx.reserve().await.map_err(|_| DeleteGroupError::StoreUnavailable)?;
@@ -214,7 +225,8 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::domain::GroupOwner;
-    use crate::test_support::DeviceBuilder;
+    use crate::flow_engine::VersionedFlow;
+    use crate::test_support::{DeviceBuilder, flow_using_groups};
     use rstest::rstest;
     use std::collections::{BTreeSet, HashMap};
     use std::path::Path;
@@ -239,7 +251,7 @@ mod tests {
     fn service(rx: Receiver<StoreSnapshot>) -> GroupService {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let (store_tx, _store_rx) = mpsc::channel(1);
-        GroupService::new(rx, Arc::new(GroupStore::new(database)), store_tx)
+        GroupService::new(rx, Arc::new(GroupStore::new(database)), Arc::new(FlowRegistry::new(vec![])), store_tx)
     }
 
     /// Bind `store_rx` when the service sends events: dropping it, e.g. by leaving it out with `..`,
@@ -251,11 +263,15 @@ mod tests {
     }
 
     fn create_service(snapshot: StoreSnapshot) -> Fixture {
+        create_service_with_flows(snapshot, vec![])
+    }
+
+    fn create_service_with_flows(snapshot: StoreSnapshot, flows: Vec<VersionedFlow>) -> Fixture {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let group_store = Arc::new(GroupStore::new(database));
         let (store_tx, store_rx) = mpsc::channel(8);
         let (_tx, rx) = watch::channel(snapshot);
-        let service = GroupService::new(rx, Arc::clone(&group_store), store_tx);
+        let service = GroupService::new(rx, Arc::clone(&group_store), Arc::new(FlowRegistry::new(flows)), store_tx);
         Fixture { service, group_store, store_rx }
     }
 
@@ -767,7 +783,8 @@ mod tests {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let (store_tx, mut store_rx) = mpsc::channel(8);
         let (_tx, rx) = watch::channel(snapshot(vec![hearth_group("group", "Kitchen", 0)]));
-        let service = GroupService::new(rx, Arc::new(GroupStore::new(database.clone())), store_tx);
+        let flow_registry = Arc::new(FlowRegistry::new(vec![]));
+        let service = GroupService::new(rx, Arc::new(GroupStore::new(database.clone())), flow_registry, store_tx);
         database
             .call(|conn| conn.execute("DROP TABLE groups", []).map_err(crate::database::DatabaseError::from))
             .await
@@ -777,5 +794,41 @@ mod tests {
 
         assert!(matches!(result, Err(DeleteGroupError::Internal(_))), "got {result:?}");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_group_returns_in_use_with_the_flows_using_the_group_ordered_by_id() {
+        let flows = vec![
+            flow_using_groups("b", "Flow B", 2, &["group"]),
+            flow_using_groups("a", "Flow A", 0, &["other", "group"]),
+            flow_using_groups("c", "Flow C", 1, &["other"]),
+        ];
+        let Fixture { service, group_store, mut store_rx } =
+            create_service_with_flows(snapshot(vec![hearth_group("group", "Kitchen", 0)]), flows);
+        group_store.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
+
+        let result = service.delete_group("group", 0).await;
+
+        let Err(err @ DeleteGroupError::InUse(_)) = result else {
+            panic!("expected InUse, got {result:?}");
+        };
+        assert_eq!(err.to_string(), "group in use by 2 flow(s)");
+        let DeleteGroupError::InUse(summaries) = err else { unreachable!() };
+        let summaries: Vec<_> = summaries.iter().map(|s| (s.id.as_str(), s.name.as_str(), s.revision)).collect();
+        assert_eq!(summaries, [("a", "Flow A", 0), ("b", "Flow B", 2)]);
+        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_group_ignores_flows_using_other_groups() {
+        let flows = vec![flow_using_groups("a", "Flow A", 0, &["other"])];
+        let Fixture { service, group_store, store_rx: _store_rx } =
+            create_service_with_flows(snapshot(vec![hearth_group("group", "Kitchen", 0)]), flows);
+        group_store.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
+
+        service.delete_group("group", 0).await.unwrap();
+
+        assert!(group_store.list().await.unwrap().is_empty(), "the group must be deleted");
     }
 }

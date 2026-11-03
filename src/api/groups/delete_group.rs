@@ -32,7 +32,16 @@ fn invalid_query(err: QueryRejection) -> Response {
 }
 
 fn delete_error_response(err: DeleteGroupError) -> Response {
+    let error_message = err.to_string();
     match err {
+        DeleteGroupError::InUse(flows) => {
+            let flows = flows
+                .into_iter()
+                .map(|summary| FlowReference { id: summary.id, name: summary.name, revision: summary.revision })
+                .collect();
+            let body = InUseErrorResponse { code: "groupInUse", message: error_message, flows };
+            (StatusCode::CONFLICT, Json(body)).into_response()
+        }
         DeleteGroupError::NotFound => {
             (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("groupNotFound"))).into_response()
         }
@@ -52,15 +61,34 @@ fn delete_error_response(err: DeleteGroupError) -> Response {
         }
     }
 }
+
+#[derive(Debug, Serialize)]
+struct InUseErrorResponse {
+    pub code: &'static str,
+    pub message: String,
+    pub flows: Vec<FlowReference>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlowReference {
+    id: String,
+    name: String,
+    revision: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::groups::router;
-    use crate::api::test_support::{body_json, create_state_with_store_tx};
+    use crate::api::test_support::{body_json, create_state_with_flows};
     use crate::database::{Database, DatabaseError};
     use crate::domain::{Event, Group, GroupOwner};
+    use crate::flow_engine::VersionedFlow;
+    use crate::flow_registry::{FlowRegistry, FlowSummary};
     use crate::group_store::{GroupStore, StoredGroup};
     use crate::store::StoreSnapshot;
+    use crate::test_support::flow_using_groups;
     use axum::body::Body;
     use axum::http::Request;
     use rstest::rstest;
@@ -89,11 +117,15 @@ mod tests {
     /// Creates a state with the given groups in the snapshot, and the Hearth groups stored at revision 0.
     /// Bind `store_rx`: dropping it, e.g. by leaving it out with `..`, makes the store unavailable.
     async fn create_state(groups: Vec<Group>) -> Fixture {
+        create_state_with_flows_using(groups, vec![]).await
+    }
+
+    async fn create_state_with_flows_using(groups: Vec<Group>, flows: Vec<VersionedFlow>) -> Fixture {
         let groups: Vec<_> = groups.into_iter().map(Arc::new).collect();
         let snapshot_groups: HashMap<_, _> = groups.iter().map(|group| (group.id.clone(), Arc::clone(group))).collect();
         let snapshot = StoreSnapshot { groups: Arc::new(snapshot_groups), ..Default::default() };
         let (store_tx, store_rx) = mpsc::channel(8);
-        let (state, database) = create_state_with_store_tx(snapshot, store_tx);
+        let (state, database) = create_state_with_flows(FlowRegistry::new(flows), snapshot, store_tx);
 
         let group_store = GroupStore::new(database.clone());
         for group in groups.iter().filter(|group| group.owner == GroupOwner::Hearth) {
@@ -248,5 +280,66 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(body_json(response).await["code"], "storageError");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_group_returns_409_conflict_when_flows_use_the_group() {
+        let flows = vec![
+            flow_using_groups("b", "Flow B", 2, &["kitchen"]),
+            flow_using_groups("a", "Flow A", 0, &["kitchen"]),
+            flow_using_groups("c", "Flow C", 1, &["hall"]),
+        ];
+        let Fixture { state, database, mut store_rx } =
+            create_state_with_flows_using(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)], flows).await;
+
+        let response = call_delete_group(state, &delete_uri("kitchen", 0)).await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "groupInUse");
+        assert_eq!(body["message"], "group in use by 2 flow(s)");
+        assert_eq!(
+            body["flows"],
+            serde_json::json!([
+                {"id": "a", "name": "Flow A", "revision": 0},
+                {"id": "b", "name": "Flow B", "revision": 2},
+            ])
+        );
+        assert_eq!(stored_groups(database).await.len(), 1, "nothing must be deleted");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_group_ignores_flows_using_other_groups() {
+        let flows = vec![flow_using_groups("a", "Flow A", 0, &["hall"])];
+        let Fixture { state, database, store_rx: _store_rx } =
+            create_state_with_flows_using(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)], flows).await;
+
+        let response = call_delete_group(state, &delete_uri("kitchen", 0)).await;
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(stored_groups(database).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_error_response_maps_in_use_to_409_conflict_with_the_flows() {
+        let flows = vec![
+            FlowSummary { id: "a".to_string(), name: "Flow A".to_string(), revision: 0 },
+            FlowSummary { id: "b".to_string(), name: "Flow B".to_string(), revision: 2 },
+        ];
+
+        let response = delete_error_response(DeleteGroupError::InUse(flows));
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = body_json(response).await;
+        assert_eq!(body["code"], "groupInUse");
+        assert_eq!(body["message"], "group in use by 2 flow(s)");
+        assert_eq!(
+            body["flows"],
+            serde_json::json!([
+                {"id": "a", "name": "Flow A", "revision": 0},
+                {"id": "b", "name": "Flow B", "revision": 2},
+            ])
+        );
     }
 }

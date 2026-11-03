@@ -54,7 +54,16 @@ pub(super) fn create_state_with_store_tx(
     snapshot: StoreSnapshot,
     store_tx: mpsc::Sender<Event>,
 ) -> (ApiState, Database) {
-    let (fixture, database) = build_state(FlowRegistry::new(vec![]), snapshot, store_tx);
+    create_state_with_flows(FlowRegistry::new(vec![]), snapshot, store_tx)
+}
+
+/// Like `create_state_with_store_tx`, with the given flows registered
+pub(super) fn create_state_with_flows(
+    flow_registry: FlowRegistry,
+    snapshot: StoreSnapshot,
+    store_tx: mpsc::Sender<Event>,
+) -> (ApiState, Database) {
+    let (fixture, database) = build_state(flow_registry, snapshot, store_tx);
     (fixture.state, database)
 }
 
@@ -90,7 +99,12 @@ fn build_state(
         scheduler_tx,
         snapshot_rx.clone(),
     ));
-    let group_service = Arc::new(GroupService::new(snapshot_rx, Arc::new(GroupStore::new(database.clone())), store_tx));
+    let group_service = Arc::new(GroupService::new(
+        snapshot_rx,
+        Arc::new(GroupStore::new(database.clone())),
+        Arc::clone(&flow_registry),
+        store_tx,
+    ));
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, Arc::clone(&flow_registry)));
     // Tasks that keep running until a test aborts them
     let core_tasks = CoreTasks {
