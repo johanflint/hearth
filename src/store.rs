@@ -301,6 +301,11 @@ impl Store {
                 gauge!(Metric::StoreZoneCount.name()).set(self.zones.len() as f64);
                 None
             }
+            Event::ZoneCreated(zone) => {
+                self.zones.insert(zone.id.clone(), Arc::new(zone));
+                gauge!(Metric::StoreZoneCount.name()).set(self.zones.len() as f64);
+                None
+            }
             Event::ZoneChanged(ZoneChanged { id, name, device_ids, external_id }) => {
                 let zone = match self.zones.get(&id) {
                     Some(existing) => {
@@ -685,6 +690,28 @@ mod tests {
         assert_eq!(update.snapshot.zones.len(), 2);
         assert_eq!(update.snapshot.zones["hearth"].owner, Owner::Hearth);
         assert_eq!(update.snapshot.zones["hue"].owner, Owner::Integration);
+    }
+
+    #[tokio::test]
+    async fn zone_created_adds_a_hearth_zone_to_the_snapshot() {
+        let (tx, mut reactive_rx) = start_store_with_zones(vec![hearth_zone("first", "First", &["a"])]);
+
+        tx.send(Event::ZoneCreated(hearth_zone("second", "Second", &["b"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones.len(), 2);
+        assert_eq!(*update.snapshot.zones["second"], hearth_zone("second", "Second", &["b"]));
+        assert_eq!(*update.snapshot.zones["first"], hearth_zone("first", "First", &["a"]));
+    }
+
+    #[tokio::test]
+    async fn zone_created_does_not_report_a_property_change() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::ZoneCreated(hearth_zone("zone", "Zone", &["a"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert!(update.changed.is_none());
     }
 
     #[tokio::test]

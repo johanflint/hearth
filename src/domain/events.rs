@@ -45,6 +45,7 @@ pub enum Event {
         group_id: String,
     },
     DiscoveredZones(Vec<Zone>),
+    ZoneCreated(Zone),
     ZoneChanged(ZoneChanged),
     ZoneRemoved {
         zone_id: String,

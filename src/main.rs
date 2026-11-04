@@ -164,7 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let core_tasks =
         Arc::new(CoreTasks { store: store_handle, scheduler: scheduler_handle, store_listener: store_listener_handle });
     let group_service = Arc::new(GroupService::new(group_service_rx_clone, group_store, flow_registry, tx.clone()));
-    let zone_service = Arc::new(ZoneService::new(zone_service_rx_clone));
+    let zone_service = Arc::new(ZoneService::new(zone_service_rx_clone, zone_store, tx.clone()));
     let api_state = ApiState::new(
         prometheus_handle,
         database,

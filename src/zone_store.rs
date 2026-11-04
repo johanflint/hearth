@@ -1,7 +1,7 @@
 use crate::database::{Database, DatabaseError};
 use crate::domain::{Owner, Zone};
 use chrono::{DateTime, Utc};
-use rusqlite::Row;
+use rusqlite::{Row, params};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
@@ -24,6 +24,34 @@ impl ZoneStore {
                 )?;
                 let rows = statement.query_map([], row_to_stored_zone)?;
                 Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+    }
+
+    pub async fn insert(
+        &self,
+        id: &str,
+        name: &str,
+        group_ids: &BTreeSet<String>,
+        device_ids: &BTreeSet<String>,
+    ) -> Result<StoredZone, InsertError> {
+        let id = id.to_string();
+        let name = name.to_string();
+        let group_ids = serde_json::json!(group_ids);
+        let device_ids = serde_json::json!(device_ids);
+        self.database
+            .call(move |conn| {
+                let now = Utc::now().to_rfc3339();
+                let stored_zone = conn
+                    .query_row(
+                        "INSERT INTO zones (id, revision, name, group_ids, device_ids, created_at, updated_at)
+                        VALUES (?1, 0, ?2, ?3, ?4, ?5, ?5)
+                        RETURNING id, revision, name, group_ids, device_ids, created_at, updated_at",
+                        params![id, name, group_ids, device_ids, now],
+                        row_to_stored_zone,
+                    )
+                    .map_err(|err| if is_name_conflict(&err) { InsertError::NameAlreadyExists } else { err.into() })?;
+                Ok(stored_zone)
             })
             .await
     }
@@ -59,6 +87,10 @@ fn id_set(row: &Row, index: usize) -> rusqlite::Result<BTreeSet<String>> {
     let ids: serde_json::Value = row.get(index)?;
     serde_json::from_value(ids)
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(err)))
+}
+
+fn is_name_conflict(err: &rusqlite::Error) -> bool {
+    matches!(err, rusqlite::Error::SqliteFailure(err, _) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE)
 }
 
 fn to_revision(revision: i64) -> Result<u64, ZoneStoreError> {
@@ -99,6 +131,27 @@ pub enum ZoneStoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("stored revision {0} is out of range for u64")]
     InvalidRevision(i64),
+}
+
+#[derive(Error, Debug)]
+pub enum InsertError {
+    #[error("a zone with this name already exists")]
+    NameAlreadyExists,
+    #[error(transparent)]
+    Store(#[from] ZoneStoreError),
+}
+
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `ZoneStoreError` on their own
+impl From<DatabaseError> for InsertError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+impl From<rusqlite::Error> for InsertError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
 }
 
 #[cfg(test)]
@@ -344,5 +397,107 @@ mod tests {
             ),
             "got {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn insert_returns_the_stored_zone_at_revision_zero() {
+        let store = open_in_memory();
+
+        let inserted = store.insert("zone", "Downstairs", &ids(&["room", "hall"]), &ids(&["lamp", "desk"])).await;
+
+        let inserted = inserted.expect("insert succeeded");
+        assert_eq!(inserted.id, "zone");
+        assert_eq!(inserted.revision, 0);
+        assert_eq!(inserted.name, "Downstairs");
+        assert_eq!(inserted.group_ids, ids(&["hall", "room"]));
+        assert_eq!(inserted.device_ids, ids(&["desk", "lamp"]));
+        assert_eq!(inserted.updated_at, Some(inserted.created_at));
+    }
+
+    #[tokio::test]
+    async fn insert_persists_the_zone_and_leaves_others_untouched() {
+        let store = open_in_memory();
+        insert_row(&store, "other", "Other", r#"["g"]"#, r#"["a"]"#, None).await;
+
+        store.insert("zone", "Zone", &ids(&["room"]), &ids(&["b", "c"])).await.expect("insert succeeded");
+
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "other");
+        assert_eq!(rows[0].name, "Other");
+        assert_eq!(rows[0].group_ids, ids(&["g"]));
+        assert_eq!(rows[0].device_ids, ids(&["a"]));
+        assert_eq!(rows[1].id, "zone");
+        assert_eq!(rows[1].name, "Zone");
+        assert_eq!(rows[1].revision, 0);
+        assert_eq!(rows[1].group_ids, ids(&["room"]));
+        assert_eq!(rows[1].device_ids, ids(&["b", "c"]));
+    }
+
+    #[rstest]
+    #[case::groups_only(&["room"], &[])]
+    #[case::devices_only(&[], &["lamp"])]
+    #[case::neither(&[], &[])]
+    #[tokio::test]
+    async fn insert_accepts_a_zone_without_groups_or_without_devices(
+        #[case] group_ids: &[&str],
+        #[case] device_ids: &[&str],
+    ) {
+        let store = open_in_memory();
+
+        let inserted = store.insert("zone", "Zone", &ids(group_ids), &ids(device_ids)).await.expect("insert succeeded");
+
+        assert_eq!(inserted.group_ids, ids(group_ids));
+        assert_eq!(inserted.device_ids, ids(device_ids));
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows[0].group_ids, ids(group_ids));
+        assert_eq!(rows[0].device_ids, ids(device_ids));
+    }
+
+    #[tokio::test]
+    async fn insert_stores_the_ids_as_json_arrays() {
+        let store = open_in_memory();
+
+        store.insert("zone", "Zone", &ids(&["y", "x"]), &ids(&["b", "a"])).await.expect("insert succeeded");
+
+        let (group_ids, device_ids): (String, String) = store
+            .database
+            .call(|conn| {
+                conn.query_row("SELECT group_ids, device_ids FROM zones", [], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .map_err(DatabaseError::from)
+            })
+            .await
+            .expect("query");
+        assert_eq!(group_ids, r#"["x","y"]"#);
+        assert_eq!(device_ids, r#"["a","b"]"#);
+    }
+
+    #[rstest]
+    #[case::same_case("Downstairs")]
+    #[case::different_case("dOWNSTAIRS")]
+    #[tokio::test]
+    async fn insert_rejects_a_name_that_is_already_in_use(#[case] name: &str) {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Downstairs", "[]", r#"["a"]"#, None).await;
+
+        let result = store.insert("duplicate", name, &ids(&["room"]), &ids(&["b"])).await;
+
+        assert!(matches!(result, Err(InsertError::NameAlreadyExists)), "got {result:?}");
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1, "nothing must be stored");
+        assert_eq!(rows[0].device_ids, ids(&["a"]));
+    }
+
+    #[tokio::test]
+    async fn insert_fails_for_an_id_that_is_already_in_use() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Downstairs", "[]", "[]", None).await;
+
+        let result = store.insert("zone", "Other", &ids(&["room"]), &ids(&["a"])).await;
+
+        assert!(matches!(result, Err(InsertError::Store(ZoneStoreError::Sqlite(_)))), "got {result:?}");
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Downstairs");
     }
 }

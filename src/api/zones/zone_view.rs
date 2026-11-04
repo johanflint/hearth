@@ -1,5 +1,6 @@
 use crate::api::owner_view::OwnerView;
 use crate::domain::Zone;
+use crate::zone_store::StoredZone;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -24,6 +25,19 @@ impl From<Arc<Zone>> for ZoneView {
             device_ids: zone.device_ids.clone(),
             revision: zone.revision,
             owner: (&zone.owner).into(),
+        }
+    }
+}
+
+impl From<StoredZone> for ZoneView {
+    fn from(zone: StoredZone) -> Self {
+        Self {
+            id: zone.id,
+            name: zone.name,
+            group_ids: zone.group_ids,
+            device_ids: zone.device_ids,
+            revision: zone.revision,
+            owner: OwnerView::Hearth,
         }
     }
 }
