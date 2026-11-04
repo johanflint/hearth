@@ -1,4 +1,4 @@
-use crate::preset_repository::StoredPreset;
+use crate::repositories::StoredPreset;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 

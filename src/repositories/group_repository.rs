@@ -32,7 +32,7 @@ impl GroupRepository {
         id: &str,
         name: &str,
         device_ids: &BTreeSet<String>,
-    ) -> Result<StoredGroup, InsertError> {
+    ) -> Result<StoredGroup, GroupInsertError> {
         let id = id.to_string();
         let name = name.to_string();
         let device_ids = serde_json::json!(device_ids);
@@ -47,7 +47,9 @@ impl GroupRepository {
                         params![id, name, device_ids, now],
                         row_to_stored_group,
                     )
-                    .map_err(|err| if is_name_conflict(&err) { InsertError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(
+                        |err| if is_name_conflict(&err) { GroupInsertError::NameAlreadyExists } else { err.into() },
+                    )?;
                 Ok(stored_group)
             })
             .await
@@ -59,7 +61,7 @@ impl GroupRepository {
         base_revision: u64,
         name: &str,
         device_ids: &BTreeSet<String>,
-    ) -> Result<StoredGroup, UpdateError> {
+    ) -> Result<StoredGroup, GroupUpdateError> {
         let id = id.to_string();
         let name = name.to_string();
         let device_ids = serde_json::json!(device_ids);
@@ -75,7 +77,9 @@ impl GroupRepository {
                         row_to_stored_group,
                     )
                     .optional()
-                    .map_err(|err| if is_name_conflict(&err) { UpdateError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(
+                        |err| if is_name_conflict(&err) { GroupUpdateError::NameAlreadyExists } else { err.into() },
+                    )?;
 
                 if let Some(updated) = updated {
                     return Ok(updated);
@@ -86,16 +90,17 @@ impl GroupRepository {
                     .query_row("SELECT revision FROM groups WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(UpdateError::NotFound),
-                    Some(current) => {
-                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
+                    None => Err(GroupUpdateError::NotFound),
+                    Some(current) => Err(GroupUpdateError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
                 }
             })
             .await
     }
 
-    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), GroupDeleteError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -110,10 +115,11 @@ impl GroupRepository {
                     .query_row("SELECT revision FROM groups WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(DeleteError::NotFound),
-                    Some(current) => {
-                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
+                    None => Err(GroupDeleteError::NotFound),
+                    Some(current) => Err(GroupDeleteError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
                 }
             })
             .await
@@ -189,7 +195,7 @@ pub enum GroupRepositoryError {
 }
 
 #[derive(Error, Debug)]
-pub enum InsertError {
+pub enum GroupInsertError {
     #[error("a group with this name already exists")]
     NameAlreadyExists,
     #[error(transparent)]
@@ -197,20 +203,20 @@ pub enum InsertError {
 }
 
 // `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `GroupRepositoryError` on their own
-impl From<DatabaseError> for InsertError {
+impl From<DatabaseError> for GroupInsertError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for InsertError {
+impl From<rusqlite::Error> for GroupInsertError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum UpdateError {
+pub enum GroupUpdateError {
     #[error("group not found")]
     NotFound,
     #[error(
@@ -223,20 +229,20 @@ pub enum UpdateError {
     Repository(#[from] GroupRepositoryError),
 }
 
-impl From<DatabaseError> for UpdateError {
+impl From<DatabaseError> for GroupUpdateError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for UpdateError {
+impl From<rusqlite::Error> for GroupUpdateError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum DeleteError {
+pub enum GroupDeleteError {
     #[error("group not found")]
     NotFound,
     #[error(
@@ -247,13 +253,13 @@ pub enum DeleteError {
     Repository(#[from] GroupRepositoryError),
 }
 
-impl From<DatabaseError> for DeleteError {
+impl From<DatabaseError> for GroupDeleteError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for DeleteError {
+impl From<rusqlite::Error> for GroupDeleteError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
@@ -556,7 +562,7 @@ mod tests {
 
         let result = repository.insert("duplicate", name, &device_ids(&["b"])).await;
 
-        assert!(matches!(result, Err(InsertError::NameAlreadyExists)), "got {result:?}");
+        assert!(matches!(result, Err(GroupInsertError::NameAlreadyExists)), "got {result:?}");
         let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1, "nothing must be stored");
         assert_eq!(rows[0].device_ids, device_ids(&["a"]));
@@ -569,7 +575,7 @@ mod tests {
 
         let result = repository.insert("group", "Other", &device_ids(&["a"])).await;
 
-        assert!(matches!(result, Err(InsertError::Repository(GroupRepositoryError::Sqlite(_)))), "got {result:?}");
+        assert!(matches!(result, Err(GroupInsertError::Repository(GroupRepositoryError::Sqlite(_)))), "got {result:?}");
         let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Lights");
@@ -586,7 +592,7 @@ mod tests {
 
         let result = repository.update("group", 0, name, &device_ids(&["b"])).await;
 
-        assert!(matches!(result, Err(UpdateError::NameAlreadyExists)), "got {result:?}");
+        assert!(matches!(result, Err(GroupUpdateError::NameAlreadyExists)), "got {result:?}");
         let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows[0].name, "Lights", "the group must be unchanged");
         assert_eq!(rows[0].device_ids, device_ids(&["a"]));
@@ -706,7 +712,7 @@ mod tests {
 
         let result = repository.update("group", 0, "Lights", &device_ids(&["a"])).await;
 
-        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(GroupUpdateError::NotFound)), "got {result:?}");
         assert_eq!(
             repository.list().await.expect("list succeeded").len(),
             existing_ids.len(),
@@ -731,7 +737,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(UpdateError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(GroupUpdateError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
@@ -751,7 +757,7 @@ mod tests {
         let result = repository.update("group", 0, "Lights", &BTreeSet::new()).await;
 
         assert!(
-            matches!(result, Err(UpdateError::Repository(GroupRepositoryError::InvalidRevision(-1)))),
+            matches!(result, Err(GroupUpdateError::Repository(GroupRepositoryError::InvalidRevision(-1)))),
             "got {result:?}"
         );
     }
@@ -810,7 +816,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(DeleteError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(GroupDeleteError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
@@ -832,7 +838,7 @@ mod tests {
 
         let result = repository.delete("group", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(GroupDeleteError::NotFound)), "got {result:?}");
         assert_eq!(repository.list().await.expect("list succeeded").len(), existing_ids.len());
     }
 
@@ -845,7 +851,7 @@ mod tests {
         let result = repository.delete("group", 0).await;
 
         assert!(
-            matches!(result, Err(DeleteError::Repository(GroupRepositoryError::InvalidRevision(-1)))),
+            matches!(result, Err(GroupDeleteError::Repository(GroupRepositoryError::InvalidRevision(-1)))),
             "got {result:?}"
         );
     }
@@ -857,6 +863,6 @@ mod tests {
 
         let result = repository.delete("group", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::Repository(GroupRepositoryError::Sqlite(_)))), "got {result:?}");
+        assert!(matches!(result, Err(GroupDeleteError::Repository(GroupRepositoryError::Sqlite(_)))), "got {result:?}");
     }
 }

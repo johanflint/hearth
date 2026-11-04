@@ -1,8 +1,8 @@
 use crate::domain::{Preset, Value, VersionedPreset};
 use crate::flow_registry::{FlowRegistry, FlowSummary};
 use crate::preset_registry::{PresetRegistry, RegisterResult, UnregisterResult};
-use crate::preset_repository::{
-    DeleteError, InsertError, PresetRepository, PresetRepositoryError, StoredPreset, UpdateError,
+use crate::repositories::{
+    PresetDeleteError, PresetInsertError, PresetRepository, PresetRepositoryError, PresetUpdateError, StoredPreset,
 };
 use std::sync::Arc;
 use thiserror::Error;
@@ -118,11 +118,11 @@ pub enum CreatePresetError {
     Internal(#[from] PresetRepositoryError),
 }
 
-impl From<InsertError> for CreatePresetError {
-    fn from(err: InsertError) -> Self {
+impl From<PresetInsertError> for CreatePresetError {
+    fn from(err: PresetInsertError) -> Self {
         match err {
-            InsertError::NameAlreadyExists => Self::NameAlreadyExists,
-            InsertError::Repository(err) => Self::Internal(err),
+            PresetInsertError::NameAlreadyExists => Self::NameAlreadyExists,
+            PresetInsertError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -143,15 +143,15 @@ pub enum UpdatePresetError {
     Internal(#[from] PresetRepositoryError),
 }
 
-impl From<UpdateError> for UpdatePresetError {
-    fn from(err: UpdateError) -> Self {
+impl From<PresetUpdateError> for UpdatePresetError {
+    fn from(err: PresetUpdateError) -> Self {
         match err {
-            UpdateError::NotFound => Self::NotFound,
-            UpdateError::RevisionConflict { base_revision, current_revision } => {
+            PresetUpdateError::NotFound => Self::NotFound,
+            PresetUpdateError::RevisionConflict { base_revision, current_revision } => {
                 Self::RevisionConflict { base_revision, current_revision }
             }
-            UpdateError::NameAlreadyExists => Self::NameAlreadyExists,
-            UpdateError::Repository(err) => Self::Internal(err),
+            PresetUpdateError::NameAlreadyExists => Self::NameAlreadyExists,
+            PresetUpdateError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -170,14 +170,14 @@ pub enum DeletePresetError {
     Internal(#[from] PresetRepositoryError),
 }
 
-impl From<DeleteError> for DeletePresetError {
-    fn from(err: DeleteError) -> Self {
+impl From<PresetDeleteError> for DeletePresetError {
+    fn from(err: PresetDeleteError) -> Self {
         match err {
-            DeleteError::NotFound => DeletePresetError::NotFound,
-            DeleteError::RevisionConflict { base_revision, current_revision } => {
+            PresetDeleteError::NotFound => DeletePresetError::NotFound,
+            PresetDeleteError::RevisionConflict { base_revision, current_revision } => {
                 DeletePresetError::RevisionConflict { base_revision, current_revision }
             }
-            DeleteError::Repository(err) => DeletePresetError::Internal(err),
+            PresetDeleteError::Repository(err) => DeletePresetError::Internal(err),
         }
     }
 }

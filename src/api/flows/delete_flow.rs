@@ -66,7 +66,7 @@ mod tests {
     use crate::flow_loader;
     use crate::flow_loader::SerializedFlow;
     use crate::flow_registry::FlowRegistry;
-    use crate::flow_repository::FlowRepository;
+    use crate::repositories::FlowRepository;
     use axum::body::Body;
     use axum::http::Request;
     use std::sync::Arc;

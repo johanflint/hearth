@@ -1,6 +1,6 @@
 use crate::flow_engine::VersionedFlow;
 use crate::flow_loader::factory::from_json_value;
-use crate::flow_repository::{FlowRepository, FlowRepositoryError};
+use crate::repositories::{FlowRepository, FlowRepositoryError};
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 

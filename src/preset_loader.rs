@@ -1,5 +1,5 @@
 use crate::domain::{Preset, VersionedPreset};
-use crate::preset_repository::{PresetRepository, PresetRepositoryError};
+use crate::repositories::{PresetRepository, PresetRepositoryError};
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 

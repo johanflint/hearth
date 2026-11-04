@@ -66,9 +66,9 @@ mod tests {
     use crate::domain::{Event, Owner, Zone};
     use crate::flow_engine::VersionedFlow;
     use crate::flow_registry::{FlowRegistry, FlowSummary};
+    use crate::repositories::{StoredZone, ZoneRepository};
     use crate::store::StoreSnapshot;
     use crate::test_support::flow_using_zones;
-    use crate::zone_repository::{StoredZone, ZoneRepository};
     use axum::body::Body;
     use axum::http::Request;
     use rstest::rstest;

@@ -40,7 +40,7 @@ impl FlowRepository {
             .await
     }
 
-    pub async fn insert(&self, id: &str, document: serde_json::Value) -> Result<u64, InsertError> {
+    pub async fn insert(&self, id: &str, document: serde_json::Value) -> Result<u64, FlowInsertError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -55,7 +55,7 @@ impl FlowRepository {
                     #[rustfmt::skip]
                     Err(rusqlite::Error::SqliteFailure(err, _)) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY =>
                     {
-                        Err(InsertError::AlreadyExists)
+                        Err(FlowInsertError::AlreadyExists)
                     }
                     Err(err) => Err(err.into()),
                 }
@@ -63,7 +63,12 @@ impl FlowRepository {
             .await
     }
 
-    pub async fn update(&self, id: &str, base_revision: u64, document: serde_json::Value) -> Result<u64, UpdateError> {
+    pub async fn update(
+        &self,
+        id: &str,
+        base_revision: u64,
+        document: serde_json::Value,
+    ) -> Result<u64, FlowUpdateError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -87,16 +92,17 @@ impl FlowRepository {
                     .query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(UpdateError::NotFound),
-                    Some(current) => {
-                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
+                    None => Err(FlowUpdateError::NotFound),
+                    Some(current) => Err(FlowUpdateError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
                 }
             })
             .await
     }
 
-    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), FlowDeleteError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -111,10 +117,11 @@ impl FlowRepository {
                     .query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    Some(current) => {
-                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
-                    None => Err(DeleteError::NotFound),
+                    Some(current) => Err(FlowDeleteError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
+                    None => Err(FlowDeleteError::NotFound),
                 }
             })
             .await
@@ -169,7 +176,7 @@ pub enum FlowRepositoryError {
 }
 
 #[derive(Error, Debug)]
-pub enum InsertError {
+pub enum FlowInsertError {
     #[error("flow already exists")]
     AlreadyExists,
     #[error(transparent)]
@@ -177,20 +184,20 @@ pub enum InsertError {
 }
 
 // `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `FlowRepositoryError` on their own
-impl From<DatabaseError> for InsertError {
+impl From<DatabaseError> for FlowInsertError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for InsertError {
+impl From<rusqlite::Error> for FlowInsertError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum UpdateError {
+pub enum FlowUpdateError {
     #[error("flow not found")]
     NotFound,
     #[error(
@@ -202,20 +209,20 @@ pub enum UpdateError {
 }
 
 // `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `FlowRepositoryError` on their own
-impl From<DatabaseError> for UpdateError {
+impl From<DatabaseError> for FlowUpdateError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for UpdateError {
+impl From<rusqlite::Error> for FlowUpdateError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum DeleteError {
+pub enum FlowDeleteError {
     #[error("flow not found")]
     NotFound,
     #[error(
@@ -227,13 +234,13 @@ pub enum DeleteError {
 }
 
 // `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `FlowRepositoryError` on their own
-impl From<DatabaseError> for DeleteError {
+impl From<DatabaseError> for FlowDeleteError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for DeleteError {
+impl From<rusqlite::Error> for FlowDeleteError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
@@ -433,7 +440,7 @@ mod tests {
 
         let result = repository.insert("flow", flow_document()).await;
 
-        assert!(matches!(result, Err(InsertError::AlreadyExists)), "got {result:?}");
+        assert!(matches!(result, Err(FlowInsertError::AlreadyExists)), "got {result:?}");
     }
 
     #[tokio::test]
@@ -475,7 +482,7 @@ mod tests {
         let result = repository.update("flow", 0, flow_document()).await;
 
         assert!(
-            matches!(result, Err(UpdateError::RevisionConflict { base_revision: 0, current_revision: 1 })),
+            matches!(result, Err(FlowUpdateError::RevisionConflict { base_revision: 0, current_revision: 1 })),
             "got {result:?}"
         );
         assert_eq!(repository.list().await.unwrap()[0].revision, 1, "revision must be unchanged");
@@ -489,7 +496,7 @@ mod tests {
         let result = repository.update("flow", 7, flow_document()).await;
 
         assert!(
-            matches!(result, Err(UpdateError::RevisionConflict { base_revision: 7, current_revision: 0 })),
+            matches!(result, Err(FlowUpdateError::RevisionConflict { base_revision: 7, current_revision: 0 })),
             "got {result:?}"
         );
     }
@@ -500,7 +507,7 @@ mod tests {
 
         let result = repository.update("flow", 0, flow_document()).await;
 
-        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(FlowUpdateError::NotFound)), "got {result:?}");
         assert!(repository.list().await.unwrap().is_empty(), "update must not insert");
     }
 
@@ -524,7 +531,7 @@ mod tests {
         let result = repository.delete("flow", 0).await;
 
         assert!(
-            matches!(result, Err(DeleteError::RevisionConflict { base_revision: 0, current_revision: 1 })),
+            matches!(result, Err(FlowDeleteError::RevisionConflict { base_revision: 0, current_revision: 1 })),
             "got {result:?}"
         );
         assert!(repository.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
@@ -538,7 +545,7 @@ mod tests {
         let result = repository.delete("flow", 7).await;
 
         assert!(
-            matches!(result, Err(DeleteError::RevisionConflict { base_revision: 7, current_revision: 0 })),
+            matches!(result, Err(FlowDeleteError::RevisionConflict { base_revision: 7, current_revision: 0 })),
             "got {result:?}"
         );
         assert!(repository.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
@@ -550,7 +557,7 @@ mod tests {
 
         let result = repository.delete("flow", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(FlowDeleteError::NotFound)), "got {result:?}");
     }
 
     #[tokio::test]

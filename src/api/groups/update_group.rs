@@ -75,7 +75,7 @@ mod tests {
     use crate::api::test_support::{body_json, create_state_with_store_tx};
     use crate::database::{Database, DatabaseError};
     use crate::domain::{Event, Group, Owner};
-    use crate::group_repository::{GroupRepository, StoredGroup};
+    use crate::repositories::{GroupRepository, StoredGroup};
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
     use axum::body::Body;

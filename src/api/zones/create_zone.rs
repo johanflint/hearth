@@ -70,9 +70,9 @@ mod tests {
     use crate::api::zones::router;
     use crate::database::{Database, DatabaseError};
     use crate::domain::{Event, Group, Owner, Zone};
+    use crate::repositories::ZoneRepository;
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
-    use crate::zone_repository::ZoneRepository;
     use axum::body::Body;
     use axum::http::Request;
     use serde_json::json;

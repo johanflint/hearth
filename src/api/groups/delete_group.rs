@@ -66,7 +66,7 @@ mod tests {
     use crate::domain::{Event, Group, Owner};
     use crate::flow_engine::VersionedFlow;
     use crate::flow_registry::{FlowRegistry, FlowSummary};
-    use crate::group_repository::{GroupRepository, StoredGroup};
+    use crate::repositories::{GroupRepository, StoredGroup};
     use crate::store::StoreSnapshot;
     use crate::test_support::flow_using_groups;
     use axum::body::Body;

@@ -1,7 +1,7 @@
 use crate::domain::{Event, Group, GroupChanged, Owner};
 use crate::flow_registry::{FlowRegistry, FlowSummary};
-use crate::group_repository::{
-    DeleteError, GroupRepository, GroupRepositoryError, InsertError, StoredGroup, UpdateError,
+use crate::repositories::{
+    GroupDeleteError, GroupInsertError, GroupRepository, GroupRepositoryError, GroupUpdateError, StoredGroup,
 };
 use crate::store::StoreSnapshot;
 use std::collections::BTreeSet;
@@ -75,8 +75,8 @@ impl GroupService {
 
         let stored_group =
             self.group_repository.insert(id, name, &group.device_ids).await.map_err(|err| match err {
-                InsertError::NameAlreadyExists => CreateGroupError::NameAlreadyExists,
-                InsertError::Repository(err) => CreateGroupError::Internal(err),
+                GroupInsertError::NameAlreadyExists => CreateGroupError::NameAlreadyExists,
+                GroupInsertError::Repository(err) => CreateGroupError::Internal(err),
             })?;
 
         permit.send(Event::GroupCreated(Group { revision: stored_group.revision, ..group }));
@@ -191,15 +191,15 @@ pub enum UpdateGroupError {
     Internal(#[from] GroupRepositoryError),
 }
 
-impl From<UpdateError> for UpdateGroupError {
-    fn from(err: UpdateError) -> Self {
+impl From<GroupUpdateError> for UpdateGroupError {
+    fn from(err: GroupUpdateError) -> Self {
         match err {
-            UpdateError::NotFound => Self::NotFound,
-            UpdateError::RevisionConflict { base_revision, current_revision } => {
+            GroupUpdateError::NotFound => Self::NotFound,
+            GroupUpdateError::RevisionConflict { base_revision, current_revision } => {
                 Self::RevisionConflict { base_revision, current_revision }
             }
-            UpdateError::NameAlreadyExists => Self::NameAlreadyExists,
-            UpdateError::Repository(err) => Self::Internal(err),
+            GroupUpdateError::NameAlreadyExists => Self::NameAlreadyExists,
+            GroupUpdateError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -222,14 +222,14 @@ pub enum DeleteGroupError {
     Internal(#[from] GroupRepositoryError),
 }
 
-impl From<DeleteError> for DeleteGroupError {
-    fn from(err: DeleteError) -> Self {
+impl From<GroupDeleteError> for DeleteGroupError {
+    fn from(err: GroupDeleteError) -> Self {
         match err {
-            DeleteError::NotFound => Self::NotFound,
-            DeleteError::RevisionConflict { base_revision, current_revision } => {
+            GroupDeleteError::NotFound => Self::NotFound,
+            GroupDeleteError::RevisionConflict { base_revision, current_revision } => {
                 Self::RevisionConflict { base_revision, current_revision }
             }
-            DeleteError::Repository(err) => Self::Internal(err),
+            GroupDeleteError::Repository(err) => Self::Internal(err),
         }
     }
 }

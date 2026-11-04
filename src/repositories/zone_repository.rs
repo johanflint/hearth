@@ -34,7 +34,7 @@ impl ZoneRepository {
         name: &str,
         group_ids: &BTreeSet<String>,
         device_ids: &BTreeSet<String>,
-    ) -> Result<StoredZone, InsertError> {
+    ) -> Result<StoredZone, ZoneInsertError> {
         let id = id.to_string();
         let name = name.to_string();
         let group_ids = serde_json::json!(group_ids);
@@ -50,7 +50,9 @@ impl ZoneRepository {
                         params![id, name, group_ids, device_ids, now],
                         row_to_stored_zone,
                     )
-                    .map_err(|err| if is_name_conflict(&err) { InsertError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(
+                        |err| if is_name_conflict(&err) { ZoneInsertError::NameAlreadyExists } else { err.into() },
+                    )?;
                 Ok(stored_zone)
             })
             .await
@@ -63,7 +65,7 @@ impl ZoneRepository {
         name: &str,
         group_ids: &BTreeSet<String>,
         device_ids: &BTreeSet<String>,
-    ) -> Result<StoredZone, UpdateError> {
+    ) -> Result<StoredZone, ZoneUpdateError> {
         let id = id.to_string();
         let name = name.to_string();
         let group_ids = serde_json::json!(group_ids);
@@ -80,7 +82,7 @@ impl ZoneRepository {
                         row_to_stored_zone,
                     )
                     .optional()
-                    .map_err(|err| if is_name_conflict(&err) { UpdateError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(|err| if is_name_conflict(&err) { ZoneUpdateError::NameAlreadyExists } else { err.into() })?;
 
                 if let Some(updated) = updated {
                     return Ok(updated);
@@ -91,16 +93,16 @@ impl ZoneRepository {
                     .query_row("SELECT revision FROM zones WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(UpdateError::NotFound),
+                    None => Err(ZoneUpdateError::NotFound),
                     Some(current) => {
-                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                        Err(ZoneUpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
                     }
                 }
             })
             .await
     }
 
-    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), ZoneDeleteError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -115,10 +117,11 @@ impl ZoneRepository {
                     .query_row("SELECT revision FROM zones WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(DeleteError::NotFound),
-                    Some(current) => {
-                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
+                    None => Err(ZoneDeleteError::NotFound),
+                    Some(current) => Err(ZoneDeleteError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
                 }
             })
             .await
@@ -202,7 +205,7 @@ pub enum ZoneRepositoryError {
 }
 
 #[derive(Error, Debug)]
-pub enum InsertError {
+pub enum ZoneInsertError {
     #[error("a zone with this name already exists")]
     NameAlreadyExists,
     #[error(transparent)]
@@ -210,20 +213,20 @@ pub enum InsertError {
 }
 
 // `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `ZoneRepositoryError` on their own
-impl From<DatabaseError> for InsertError {
+impl From<DatabaseError> for ZoneInsertError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for InsertError {
+impl From<rusqlite::Error> for ZoneInsertError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum UpdateError {
+pub enum ZoneUpdateError {
     #[error("zone not found")]
     NotFound,
     #[error(
@@ -236,20 +239,20 @@ pub enum UpdateError {
     Repository(#[from] ZoneRepositoryError),
 }
 
-impl From<DatabaseError> for UpdateError {
+impl From<DatabaseError> for ZoneUpdateError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for UpdateError {
+impl From<rusqlite::Error> for ZoneUpdateError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum DeleteError {
+pub enum ZoneDeleteError {
     #[error("zone not found")]
     NotFound,
     #[error(
@@ -260,13 +263,13 @@ pub enum DeleteError {
     Repository(#[from] ZoneRepositoryError),
 }
 
-impl From<DatabaseError> for DeleteError {
+impl From<DatabaseError> for ZoneDeleteError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for DeleteError {
+impl From<rusqlite::Error> for ZoneDeleteError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
@@ -605,7 +608,7 @@ mod tests {
 
         let result = repository.insert("duplicate", name, &ids(&["room"]), &ids(&["b"])).await;
 
-        assert!(matches!(result, Err(InsertError::NameAlreadyExists)), "got {result:?}");
+        assert!(matches!(result, Err(ZoneInsertError::NameAlreadyExists)), "got {result:?}");
         let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1, "nothing must be stored");
         assert_eq!(rows[0].device_ids, ids(&["a"]));
@@ -618,7 +621,7 @@ mod tests {
 
         let result = repository.insert("zone", "Other", &ids(&["room"]), &ids(&["a"])).await;
 
-        assert!(matches!(result, Err(InsertError::Repository(ZoneRepositoryError::Sqlite(_)))), "got {result:?}");
+        assert!(matches!(result, Err(ZoneInsertError::Repository(ZoneRepositoryError::Sqlite(_)))), "got {result:?}");
         let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Downstairs");
@@ -635,7 +638,7 @@ mod tests {
 
         let result = repository.update("zone", 0, name, &ids(&["h"]), &ids(&["b"])).await;
 
-        assert!(matches!(result, Err(UpdateError::NameAlreadyExists)), "got {result:?}");
+        assert!(matches!(result, Err(ZoneUpdateError::NameAlreadyExists)), "got {result:?}");
         let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows[1].name, "Upstairs", "the zone must be unchanged");
         assert_eq!(rows[1].group_ids, ids(&["g"]));
@@ -772,7 +775,7 @@ mod tests {
 
         let result = repository.update("zone", 0, "Upstairs", &ids(&[]), &ids(&["a"])).await;
 
-        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(ZoneUpdateError::NotFound)), "got {result:?}");
         assert_eq!(
             repository.list().await.expect("list succeeded").len(),
             existing_ids.len(),
@@ -797,7 +800,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(UpdateError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(ZoneUpdateError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
@@ -818,7 +821,7 @@ mod tests {
         let result = repository.update("zone", 0, "Upstairs", &ids(&[]), &ids(&[])).await;
 
         assert!(
-            matches!(result, Err(UpdateError::Repository(ZoneRepositoryError::InvalidRevision(-1)))),
+            matches!(result, Err(ZoneUpdateError::Repository(ZoneRepositoryError::InvalidRevision(-1)))),
             "got {result:?}"
         );
     }
@@ -878,7 +881,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(DeleteError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(ZoneDeleteError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
@@ -900,7 +903,7 @@ mod tests {
 
         let result = repository.delete("zone", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(ZoneDeleteError::NotFound)), "got {result:?}");
         assert_eq!(repository.list().await.expect("list succeeded").len(), existing_ids.len());
     }
 
@@ -913,7 +916,7 @@ mod tests {
         let result = repository.delete("zone", 0).await;
 
         assert!(
-            matches!(result, Err(DeleteError::Repository(ZoneRepositoryError::InvalidRevision(-1)))),
+            matches!(result, Err(ZoneDeleteError::Repository(ZoneRepositoryError::InvalidRevision(-1)))),
             "got {result:?}"
         );
     }
@@ -925,6 +928,6 @@ mod tests {
 
         let result = repository.delete("zone", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::Repository(ZoneRepositoryError::Sqlite(_)))), "got {result:?}");
+        assert!(matches!(result, Err(ZoneDeleteError::Repository(ZoneRepositoryError::Sqlite(_)))), "got {result:?}");
     }
 }

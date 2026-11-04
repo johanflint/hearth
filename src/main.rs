@@ -5,17 +5,14 @@ use crate::database::Database;
 use crate::domain::{Event, Group, Zone, controller_registry};
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
-use crate::flow_repository::FlowRepository;
-use crate::group_repository::GroupRepository;
 use crate::integration::Discovery;
 use crate::integration_list::{enabled_only, integrations};
 use crate::metrics_layer::MetricsLayer;
 use crate::preset_registry::PresetRegistry;
-use crate::preset_repository::PresetRepository;
+use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
 use crate::services::{FlowService, GroupService, PresetService, ZoneService};
 use crate::store::Store;
 use crate::store_listener::store_listener;
-use crate::zone_repository::ZoneRepository;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::path::Path;
 use std::sync::Arc;
@@ -37,9 +34,7 @@ mod extensions;
 mod flow_engine;
 mod flow_loader;
 mod flow_registry;
-mod flow_repository;
 mod geo_location_deserializer;
-mod group_repository;
 mod hue;
 mod integration;
 mod integration_list;
@@ -47,8 +42,8 @@ mod metrics;
 mod metrics_layer;
 mod preset_loader;
 mod preset_registry;
-mod preset_repository;
 mod property_changed_reducer;
+mod repositories;
 mod server;
 mod services;
 mod sse;
@@ -56,7 +51,6 @@ mod store;
 mod store_listener;
 #[cfg(test)]
 mod test_support;
-mod zone_repository;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

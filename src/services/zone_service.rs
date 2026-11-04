@@ -1,7 +1,9 @@
 use crate::domain::{Event, Owner, Zone, ZoneChanged};
 use crate::flow_registry::{FlowRegistry, FlowSummary};
+use crate::repositories::{
+    StoredZone, ZoneDeleteError, ZoneInsertError, ZoneRepository, ZoneRepositoryError, ZoneUpdateError,
+};
 use crate::store::StoreSnapshot;
-use crate::zone_repository::{DeleteError, InsertError, StoredZone, UpdateError, ZoneRepository, ZoneRepositoryError};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use thiserror::Error;
@@ -81,8 +83,8 @@ impl ZoneService {
 
         let stored_zone = self.zone_repository.insert(id, name, &zone.group_ids, &zone.device_ids).await.map_err(
             |err| match err {
-                InsertError::NameAlreadyExists => CreateZoneError::NameAlreadyExists,
-                InsertError::Repository(err) => CreateZoneError::Internal(err),
+                ZoneInsertError::NameAlreadyExists => CreateZoneError::NameAlreadyExists,
+                ZoneInsertError::Repository(err) => CreateZoneError::Internal(err),
             },
         )?;
 
@@ -216,15 +218,15 @@ pub enum UpdateZoneError {
     Internal(#[from] ZoneRepositoryError),
 }
 
-impl From<UpdateError> for UpdateZoneError {
-    fn from(err: UpdateError) -> Self {
+impl From<ZoneUpdateError> for UpdateZoneError {
+    fn from(err: ZoneUpdateError) -> Self {
         match err {
-            UpdateError::NotFound => Self::NotFound,
-            UpdateError::RevisionConflict { base_revision, current_revision } => {
+            ZoneUpdateError::NotFound => Self::NotFound,
+            ZoneUpdateError::RevisionConflict { base_revision, current_revision } => {
                 Self::RevisionConflict { base_revision, current_revision }
             }
-            UpdateError::NameAlreadyExists => Self::NameAlreadyExists,
-            UpdateError::Repository(err) => Self::Internal(err),
+            ZoneUpdateError::NameAlreadyExists => Self::NameAlreadyExists,
+            ZoneUpdateError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -247,14 +249,14 @@ pub enum DeleteZoneError {
     Internal(#[from] ZoneRepositoryError),
 }
 
-impl From<DeleteError> for DeleteZoneError {
-    fn from(err: DeleteError) -> Self {
+impl From<ZoneDeleteError> for DeleteZoneError {
+    fn from(err: ZoneDeleteError) -> Self {
         match err {
-            DeleteError::NotFound => Self::NotFound,
-            DeleteError::RevisionConflict { base_revision, current_revision } => {
+            ZoneDeleteError::NotFound => Self::NotFound,
+            ZoneDeleteError::RevisionConflict { base_revision, current_revision } => {
                 Self::RevisionConflict { base_revision, current_revision }
             }
-            DeleteError::Repository(err) => Self::Internal(err),
+            ZoneDeleteError::Repository(err) => Self::Internal(err),
         }
     }
 }

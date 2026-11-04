@@ -4,8 +4,10 @@ use crate::flow_engine::{SchedulerCommand, VersionedFlow};
 use crate::flow_loader;
 use crate::flow_loader::{FlowFactoryError, SerializedFlow};
 use crate::flow_registry::{FlowRegistry, RegisterResult, UnregisterResult};
-use crate::flow_repository::{DeleteError, FlowRepository, FlowRepositoryError, InsertError, StoredFlow, UpdateError};
 use crate::preset_registry::PresetRegistry;
+use crate::repositories::{
+    FlowDeleteError, FlowInsertError, FlowRepository, FlowRepositoryError, FlowUpdateError, StoredFlow,
+};
 use crate::store::StoreSnapshot;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -196,11 +198,11 @@ pub enum CreateFlowError {
     CommitFailed(#[from] JoinError),
 }
 
-impl From<InsertError> for CreateFlowError {
-    fn from(err: InsertError) -> Self {
+impl From<FlowInsertError> for CreateFlowError {
+    fn from(err: FlowInsertError) -> Self {
         match err {
-            InsertError::AlreadyExists => CreateFlowError::AlreadyExists,
-            InsertError::Repository(err) => CreateFlowError::Internal(err),
+            FlowInsertError::AlreadyExists => CreateFlowError::AlreadyExists,
+            FlowInsertError::Repository(err) => CreateFlowError::Internal(err),
         }
     }
 }
@@ -225,14 +227,14 @@ pub enum UpdateFlowError {
     CommitFailed(#[from] JoinError),
 }
 
-impl From<UpdateError> for UpdateFlowError {
-    fn from(err: UpdateError) -> Self {
+impl From<FlowUpdateError> for UpdateFlowError {
+    fn from(err: FlowUpdateError) -> Self {
         match err {
-            UpdateError::NotFound => UpdateFlowError::NotFound,
-            UpdateError::RevisionConflict { base_revision, current_revision } => {
+            FlowUpdateError::NotFound => UpdateFlowError::NotFound,
+            FlowUpdateError::RevisionConflict { base_revision, current_revision } => {
                 UpdateFlowError::RevisionConflict { base_revision, current_revision }
             }
-            UpdateError::Repository(err) => UpdateFlowError::Internal(err),
+            FlowUpdateError::Repository(err) => UpdateFlowError::Internal(err),
         }
     }
 }
@@ -253,14 +255,14 @@ pub enum DeleteFlowError {
     CommitFailed(#[from] JoinError),
 }
 
-impl From<DeleteError> for DeleteFlowError {
-    fn from(err: DeleteError) -> Self {
+impl From<FlowDeleteError> for DeleteFlowError {
+    fn from(err: FlowDeleteError) -> Self {
         match err {
-            DeleteError::NotFound => DeleteFlowError::NotFound,
-            DeleteError::RevisionConflict { base_revision, current_revision } => {
+            FlowDeleteError::NotFound => DeleteFlowError::NotFound,
+            FlowDeleteError::RevisionConflict { base_revision, current_revision } => {
                 DeleteFlowError::RevisionConflict { base_revision, current_revision }
             }
-            DeleteError::Repository(err) => DeleteFlowError::Internal(err),
+            FlowDeleteError::Repository(err) => DeleteFlowError::Internal(err),
         }
     }
 }

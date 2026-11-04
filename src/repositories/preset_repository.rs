@@ -40,7 +40,12 @@ impl PresetRepository {
             .await
     }
 
-    pub async fn insert(&self, id: &str, name: &str, value: serde_json::Value) -> Result<StoredPreset, InsertError> {
+    pub async fn insert(
+        &self,
+        id: &str,
+        name: &str,
+        value: serde_json::Value,
+    ) -> Result<StoredPreset, PresetInsertError> {
         let id = id.to_string();
         let name = name.to_string();
         self.database
@@ -54,7 +59,9 @@ impl PresetRepository {
                         params![id, name, value, now],
                         row_to_stored_preset,
                     )
-                    .map_err(|err| if is_name_conflict(&err) { InsertError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(
+                        |err| if is_name_conflict(&err) { PresetInsertError::NameAlreadyExists } else { err.into() },
+                    )?;
                 Ok(stored)
             })
             .await
@@ -66,7 +73,7 @@ impl PresetRepository {
         base_revision: u64,
         name: &str,
         value: serde_json::Value,
-    ) -> Result<StoredPreset, UpdateError> {
+    ) -> Result<StoredPreset, PresetUpdateError> {
         let id = id.to_string();
         let name = name.to_string();
         self.database
@@ -81,7 +88,9 @@ impl PresetRepository {
                         row_to_stored_preset,
                     )
                     .optional()
-                    .map_err(|err| if is_name_conflict(&err) { UpdateError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(
+                        |err| if is_name_conflict(&err) { PresetUpdateError::NameAlreadyExists } else { err.into() },
+                    )?;
 
                 if let Some(updated) = updated {
                     return Ok(updated);
@@ -92,16 +101,17 @@ impl PresetRepository {
                     .query_row("SELECT revision FROM presets WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(UpdateError::NotFound),
-                    Some(current) => {
-                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
+                    None => Err(PresetUpdateError::NotFound),
+                    Some(current) => Err(PresetUpdateError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
                 }
             })
             .await
     }
 
-    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), PresetDeleteError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -118,10 +128,11 @@ impl PresetRepository {
                     .query_row("SELECT revision FROM presets WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    Some(current) => {
-                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
-                    None => Err(DeleteError::NotFound),
+                    Some(current) => Err(PresetDeleteError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
+                    None => Err(PresetDeleteError::NotFound),
                 }
             })
             .await
@@ -181,7 +192,7 @@ pub enum PresetRepositoryError {
 }
 
 #[derive(Error, Debug)]
-pub enum InsertError {
+pub enum PresetInsertError {
     #[error("a preset with this name already exists")]
     NameAlreadyExists,
     #[error(transparent)]
@@ -189,20 +200,20 @@ pub enum InsertError {
 }
 
 // `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `PresetRepositoryError` on their own
-impl From<DatabaseError> for InsertError {
+impl From<DatabaseError> for PresetInsertError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for InsertError {
+impl From<rusqlite::Error> for PresetInsertError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum UpdateError {
+pub enum PresetUpdateError {
     #[error("preset not found")]
     NotFound,
     #[error(
@@ -216,20 +227,20 @@ pub enum UpdateError {
 }
 
 // `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `PresetRepositoryError` on their own
-impl From<DatabaseError> for UpdateError {
+impl From<DatabaseError> for PresetUpdateError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for UpdateError {
+impl From<rusqlite::Error> for PresetUpdateError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum DeleteError {
+pub enum PresetDeleteError {
     #[error("preset not found")]
     NotFound,
     #[error(
@@ -241,13 +252,13 @@ pub enum DeleteError {
 }
 
 // `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `PresetRepositoryError` on their own
-impl From<DatabaseError> for DeleteError {
+impl From<DatabaseError> for PresetDeleteError {
     fn from(err: DatabaseError) -> Self {
         Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for DeleteError {
+impl From<rusqlite::Error> for PresetDeleteError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Repository(err.into())
     }
@@ -492,7 +503,7 @@ mod tests {
 
         let result = repository.insert("duplicate", name, json!(false)).await;
 
-        assert!(matches!(result, Err(InsertError::NameAlreadyExists)), "got {result:?}");
+        assert!(matches!(result, Err(PresetInsertError::NameAlreadyExists)), "got {result:?}");
         let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1, "nothing must be stored");
         assert_eq!(rows[0].value, json!(true));
@@ -505,7 +516,10 @@ mod tests {
 
         let result = repository.insert("preset", "Blue", json!(false)).await;
 
-        assert!(matches!(result, Err(InsertError::Repository(PresetRepositoryError::Sqlite(_)))), "got {result:?}");
+        assert!(
+            matches!(result, Err(PresetInsertError::Repository(PresetRepositoryError::Sqlite(_)))),
+            "got {result:?}"
+        );
         let stored = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(stored.name, "Red");
     }
@@ -521,7 +535,7 @@ mod tests {
 
         let result = repository.update("preset", 0, name, json!(false)).await;
 
-        assert!(matches!(result, Err(UpdateError::NameAlreadyExists)), "got {result:?}");
+        assert!(matches!(result, Err(PresetUpdateError::NameAlreadyExists)), "got {result:?}");
         let stored = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(stored.name, "Red", "the preset must be unchanged");
         assert_eq!(stored.value, json!(true));
@@ -613,7 +627,7 @@ mod tests {
 
         let result = repository.update("preset", 0, "Blue", json!(false)).await;
 
-        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(PresetUpdateError::NotFound)), "got {result:?}");
         assert!(
             repository.by_id("preset").await.expect("by_id succeeded").is_none(),
             "update must not create the preset"
@@ -637,7 +651,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(UpdateError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(PresetUpdateError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
@@ -660,11 +674,9 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(UpdateError::Repository(PresetRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(
-                    4,
-                    _,
-                    _
-                ))))
+                Err(PresetUpdateError::Repository(PresetRepositoryError::Sqlite(
+                    rusqlite::Error::FromSqlConversionFailure(4, _, _)
+                )))
             ),
             "got {result:?}"
         );
@@ -679,7 +691,7 @@ mod tests {
         let result = repository.update("preset", 0, "Blue", json!(false)).await;
 
         assert!(
-            matches!(result, Err(UpdateError::Repository(PresetRepositoryError::InvalidRevision(-1)))),
+            matches!(result, Err(PresetUpdateError::Repository(PresetRepositoryError::InvalidRevision(-1)))),
             "got {result:?}"
         );
     }
@@ -726,7 +738,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(DeleteError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(PresetDeleteError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
@@ -747,7 +759,7 @@ mod tests {
 
         let result = repository.delete("preset", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(PresetDeleteError::NotFound)), "got {result:?}");
         assert_eq!(repository.list().await.expect("list succeeded").len(), existing_ids.len());
     }
 
@@ -760,7 +772,7 @@ mod tests {
         let result = repository.delete("preset", 0).await;
 
         assert!(
-            matches!(result, Err(DeleteError::Repository(PresetRepositoryError::InvalidRevision(-1)))),
+            matches!(result, Err(PresetDeleteError::Repository(PresetRepositoryError::InvalidRevision(-1)))),
             "got {result:?}"
         );
     }
@@ -772,7 +784,10 @@ mod tests {
 
         let result = repository.delete("preset", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::Repository(PresetRepositoryError::Sqlite(_)))), "got {result:?}");
+        assert!(
+            matches!(result, Err(PresetDeleteError::Repository(PresetRepositoryError::Sqlite(_)))),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
