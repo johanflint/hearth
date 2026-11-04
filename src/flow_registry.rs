@@ -1,4 +1,4 @@
-use crate::flow_engine::{ControlGroupAction, Expression, VersionedFlow};
+use crate::flow_engine::{ControlGroupAction, ControlZoneAction, Expression, VersionedFlow};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -89,6 +89,26 @@ impl FlowRegistry {
         flows
     }
 
+    pub fn flows_referencing_zone(&self, id: &str) -> Vec<FlowSummary> {
+        let entries = self.entries.read().expect("flow registry lock poisoned");
+        let mut flows: Vec<FlowSummary> = entries
+            .values()
+            .filter(|versioned_flow| {
+                versioned_flow
+                    .walk_actions()
+                    .filter_map(|action| action.as_any().downcast_ref::<ControlZoneAction>())
+                    .any(|action| action.zone_id() == id)
+            })
+            .map(|versioned_flow| FlowSummary {
+                id: versioned_flow.id().to_string(),
+                name: versioned_flow.name().to_string(),
+                revision: versioned_flow.revision,
+            })
+            .collect();
+        flows.sort_by(|a, b| a.id.cmp(&b.id));
+        flows
+    }
+
     pub fn flows_referencing_preset(&self, id: &str) -> Vec<FlowSummary> {
         let entries = self.entries.read().expect("flow registry lock poisoned");
         let mut flows: Vec<FlowSummary> = entries
@@ -137,7 +157,7 @@ mod tests {
     use super::*;
     use crate::flow_engine::Schedule;
     use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
-    use crate::test_support::{flow_using_groups, flow_using_preset};
+    use crate::test_support::{flow_using_groups, flow_using_preset, flow_using_zones};
     use std::sync::Arc;
 
     fn reactive_flow(id: &str) -> VersionedFlow {
@@ -349,6 +369,59 @@ mod tests {
     #[test]
     fn flows_referencing_group_ignores_flows_using_a_preset_with_the_same_id() {
         let registry = FlowRegistry::new(vec![flow_using_preset("a", "Flow A", 0, "kitchen")]);
+
+        assert!(registry.flows_referencing_group("kitchen").is_empty());
+    }
+
+    #[test]
+    fn flows_referencing_zone_returns_the_summaries_of_the_flows_using_the_zone_ordered_by_id() {
+        let registry = FlowRegistry::new(vec![
+            flow_using_zones("b", "Flow B", 2, &["upstairs"]),
+            flow_using_zones("a", "Flow A", 0, &["garden", "upstairs"]),
+            flow_using_zones("c", "Flow C", 1, &["garden"]),
+            reactive_flow("d"),
+        ]);
+
+        let flows = registry.flows_referencing_zone("upstairs");
+
+        let summaries: Vec<_> = flows.iter().map(|f| (f.id.as_str(), f.name.as_str(), f.revision)).collect();
+        assert_eq!(summaries, [("a", "Flow A", 0), ("b", "Flow B", 2)]);
+    }
+
+    #[test]
+    fn flows_referencing_zone_returns_a_flow_once_when_it_uses_the_zone_in_several_actions() {
+        let registry = FlowRegistry::new(vec![flow_using_zones("a", "Flow A", 0, &["upstairs", "upstairs"])]);
+
+        assert_eq!(registry.flows_referencing_zone("upstairs").len(), 1);
+    }
+
+    #[test]
+    fn flows_referencing_zone_returns_nothing_when_no_flow_uses_the_zone() {
+        let registry = FlowRegistry::new(vec![flow_using_zones("a", "Flow A", 0, &["garden"]), reactive_flow("b")]);
+
+        assert!(registry.flows_referencing_zone("upstairs").is_empty());
+    }
+
+    #[test]
+    fn flows_referencing_zone_only_matches_whole_ids() {
+        let registry = FlowRegistry::new(vec![flow_using_zones("a", "Flow A", 0, &["upstairs-2"])]);
+
+        assert!(registry.flows_referencing_zone("upstairs").is_empty());
+    }
+
+    #[test]
+    fn flows_referencing_zone_ignores_flows_using_a_group_or_preset_with_the_same_id() {
+        let registry = FlowRegistry::new(vec![
+            flow_using_groups("a", "Flow A", 0, &["upstairs"]),
+            flow_using_preset("b", "Flow B", 0, "upstairs"),
+        ]);
+
+        assert!(registry.flows_referencing_zone("upstairs").is_empty());
+    }
+
+    #[test]
+    fn flows_referencing_group_ignores_flows_using_a_zone_with_the_same_id() {
+        let registry = FlowRegistry::new(vec![flow_using_zones("a", "Flow A", 0, &["kitchen"])]);
 
         assert!(registry.flows_referencing_group("kitchen").is_empty());
     }

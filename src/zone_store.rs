@@ -99,6 +99,30 @@ impl ZoneStore {
             })
             .await
     }
+
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+        let id = id.to_string();
+        self.database
+            .call(move |conn| {
+                let rows_deleted: usize = conn
+                    .execute("DELETE FROM zones WHERE id = ?1 AND revision = ?2", params![id, base_revision as i64])?;
+                if rows_deleted == 1 {
+                    return Ok(());
+                }
+
+                // No row matched; either the zone doesn't exist or someone else updated it first
+                let current: Option<i64> = conn
+                    .query_row("SELECT revision FROM zones WHERE id = ?1", params![id], |row| row.get(0))
+                    .optional()?;
+                match current {
+                    None => Err(DeleteError::NotFound),
+                    Some(current) => {
+                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                    }
+                }
+            })
+            .await
+    }
 }
 
 fn row_to_stored_zone(row: &Row) -> rusqlite::Result<StoredZone> {
@@ -219,6 +243,30 @@ impl From<DatabaseError> for UpdateError {
 }
 
 impl From<rusqlite::Error> for UpdateError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum DeleteError {
+    #[error("zone not found")]
+    NotFound,
+    #[error(
+        "revision conflict: delete is based on revision {base_revision}, but the current revision is {current_revision}"
+    )]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error(transparent)]
+    Store(#[from] ZoneStoreError),
+}
+
+impl From<DatabaseError> for DeleteError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+impl From<rusqlite::Error> for DeleteError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Store(err.into())
     }
@@ -759,5 +807,106 @@ mod tests {
         let result = store.update("zone", 0, "Upstairs", &ids(&[]), &ids(&[])).await;
 
         assert!(matches!(result, Err(UpdateError::Store(ZoneStoreError::InvalidRevision(-1)))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_zone_when_the_base_revision_matches() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", "[]", r#"["a"]"#, None).await;
+        execute(&store, "UPDATE zones SET revision = 3").await;
+
+        store.delete("zone", 3).await.expect("delete succeeded");
+
+        assert!(store.list().await.expect("list succeeded").is_empty(), "zone must be deleted");
+    }
+
+    #[tokio::test]
+    async fn delete_only_removes_the_given_zone() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", r#"["g"]"#, "[]", None).await;
+        insert_row(&store, "other", "Other", r#"["h"]"#, r#"["a"]"#, None).await;
+
+        store.delete("zone", 0).await.expect("delete succeeded");
+
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "other");
+        assert_eq!(rows[0].name, "Other");
+        assert_eq!((&rows[0].group_ids, &rows[0].device_ids), (&ids(&["h"]), &ids(&["a"])));
+    }
+
+    #[tokio::test]
+    async fn delete_frees_the_name_and_id_for_a_new_zone() {
+        let store = open_in_memory();
+        store.insert("zone", "Upstairs", &ids(&["g"]), &ids(&[])).await.expect("insert succeeded");
+
+        store.delete("zone", 0).await.expect("delete succeeded");
+        let reinserted = store.insert("zone", "upstairs", &ids(&["g"]), &ids(&[])).await.expect("insert succeeded");
+
+        assert_eq!(reinserted.revision, 0);
+    }
+
+    #[rstest]
+    #[case::behind(0, 2)]
+    #[case::ahead(5, 2)]
+    #[tokio::test]
+    async fn delete_returns_a_revision_conflict_for_a_mismatching_base_revision(
+        #[case] base_revision: u64,
+        #[case] current_revision: u64,
+    ) {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", "[]", "[]", None).await;
+        execute(&store, "UPDATE zones SET revision = 2").await;
+
+        let result = store.delete("zone", base_revision).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(DeleteError::RevisionConflict { base_revision: b, current_revision: c })
+                    if b == base_revision && c == current_revision
+            ),
+            "got {result:?}"
+        );
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows.len(), 1, "the zone must not be deleted");
+        assert_eq!(rows[0].revision, 2);
+    }
+
+    #[rstest]
+    #[case::fresh_database(&[])]
+    #[case::other_zones(&["other"])]
+    #[tokio::test]
+    async fn delete_returns_not_found_for_an_unknown_id(#[case] existing_ids: &[&str]) {
+        let store = open_in_memory();
+        for id in existing_ids {
+            insert_row(&store, id, id, "[]", "[]", None).await;
+        }
+
+        let result = store.delete("zone", 0).await;
+
+        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
+        assert_eq!(store.list().await.expect("list succeeded").len(), existing_ids.len());
+    }
+
+    #[tokio::test]
+    async fn delete_fails_for_a_stored_revision_out_of_range() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", "[]", "[]", None).await;
+        execute(&store, "UPDATE zones SET revision = -1").await;
+
+        let result = store.delete("zone", 0).await;
+
+        assert!(matches!(result, Err(DeleteError::Store(ZoneStoreError::InvalidRevision(-1)))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_fails_when_the_store_fails() {
+        let store = open_in_memory();
+        execute(&store, "DROP TABLE zones").await;
+
+        let result = store.delete("zone", 0).await;
+
+        assert!(matches!(result, Err(DeleteError::Store(ZoneStoreError::Sqlite(_)))), "got {result:?}");
     }
 }

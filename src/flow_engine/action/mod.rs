@@ -17,6 +17,7 @@ mod device_command;
 mod log_action;
 
 pub use control_group_action::ControlGroupAction;
+pub use control_zone_action::ControlZoneAction;
 pub use device_command::CommandMap;
 
 #[cfg(test)]

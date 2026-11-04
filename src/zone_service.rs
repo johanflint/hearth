@@ -1,6 +1,7 @@
 use crate::domain::{Event, Owner, Zone, ZoneChanged};
+use crate::flow_registry::{FlowRegistry, FlowSummary};
 use crate::store::StoreSnapshot;
-use crate::zone_store::{InsertError, StoredZone, UpdateError, ZoneStore, ZoneStoreError};
+use crate::zone_store::{DeleteError, InsertError, StoredZone, UpdateError, ZoneStore, ZoneStoreError};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use thiserror::Error;
@@ -11,12 +12,18 @@ use tokio::sync::watch::Receiver;
 pub struct ZoneService {
     snapshot_rx: Receiver<StoreSnapshot>,
     zone_store: Arc<ZoneStore>,
+    flow_registry: Arc<FlowRegistry>,
     store_tx: Sender<Event>,
 }
 
 impl ZoneService {
-    pub fn new(snapshot_rx: Receiver<StoreSnapshot>, zone_store: Arc<ZoneStore>, store_tx: Sender<Event>) -> Self {
-        ZoneService { snapshot_rx, zone_store, store_tx }
+    pub fn new(
+        snapshot_rx: Receiver<StoreSnapshot>,
+        zone_store: Arc<ZoneStore>,
+        flow_registry: Arc<FlowRegistry>,
+        store_tx: Sender<Event>,
+    ) -> Self {
+        ZoneService { snapshot_rx, zone_store, flow_registry, store_tx }
     }
 
     pub fn list(&self) -> Vec<Arc<Zone>> {
@@ -135,6 +142,28 @@ impl ZoneService {
         }));
         Ok(stored_zone)
     }
+
+    pub async fn delete_zone(&self, id: &str, base_revision: u64) -> Result<(), DeleteZoneError> {
+        let store_snapshot = self.snapshot_rx.borrow().clone(); // Cheap
+        let zone = store_snapshot.zones.get(id).ok_or(DeleteZoneError::NotFound)?;
+        if zone.owner == Owner::Integration {
+            return Err(DeleteZoneError::NotOwned);
+        }
+        if zone.revision != base_revision {
+            return Err(DeleteZoneError::RevisionConflict { base_revision, current_revision: zone.revision });
+        }
+
+        let flows = self.flow_registry.flows_referencing_zone(id);
+        if !flows.is_empty() {
+            return Err(DeleteZoneError::InUse(flows));
+        }
+
+        let permit = self.store_tx.reserve().await.map_err(|_| DeleteZoneError::StoreUnavailable)?;
+        self.zone_store.delete(id, base_revision).await?;
+        permit.send(Event::ZoneRemoved { zone_id: id.to_string() });
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -198,12 +227,43 @@ impl From<UpdateError> for UpdateZoneError {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum DeleteZoneError {
+    #[error("zone not found")]
+    NotFound,
+    #[error("zone not owned")]
+    NotOwned,
+    #[error(
+        "revision conflict: delete is based on revision {base_revision}, but the current revision is {current_revision}"
+    )]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error("zone in use by {} flow(s)", .0.len())]
+    InUse(Vec<FlowSummary>),
+    #[error("store is unavailable")]
+    StoreUnavailable,
+    #[error(transparent)]
+    Internal(#[from] ZoneStoreError),
+}
+
+impl From<DeleteError> for DeleteZoneError {
+    fn from(err: DeleteError) -> Self {
+        match err {
+            DeleteError::NotFound => Self::NotFound,
+            DeleteError::RevisionConflict { base_revision, current_revision } => {
+                Self::RevisionConflict { base_revision, current_revision }
+            }
+            DeleteError::Store(err) => Self::Internal(err),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::database::Database;
     use crate::domain::{Group, Owner};
-    use crate::test_support::DeviceBuilder;
+    use crate::flow_engine::VersionedFlow;
+    use crate::test_support::{DeviceBuilder, flow_using_zones};
     use rstest::rstest;
     use std::collections::{BTreeSet, HashMap};
     use std::path::Path;
@@ -229,7 +289,7 @@ mod tests {
     fn service(rx: Receiver<StoreSnapshot>) -> ZoneService {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let (store_tx, _store_rx) = mpsc::channel(1);
-        ZoneService::new(rx, Arc::new(ZoneStore::new(database)), store_tx)
+        ZoneService::new(rx, Arc::new(ZoneStore::new(database)), Arc::new(FlowRegistry::new(vec![])), store_tx)
     }
 
     /// Bind `store_rx` when the service reserves a permit: dropping it, e.g. by leaving it out with `..`,
@@ -241,11 +301,16 @@ mod tests {
     }
 
     fn create_service(snapshot: StoreSnapshot) -> Fixture {
+        create_service_with_flows(snapshot, vec![])
+    }
+
+    fn create_service_with_flows(snapshot: StoreSnapshot, flows: Vec<VersionedFlow>) -> Fixture {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let zone_store = Arc::new(ZoneStore::new(database));
         let (store_tx, store_rx) = mpsc::channel(8);
         let (_tx, rx) = watch::channel(snapshot);
-        let service = ZoneService::new(rx, Arc::clone(&zone_store), store_tx);
+        let flow_registry = Arc::new(FlowRegistry::new(flows));
+        let service = ZoneService::new(rx, Arc::clone(&zone_store), flow_registry, store_tx);
         Fixture { service, zone_store, store_rx }
     }
 
@@ -254,7 +319,8 @@ mod tests {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let (store_tx, store_rx) = mpsc::channel(8);
         let (_tx, rx) = watch::channel(snapshot);
-        let service = ZoneService::new(rx, Arc::new(ZoneStore::new(database.clone())), store_tx);
+        let flow_registry = Arc::new(FlowRegistry::new(vec![]));
+        let service = ZoneService::new(rx, Arc::new(ZoneStore::new(database.clone())), flow_registry, store_tx);
         database
             .call(|conn| conn.execute("DROP TABLE zones", []).map_err(crate::database::DatabaseError::from))
             .await
@@ -843,5 +909,200 @@ mod tests {
 
         assert!(matches!(result, Err(UpdateZoneError::Internal(_))), "got {result:?}");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    /// A service with a stored Hearth zone "zone" named "Downstairs" at revision 0, that is also in the snapshot
+    async fn create_service_for_delete() -> Fixture {
+        create_service_for_delete_with_flows(vec![]).await
+    }
+
+    async fn create_service_for_delete_with_flows(flows: Vec<VersionedFlow>) -> Fixture {
+        let fixture = create_service_with_flows(snapshot(vec![hearth_zone("zone", "Downstairs")]), flows);
+        fixture.zone_store.insert("zone", "Downstairs", &set(&["g"]), &set(&[])).await.unwrap();
+        fixture
+    }
+
+    #[tokio::test]
+    async fn delete_zone_removes_the_stored_zone() {
+        let Fixture { service, zone_store, store_rx: _store_rx } = create_service_for_delete().await;
+
+        service.delete_zone("zone", 0).await.unwrap();
+
+        assert!(zone_store.list().await.unwrap().is_empty(), "the zone must be deleted");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_only_removes_the_given_zone() {
+        let Fixture { service, zone_store, store_rx: _store_rx } = create_service_for_delete().await;
+        zone_store.insert("other", "Other", &set(&["g"]), &set(&[])).await.unwrap();
+
+        service.delete_zone("zone", 0).await.unwrap();
+
+        let stored = zone_store.list().await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id, "other");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_sends_a_zone_removed_event() {
+        let Fixture { service, mut store_rx, .. } = create_service_for_delete().await;
+
+        service.delete_zone("zone", 0).await.unwrap();
+
+        assert_eq!(store_rx.try_recv().expect("an event was sent"), Event::ZoneRemoved { zone_id: "zone".to_string() });
+        assert!(store_rx.try_recv().is_err(), "only one event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_returns_not_found_for_an_unknown_id() {
+        let Fixture { service, zone_store, mut store_rx } = create_service_for_delete().await;
+
+        let result = service.delete_zone("unknown", 0).await;
+
+        assert!(matches!(result, Err(DeleteZoneError::NotFound)), "got {result:?}");
+        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_returns_not_found_when_the_zone_is_in_the_snapshot_but_not_stored() {
+        let Fixture { service, mut store_rx, .. } = create_service(snapshot(vec![hearth_zone("zone", "Downstairs")]));
+
+        let result = service.delete_zone("zone", 0).await;
+
+        assert!(matches!(result, Err(DeleteZoneError::NotFound)), "got {result:?}");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_rejects_a_zone_owned_by_an_integration() {
+        let Fixture { service, mut store_rx, .. } = create_service(snapshot(vec![zone("zone", "Downstairs")]));
+
+        let result = service.delete_zone("zone", 0).await;
+
+        assert!(matches!(result, Err(DeleteZoneError::NotOwned)), "got {result:?}");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[rstest]
+    #[case::behind(1)]
+    #[case::ahead(5)]
+    #[tokio::test]
+    async fn delete_zone_returns_a_revision_conflict_for_a_mismatching_base_revision(#[case] base_revision: u64) {
+        let Fixture { service, zone_store, mut store_rx } = create_service_for_delete().await;
+
+        let result = service.delete_zone("zone", base_revision).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(DeleteZoneError::RevisionConflict { base_revision: b, current_revision: 0 }) if b == base_revision
+            ),
+            "got {result:?}"
+        );
+        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_returns_a_revision_conflict_when_the_snapshot_is_behind_the_database() {
+        let Fixture { service, zone_store, mut store_rx } = create_service_for_delete().await;
+        zone_store.update("zone", 0, "Downstairs", &set(&["g"]), &set(&[])).await.unwrap();
+
+        let result = service.delete_zone("zone", 0).await;
+
+        assert!(
+            matches!(result, Err(DeleteZoneError::RevisionConflict { base_revision: 0, current_revision: 1 })),
+            "got {result:?}"
+        );
+        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent after a failed delete");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_fails_without_deleting_when_the_store_is_gone() {
+        let Fixture { service, zone_store, store_rx } = create_service_for_delete().await;
+        drop(store_rx);
+
+        let result = service.delete_zone("zone", 0).await;
+
+        assert!(matches!(result, Err(DeleteZoneError::StoreUnavailable)), "got {result:?}");
+        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_returns_an_internal_error_when_the_database_fails() {
+        let (service, mut store_rx) =
+            create_service_with_broken_database(snapshot(vec![hearth_zone("zone", "Downstairs")])).await;
+
+        let result = service.delete_zone("zone", 0).await;
+
+        assert!(matches!(result, Err(DeleteZoneError::Internal(_))), "got {result:?}");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_returns_in_use_with_the_flows_using_the_zone_ordered_by_id() {
+        let flows = vec![
+            flow_using_zones("b", "Flow B", 2, &["zone"]),
+            flow_using_zones("a", "Flow A", 0, &["other", "zone"]),
+            flow_using_zones("c", "Flow C", 1, &["other"]),
+        ];
+        let Fixture { service, zone_store, mut store_rx } = create_service_for_delete_with_flows(flows).await;
+
+        let result = service.delete_zone("zone", 0).await;
+
+        let Err(err @ DeleteZoneError::InUse(_)) = result else {
+            panic!("expected InUse, got {result:?}");
+        };
+        assert_eq!(err.to_string(), "zone in use by 2 flow(s)");
+        let DeleteZoneError::InUse(summaries) = err else { unreachable!() };
+        let summaries: Vec<_> = summaries.iter().map(|s| (s.id.as_str(), s.name.as_str(), s.revision)).collect();
+        assert_eq!(summaries, [("a", "Flow A", 0), ("b", "Flow B", 2)]);
+        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert!(store_rx.try_recv().is_err(), "no event must be sent");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_returns_not_found_before_checking_the_flows() {
+        let flows = vec![flow_using_zones("a", "Flow A", 0, &["unknown"])];
+        let Fixture { service, .. } = create_service_with_flows(snapshot(vec![]), flows);
+
+        let result = service.delete_zone("unknown", 0).await;
+
+        assert!(matches!(result, Err(DeleteZoneError::NotFound)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_rejects_a_zone_owned_by_an_integration_before_checking_the_flows() {
+        let flows = vec![flow_using_zones("a", "Flow A", 0, &["hue"])];
+        let Fixture { service, .. } = create_service_with_flows(snapshot(vec![zone("hue", "Hue zone")]), flows);
+
+        let result = service.delete_zone("hue", 0).await;
+
+        assert!(matches!(result, Err(DeleteZoneError::NotOwned)), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_zone_returns_a_revision_conflict_before_checking_the_flows() {
+        let flows = vec![flow_using_zones("a", "Flow A", 0, &["zone"])];
+        let Fixture { service, .. } = create_service_for_delete_with_flows(flows).await;
+
+        let result = service.delete_zone("zone", 1).await;
+
+        assert!(
+            matches!(result, Err(DeleteZoneError::RevisionConflict { base_revision: 1, current_revision: 0 })),
+            "got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_zone_ignores_flows_using_other_zones() {
+        let flows = vec![flow_using_zones("a", "Flow A", 0, &["other"])];
+        let Fixture { service, zone_store, store_rx: _store_rx } = create_service_for_delete_with_flows(flows).await;
+
+        service.delete_zone("zone", 0).await.unwrap();
+
+        assert!(zone_store.list().await.unwrap().is_empty(), "the zone must be deleted");
     }
 }

@@ -111,6 +111,21 @@ impl Action for ControlZoneAction {
     }
 }
 
+impl ControlZoneAction {
+    #[cfg(test)]
+    pub fn new(
+        zone_id: String,
+        claim: Option<ClaimMode>,
+        property: HashMap<String, PropertyCommand>,
+    ) -> ControlZoneAction {
+        ControlZoneAction { zone_id, claim, property }
+    }
+
+    pub fn zone_id(&self) -> &str {
+        &self.zone_id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
