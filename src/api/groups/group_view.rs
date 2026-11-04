@@ -11,12 +11,12 @@ pub(super) struct GroupView {
     pub name: String,
     pub device_ids: BTreeSet<String>,
     pub revision: u64,
-    pub owner: GroupOwnerView,
+    pub owner: OwnerView,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) enum GroupOwnerView {
+pub(super) enum OwnerView {
     Hearth,
     Integration,
 }
@@ -40,16 +40,16 @@ impl From<StoredGroup> for GroupView {
             name: group.name,
             device_ids: group.device_ids,
             revision: group.revision,
-            owner: GroupOwnerView::Hearth,
+            owner: OwnerView::Hearth,
         }
     }
 }
 
-impl From<&Owner> for GroupOwnerView {
+impl From<&Owner> for OwnerView {
     fn from(owner: &Owner) -> Self {
         match owner {
-            Owner::Hearth => GroupOwnerView::Hearth,
-            Owner::Integration => GroupOwnerView::Integration,
+            Owner::Hearth => OwnerView::Hearth,
+            Owner::Integration => OwnerView::Integration,
         }
     }
 }
