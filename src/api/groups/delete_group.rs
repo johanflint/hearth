@@ -1,6 +1,6 @@
 use crate::api::ApiState;
 use crate::api::error::{ErrorResponse, InUseErrorResponse};
-use crate::group_service::DeleteGroupError;
+use crate::services::DeleteGroupError;
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};

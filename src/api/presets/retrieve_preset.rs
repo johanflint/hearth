@@ -1,7 +1,7 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
 use crate::api::presets::preset_response::PresetResponse;
-use crate::preset_service::RetrievePresetError;
+use crate::services::RetrievePresetError;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;

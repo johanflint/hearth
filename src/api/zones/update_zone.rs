@@ -2,7 +2,7 @@ use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
 use crate::api::parse_request::parse_request;
 use crate::api::zones::zone_view::ZoneView;
-use crate::zone_service::UpdateZoneError;
+use crate::services::UpdateZoneError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};

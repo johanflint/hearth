@@ -1,10 +1,7 @@
 use crate::core_tasks::CoreTasks;
 use crate::database::Database;
-use crate::flow_service::FlowService;
-use crate::group_service::GroupService;
 use crate::integration::Integration;
-use crate::preset_service::PresetService;
-use crate::zone_service::ZoneService;
+use crate::services::{FlowService, GroupService, PresetService, ZoneService};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::sync::Arc;
 

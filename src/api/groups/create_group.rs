@@ -2,7 +2,7 @@ use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
 use crate::api::groups::group_view::GroupView;
 use crate::api::parse_request::parse_request;
-use crate::group_service::CreateGroupError;
+use crate::services::CreateGroupError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;

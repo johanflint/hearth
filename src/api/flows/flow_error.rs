@@ -2,7 +2,7 @@ use crate::api::error::ErrorResponse;
 use crate::api::parse_request::invalid_json;
 use crate::domain::{FlowValidationError, Location, Problem, ValidationIssue};
 use crate::flow_loader::FlowFactoryError;
-use crate::flow_service::ValidateError;
+use crate::services::ValidateError;
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

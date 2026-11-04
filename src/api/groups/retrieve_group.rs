@@ -1,6 +1,6 @@
 use crate::api::ApiState;
 use crate::api::groups::group_view::GroupView;
-use crate::group_service::RetrieveGroupError;
+use crate::services::RetrieveGroupError;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;

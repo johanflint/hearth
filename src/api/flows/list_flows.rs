@@ -1,6 +1,6 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
-use crate::flow_service::ListFlowsError;
+use crate::services::ListFlowsError;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;

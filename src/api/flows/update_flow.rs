@@ -2,7 +2,7 @@ use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
 use crate::api::flows::flow_error::validate_error_response;
 use crate::api::parse_request::parse_request;
-use crate::flow_service::UpdateFlowError;
+use crate::services::UpdateFlowError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
