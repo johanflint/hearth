@@ -77,12 +77,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("✅  Started database");
 
     let flow_repository = Arc::new(FlowRepository::new(database.clone()));
-    let flows = flow_loader::load_flows_from_store(&flow_repository).await?;
+    let flows = flow_loader::load_flows_from_repository(&flow_repository).await?;
     let flow_registry = Arc::new(FlowRegistry::new(flows));
     info!("✅  Loaded flows");
 
     let preset_repository = Arc::new(PresetRepository::new(database.clone()));
-    let presets = preset_loader::load_presets_from_store(&preset_repository).await?;
+    let presets = preset_loader::load_presets_from_repository(&preset_repository).await?;
     let preset_registry = Arc::new(PresetRegistry::new(presets));
     info!("✅  Loaded presets");
 

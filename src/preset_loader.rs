@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
 #[instrument(skip_all)]
-pub async fn load_presets_from_store(
+pub async fn load_presets_from_repository(
     preset_repository: &PresetRepository,
 ) -> Result<Vec<VersionedPreset>, PresetRepositoryError> {
     info!("🗄️ Loading presets...");
@@ -60,12 +60,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_presets_from_store_converts_the_stored_values() {
+    async fn load_presets_from_repository_converts_the_stored_values() {
         let (database, preset_repository) = open_in_memory();
         insert_row(&database, "brightness", "42").await;
         insert_row(&database, "red", r##"{"type":"color","value":"#ff0000"}"##).await;
 
-        let presets = load_presets_from_store(&preset_repository).await.expect("load succeeded");
+        let presets = load_presets_from_repository(&preset_repository).await.expect("load succeeded");
 
         assert_eq!(presets.len(), 2);
         assert_eq!(presets[0].id, "brightness");
@@ -77,7 +77,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_presets_from_store_keeps_the_stored_revision() {
+    async fn load_presets_from_repository_keeps_the_stored_revision() {
         let (database, preset_repository) = open_in_memory();
         insert_row(&database, "brightness", "42").await;
         database
@@ -85,19 +85,19 @@ mod tests {
             .await
             .expect("set revision");
 
-        let presets = load_presets_from_store(&preset_repository).await.expect("load succeeded");
+        let presets = load_presets_from_repository(&preset_repository).await.expect("load succeeded");
 
         assert_eq!(presets[0].revision, 7);
     }
 
     #[tokio::test]
-    async fn load_presets_from_store_skips_invalid_presets() {
+    async fn load_presets_from_repository_skips_invalid_presets() {
         let (database, preset_repository) = open_in_memory();
         insert_row(&database, "valid", "true").await;
         // Valid JSON, but not a valid value
         insert_row(&database, "invalid", r#"{"type":"temperature","value":20}"#).await;
 
-        let presets = load_presets_from_store(&preset_repository).await.expect("load succeeded");
+        let presets = load_presets_from_repository(&preset_repository).await.expect("load succeeded");
 
         assert_eq!(presets.len(), 1);
         assert_eq!(presets[0].id, "valid");
@@ -105,12 +105,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_presets_from_store_fails_when_the_repository_fails() {
+    async fn load_presets_from_repository_fails_when_the_repository_fails() {
         let (database, preset_repository) = open_in_memory();
         insert_row(&database, "valid", "true").await;
         insert_row(&database, "corrupt", "not valid json").await;
 
-        let result = load_presets_from_store(&preset_repository).await;
+        let result = load_presets_from_repository(&preset_repository).await;
 
         assert!(matches!(result, Err(PresetRepositoryError::Sqlite(_))), "got {result:?}");
     }

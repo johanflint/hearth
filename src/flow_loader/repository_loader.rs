@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
 #[instrument(skip_all)]
-pub async fn load_flows_from_store(
+pub async fn load_flows_from_repository(
     flow_repository: &FlowRepository,
 ) -> Result<Vec<VersionedFlow>, FlowRepositoryError> {
     info!("🗄️ Loading flows...");
@@ -35,7 +35,7 @@ mod tests {
     use std::path::Path;
 
     #[tokio::test]
-    async fn load_flows_from_store_skips_invalid_flows_and_preserves_revisions() {
+    async fn load_flows_from_repository_skips_invalid_flows_and_preserves_revisions() {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let flow_repository = FlowRepository::new(database);
         let valid_flow = json!({"id": "validFlow", "name": "Valid", "nodes": [{"id": "startNode", "type": "startNode", "outgoingNode": "endNode"}, {"id": "endNode", "type": "endNode"}]});
@@ -47,7 +47,7 @@ mod tests {
             .await
             .expect("insert invalid flow");
 
-        let flows = load_flows_from_store(&flow_repository).await.expect("load succeeded");
+        let flows = load_flows_from_repository(&flow_repository).await.expect("load succeeded");
 
         assert_eq!(flows.len(), 1);
         assert_eq!(flows[0].id(), "validFlow");
