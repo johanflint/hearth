@@ -122,7 +122,7 @@ impl ControlGroupAction {
 mod tests {
     use super::*;
     use crate::domain::property::{NumberProperty, PropertyType, ValueKind};
-    use crate::domain::{Device, Group, GroupOwner, Number, Value};
+    use crate::domain::{Device, Group, Number, Owner, Value};
     use crate::flow_engine::action::device_command::DeviceCommand;
     use crate::store::{DeviceMap, GroupMap};
     use crate::test_support::{DeviceBuilder, property_command, resolved_property_command};
@@ -159,7 +159,7 @@ mod tests {
             name: "Room".to_string(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: None,
         };
         let groups: GroupMap = HashMap::from([(group.id.clone(), Arc::new(group))]);

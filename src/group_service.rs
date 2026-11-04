@@ -1,4 +1,4 @@
-use crate::domain::{Event, Group, GroupChanged, GroupOwner};
+use crate::domain::{Event, Group, GroupChanged, Owner};
 use crate::flow_registry::{FlowRegistry, FlowSummary};
 use crate::group_store::{DeleteError, GroupStore, GroupStoreError, InsertError, StoredGroup, UpdateError};
 use crate::store::StoreSnapshot;
@@ -60,7 +60,7 @@ impl GroupService {
             name: name.to_string(),
             device_ids: device_ids.into_iter().collect(), // BTreeSet dedupes
             revision: 0,
-            owner: GroupOwner::Hearth,
+            owner: Owner::Hearth,
             external_id: None,
         };
 
@@ -93,7 +93,7 @@ impl GroupService {
 
         let snapshot = self.snapshot_rx.borrow().clone();
         match snapshot.groups.get(id) {
-            Some(group) if group.owner == GroupOwner::Integration => return Err(UpdateGroupError::NotOwned),
+            Some(group) if group.owner == Owner::Integration => return Err(UpdateGroupError::NotOwned),
             _ => {}
         }
 
@@ -124,7 +124,7 @@ impl GroupService {
     pub async fn delete_group(&self, id: &str, base_revision: u64) -> Result<(), DeleteGroupError> {
         let store_snapshot = self.snapshot_rx.borrow().clone(); // Cheap
         let group = store_snapshot.groups.get(id).ok_or(DeleteGroupError::NotFound)?;
-        if group.owner == GroupOwner::Integration {
+        if group.owner == Owner::Integration {
             return Err(DeleteGroupError::NotOwned);
         }
         if group.revision != base_revision {
@@ -235,7 +235,6 @@ impl From<DeleteError> for DeleteGroupError {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use crate::domain::GroupOwner;
     use crate::flow_engine::VersionedFlow;
     use crate::test_support::{DeviceBuilder, flow_using_groups};
     use rstest::rstest;
@@ -249,7 +248,7 @@ mod tests {
             name: name.to_string(),
             device_ids: BTreeSet::new(),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: None,
         })
     }
@@ -465,7 +464,7 @@ mod tests {
                 name: "Kitchen".to_string(),
                 device_ids: set(&["a"]),
                 revision: 0,
-                owner: GroupOwner::Hearth,
+                owner: Owner::Hearth,
                 external_id: None,
             }
         );
@@ -781,7 +780,7 @@ mod tests {
     }
 
     fn hearth_group(id: &str, name: &str, revision: u64) -> Arc<Group> {
-        Arc::new(Group { owner: GroupOwner::Hearth, revision, ..Arc::unwrap_or_clone(group(id, name)) })
+        Arc::new(Group { owner: Owner::Hearth, revision, ..Arc::unwrap_or_clone(group(id, name)) })
     }
 
     /// A service with a stored Hearth group "group" named "Kitchen" at revision 0, that is also in the snapshot

@@ -1,4 +1,5 @@
 use crate::domain::Device;
+use crate::domain::owner::Owner;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -9,7 +10,7 @@ pub struct Group {
     pub name: String,
     pub device_ids: BTreeSet<String>,
     pub revision: u64,
-    pub owner: GroupOwner,
+    pub owner: Owner,
     pub external_id: Option<String>,
 }
 
@@ -20,10 +21,4 @@ impl Group {
     ) -> impl Iterator<Item = &'a String> {
         self.device_ids.iter().filter(|id| !devices.contains_key(*id))
     }
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum GroupOwner {
-    Hearth,
-    Integration,
 }

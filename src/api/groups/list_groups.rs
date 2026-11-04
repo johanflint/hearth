@@ -22,7 +22,7 @@ mod tests {
     use super::*;
     use crate::api::groups::router;
     use crate::api::test_support::{body_json, create_state, create_state_with_snapshot};
-    use crate::domain::{Group, GroupOwner};
+    use crate::domain::{Group, Owner};
     use crate::flow_registry::FlowRegistry;
     use crate::store::StoreSnapshot;
     use axum::body::Body;
@@ -39,7 +39,7 @@ mod tests {
         router().with_state(state).oneshot(request).await.unwrap()
     }
 
-    fn group(id: &str, name: &str, revision: u64, owner: GroupOwner) -> Group {
+    fn group(id: &str, name: &str, revision: u64, owner: Owner) -> Group {
         Group {
             id: id.to_string(),
             name: name.to_string(),
@@ -68,7 +68,7 @@ mod tests {
     #[tokio::test]
     async fn list_groups_returns_the_group_with_camel_case_fields() {
         let state =
-            create_state_with_snapshot(snapshot(vec![group("living-room", "Living room", 3, GroupOwner::Integration)]));
+            create_state_with_snapshot(snapshot(vec![group("living-room", "Living room", 3, Owner::Integration)]));
 
         let response = call_list_groups(state).await;
 
@@ -88,10 +88,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::hearth(GroupOwner::Hearth, "hearth")]
-    #[case::integration(GroupOwner::Integration, "integration")]
+    #[case::hearth(Owner::Hearth, "hearth")]
+    #[case::integration(Owner::Integration, "integration")]
     #[tokio::test]
-    async fn list_groups_returns_the_owner_of_the_group(#[case] owner: GroupOwner, #[case] expected: &str) {
+    async fn list_groups_returns_the_owner_of_the_group(#[case] owner: Owner, #[case] expected: &str) {
         let state = create_state_with_snapshot(snapshot(vec![group("group", "Group", 0, owner)]));
 
         let response = call_list_groups(state).await;
@@ -110,7 +110,7 @@ mod tests {
         let device_ids = device_ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
         let state = create_state_with_snapshot(snapshot(vec![Group {
             device_ids,
-            ..group("group", "Group", 0, GroupOwner::Hearth)
+            ..group("group", "Group", 0, Owner::Hearth)
         }]));
 
         let response = call_list_groups(state).await;
@@ -121,9 +121,9 @@ mod tests {
     #[tokio::test]
     async fn list_groups_returns_the_groups_ordered_by_name() {
         let state = create_state_with_snapshot(snapshot(vec![
-            group("1", "Living room", 0, GroupOwner::Integration),
-            group("2", "Bedroom", 0, GroupOwner::Hearth),
-            group("3", "Kitchen", 0, GroupOwner::Integration),
+            group("1", "Living room", 0, Owner::Integration),
+            group("2", "Bedroom", 0, Owner::Hearth),
+            group("3", "Kitchen", 0, Owner::Integration),
         ]));
 
         let response = call_list_groups(state).await;

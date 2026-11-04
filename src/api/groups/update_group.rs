@@ -74,7 +74,7 @@ mod tests {
     use crate::api::groups::router;
     use crate::api::test_support::{body_json, create_state_with_store_tx};
     use crate::database::{Database, DatabaseError};
-    use crate::domain::{Event, Group, GroupOwner};
+    use crate::domain::{Event, Group, Owner};
     use crate::group_store::{GroupStore, StoredGroup};
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
@@ -104,7 +104,7 @@ mod tests {
             name: "Hue room".to_string(),
             device_ids: BTreeSet::from(["a".to_string()]),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: None,
         }
     }
@@ -118,7 +118,7 @@ mod tests {
             name: "Kitchen".to_string(),
             device_ids: BTreeSet::from(["a".to_string()]),
             revision: 0,
-            owner: GroupOwner::Hearth,
+            owner: Owner::Hearth,
             external_id: None,
         };
         let groups: HashMap<_, _> =

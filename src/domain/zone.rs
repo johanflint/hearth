@@ -1,4 +1,4 @@
-use crate::domain::{Group, GroupOwner};
+use crate::domain::{Group, Owner};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ pub struct Zone {
     pub group_ids: BTreeSet<String>,
     pub device_ids: BTreeSet<String>,
     pub revision: u64,
-    pub owner: GroupOwner,
+    pub owner: Owner,
     pub external_id: Option<String>,
 }
 
@@ -43,7 +43,7 @@ mod tests {
             name: id.to_string(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: None,
         })
     }
@@ -59,7 +59,7 @@ mod tests {
             group_ids: group_ids.iter().map(|id| id.to_string()).collect(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
-            owner: GroupOwner::Hearth,
+            owner: Owner::Hearth,
             external_id: None,
         }
     }

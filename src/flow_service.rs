@@ -279,7 +279,7 @@ pub enum ValidateError {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use crate::domain::{Group, GroupOwner, Location, Preset, Problem, ValidationIssue, Value, VersionedPreset};
+    use crate::domain::{Group, Location, Owner, Preset, Problem, ValidationIssue, Value, VersionedPreset};
     use serde_json::json;
     use std::collections::{BTreeSet, HashMap};
     use std::path::Path;
@@ -328,7 +328,7 @@ mod tests {
             name: "Room".to_string(),
             device_ids: BTreeSet::new(),
             revision: 0,
-            owner: GroupOwner::Hearth,
+            owner: Owner::Hearth,
             external_id: None,
         };
         StoreSnapshot {

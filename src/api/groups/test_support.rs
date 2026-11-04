@@ -1,11 +1,11 @@
 use crate::api::ApiState;
 use crate::api::test_support::create_state_with_snapshot;
-use crate::domain::{Group, GroupOwner};
+use crate::domain::{Group, Owner};
 use crate::store::StoreSnapshot;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-pub(super) fn group(id: &str, name: &str, revision: u64, owner: GroupOwner) -> Group {
+pub(super) fn group(id: &str, name: &str, revision: u64, owner: Owner) -> Group {
     Group {
         id: id.to_string(),
         name: name.to_string(),

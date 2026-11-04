@@ -1,7 +1,7 @@
 use crate::domain::property::{
     BooleanProperty, ColorProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyLocator,
 };
-use crate::domain::{Device, Event, Group, GroupChanged, GroupOwner, InitiatedBy, Zone, ZoneChanged};
+use crate::domain::{Device, Event, Group, GroupChanged, InitiatedBy, Owner, Zone, ZoneChanged};
 use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::property_changed_reducer::reduce_property_changed_event;
 use metrics::{counter, gauge};
@@ -266,7 +266,7 @@ impl Store {
                             name,
                             device_ids,
                             revision: 0,
-                            owner: GroupOwner::Integration,
+                            owner: Owner::Integration,
                             external_id,
                         },
                         _ => {
@@ -319,7 +319,7 @@ impl Store {
                             group_ids: BTreeSet::new(),
                             device_ids,
                             revision: 0,
-                            owner: GroupOwner::Integration,
+                            owner: Owner::Integration,
                             external_id,
                         },
                         _ => {
@@ -361,7 +361,7 @@ fn resolve_property_id<T: 'static + Property>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Group, GroupOwner, InitiatedBy, Zone};
+    use crate::domain::{Group, InitiatedBy, Zone};
     use crate::test_support::DeviceBuilder;
     use std::collections::BTreeSet;
     use tokio::sync::mpsc::channel;
@@ -372,13 +372,13 @@ mod tests {
             name: name.to_string(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>(),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: None,
         }
     }
 
     fn hearth_group(id: &str, name: &str, device_ids: &[&str]) -> Group {
-        Group { owner: GroupOwner::Hearth, ..group(id, name, device_ids) }
+        Group { owner: Owner::Hearth, ..group(id, name, device_ids) }
     }
 
     fn start_store() -> (Sender<Event>, Receiver<ReactiveUpdate>) {
@@ -439,8 +439,8 @@ mod tests {
         let update = reactive_rx.recv().await.unwrap();
 
         assert_eq!(update.snapshot.groups.len(), 2);
-        assert_eq!(update.snapshot.groups["hearth"].owner, GroupOwner::Hearth);
-        assert_eq!(update.snapshot.groups["hue"].owner, GroupOwner::Integration);
+        assert_eq!(update.snapshot.groups["hearth"].owner, Owner::Hearth);
+        assert_eq!(update.snapshot.groups["hue"].owner, Owner::Integration);
     }
 
     fn group_changed_with_revision(id: &str, revision: u64) -> Event {
@@ -615,7 +615,7 @@ mod tests {
             group_ids: BTreeSet::new(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>(),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: None,
         }
     }
@@ -817,7 +817,7 @@ mod tests {
     #[tokio::test]
     async fn group_changed_keeps_the_revision_and_owner() {
         let (tx, mut reactive_rx) = start_store();
-        let existing = Group { revision: 3, owner: GroupOwner::Hearth, ..group("group", "Group", &["a"]) };
+        let existing = Group { revision: 3, owner: Owner::Hearth, ..group("group", "Group", &["a"]) };
         tx.send(Event::DiscoveredGroups(vec![existing])).await.unwrap();
         reactive_rx.recv().await.unwrap();
 
@@ -826,7 +826,7 @@ mod tests {
 
         let stored = &update.snapshot.groups["group"];
         assert_eq!(stored.revision, 3);
-        assert_eq!(stored.owner, GroupOwner::Hearth);
+        assert_eq!(stored.owner, Owner::Hearth);
     }
 
     #[tokio::test]
@@ -1007,7 +1007,7 @@ mod tests {
     #[tokio::test]
     async fn zone_changed_keeps_the_revision_and_owner() {
         let (tx, mut reactive_rx) = start_store();
-        let existing = Zone { revision: 3, owner: GroupOwner::Hearth, ..zone("zone", "Zone", &["a"]) };
+        let existing = Zone { revision: 3, owner: Owner::Hearth, ..zone("zone", "Zone", &["a"]) };
         tx.send(Event::DiscoveredZones(vec![existing])).await.unwrap();
         reactive_rx.recv().await.unwrap();
 
@@ -1016,7 +1016,7 @@ mod tests {
 
         let stored = &update.snapshot.zones["zone"];
         assert_eq!(stored.revision, 3);
-        assert_eq!(stored.owner, GroupOwner::Hearth);
+        assert_eq!(stored.owner, Owner::Hearth);
     }
 
     #[tokio::test]

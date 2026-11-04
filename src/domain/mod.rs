@@ -11,6 +11,7 @@ mod events;
 mod geo_location;
 mod group;
 mod number;
+mod owner;
 mod preset;
 pub mod property;
 mod time;
@@ -31,8 +32,9 @@ pub use controller::Controller;
 pub use device::{Device, DeviceType};
 pub use events::{Event, GroupChanged, InitiatedBy, ZoneChanged};
 pub use geo_location::GeoLocation;
-pub use group::{Group, GroupOwner};
+pub use group::Group;
 pub use number::Number;
+pub use owner::Owner;
 pub use preset::Preset;
 pub use time::Time;
 pub use validator::{

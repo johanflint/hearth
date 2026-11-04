@@ -395,7 +395,7 @@ struct LightWrite {
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
-    use crate::domain::GroupOwner;
+    use crate::domain::Owner;
     use crate::domain::property::{CartesianCoordinate, Gamut};
     use crate::hue::client::new_client;
     use crate::hue::domain::LightChanged;
@@ -691,7 +691,7 @@ mod tests {
             name: "Room".to_string(),
             device_ids: devices.iter().map(|device| device.id.clone()).collect(),
             revision: 1,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: external_id.map(str::to_string),
         };
         Command::ControlGroup { group: Arc::new(group), devices, property: Arc::new(property) }
@@ -708,7 +708,7 @@ mod tests {
             group_ids: BTreeSet::new(),
             device_ids: devices.iter().map(|device| device.id.clone()).collect(),
             revision: 1,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: external_id.map(str::to_string),
         };
         Command::ControlZone { zone: Arc::new(zone), devices, property: Arc::new(property) }

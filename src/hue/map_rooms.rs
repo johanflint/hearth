@@ -1,5 +1,5 @@
-use crate::domain::{Group, GroupOwner};
-use crate::hue::domain::{Owner, RoomGet};
+use crate::domain::{Group, Owner};
+use crate::hue::domain::{Owner as HueOwner, RoomGet};
 use std::collections::{BTreeSet, HashSet};
 
 const GROUPED_LIGHT: &str = "grouped_light";
@@ -26,25 +26,25 @@ pub fn map_rooms(rooms: Vec<RoomGet>, light_device_ids: &HashSet<String>) -> Vec
                 name: room.metadata.name,
                 device_ids,
                 revision: 0,
-                owner: GroupOwner::Integration,
+                owner: Owner::Integration,
                 external_id: grouped_light_id,
             })
         })
         .collect()
 }
 
-pub fn grouped_light_id(services: &[Owner]) -> Option<String> {
+pub fn grouped_light_id(services: &[HueOwner]) -> Option<String> {
     services.iter().find(|service| service.rtype == GROUPED_LIGHT).map(|service| service.rid.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::{Metadata, Owner};
+    use crate::hue::domain::{Metadata, Owner as HueOwner};
     use pretty_assertions::assert_eq;
 
-    fn owner(rid: &str, rtype: &str) -> Owner {
-        Owner { rid: rid.to_string(), rtype: rtype.to_string() }
+    fn owner(rid: &str, rtype: &str) -> HueOwner {
+        HueOwner { rid: rid.to_string(), rtype: rtype.to_string() }
     }
 
     fn room(id: &str, name: &str, children: &[&str]) -> RoomGet {
@@ -77,7 +77,7 @@ mod tests {
                 name: "Living room".to_string(),
                 device_ids: device_ids(&["lamp-1", "lamp-2"]),
                 revision: 0,
-                owner: GroupOwner::Integration,
+                owner: Owner::Integration,
                 external_id: Some("grouped-light".to_string()),
             }]
         );

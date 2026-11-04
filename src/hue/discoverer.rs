@@ -149,7 +149,7 @@ mod tests {
     use crate::domain::property::{
         BooleanProperty, DateTimeProperty, EnumProperty, NumberProperty, Property, PropertyType, Unit,
     };
-    use crate::domain::{BatteryState, Connectivity, ContactState, Device, DeviceType, Group, GroupOwner, Zone};
+    use crate::domain::{BatteryState, Connectivity, ContactState, Device, DeviceType, Group, Owner, Zone};
     use crate::hue::client::new_client;
     use chrono::{TimeZone, Timelike, Utc};
     use pretty_assertions::assert_eq;
@@ -509,7 +509,7 @@ mod tests {
                 name: "Eetkamer".to_string(),
                 device_ids: BTreeSet::from(["079e0321-7e18-46bc-bc16-fcbc3dd09e30".to_string()]),
                 revision: 0,
-                owner: GroupOwner::Integration,
+                owner: Owner::Integration,
                 external_id: Some("6c1524d8-1fd7-40fc-a6f4-77e5a4146d89".to_string()),
             }]
         );
@@ -521,7 +521,7 @@ mod tests {
                 group_ids: BTreeSet::new(),
                 device_ids: BTreeSet::from(["079e0321-7e18-46bc-bc16-fcbc3dd09e30".to_string()]),
                 revision: 0,
-                owner: GroupOwner::Integration,
+                owner: Owner::Integration,
                 external_id: Some("e2b6a1c4-8f0d-4c39-b7a2-1d9f5e3c6a88".to_string()),
             }]
         );

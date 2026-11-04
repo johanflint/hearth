@@ -27,7 +27,7 @@ mod tests {
     use crate::api::groups::router;
     use crate::api::groups::test_support::{group, state_with_groups};
     use crate::api::test_support::body_json;
-    use crate::domain::{Group, GroupOwner};
+    use crate::domain::{Group, Owner};
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
@@ -44,7 +44,7 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_group_returns_the_group_with_camel_case_fields() {
-        let state = state_with_groups(vec![group("living-room", "Living room", 3, GroupOwner::Integration)]);
+        let state = state_with_groups(vec![group("living-room", "Living room", 3, Owner::Integration)]);
 
         let response = call_retrieve_group(state, "living-room").await;
 
@@ -62,10 +62,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::hearth(GroupOwner::Hearth, "hearth")]
-    #[case::integration(GroupOwner::Integration, "integration")]
+    #[case::hearth(Owner::Hearth, "hearth")]
+    #[case::integration(Owner::Integration, "integration")]
     #[tokio::test]
-    async fn retrieve_group_returns_the_owner_of_the_group(#[case] owner: GroupOwner, #[case] expected: &str) {
+    async fn retrieve_group_returns_the_owner_of_the_group(#[case] owner: Owner, #[case] expected: &str) {
         let state = state_with_groups(vec![group("group", "Group", 0, owner)]);
 
         let response = call_retrieve_group(state, "group").await;
@@ -82,7 +82,7 @@ mod tests {
         #[case] expected: serde_json::Value,
     ) {
         let device_ids = device_ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
-        let state = state_with_groups(vec![Group { device_ids, ..group("group", "Group", 0, GroupOwner::Hearth) }]);
+        let state = state_with_groups(vec![Group { device_ids, ..group("group", "Group", 0, Owner::Hearth) }]);
 
         let response = call_retrieve_group(state, "group").await;
 
@@ -91,7 +91,7 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_group_finds_an_id_with_url_encoded_characters() {
-        let state = state_with_groups(vec![group("a b", "Spaced", 0, GroupOwner::Hearth)]);
+        let state = state_with_groups(vec![group("a b", "Spaced", 0, Owner::Hearth)]);
 
         let response = call_retrieve_group(state, "a%20b").await;
 
@@ -101,10 +101,8 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_group_returns_only_the_requested_group() {
-        let state = state_with_groups(vec![
-            group("a", "A", 0, GroupOwner::Integration),
-            group("b", "B", 0, GroupOwner::Integration),
-        ]);
+        let state =
+            state_with_groups(vec![group("a", "A", 0, Owner::Integration), group("b", "B", 0, Owner::Integration)]);
 
         let response = call_retrieve_group(state, "b").await;
 
@@ -113,7 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_group_returns_404_for_an_unknown_group() {
-        let state = state_with_groups(vec![group("a", "A", 0, GroupOwner::Integration)]);
+        let state = state_with_groups(vec![group("a", "A", 0, Owner::Integration)]);
 
         let response = call_retrieve_group(state, "unknown").await;
 

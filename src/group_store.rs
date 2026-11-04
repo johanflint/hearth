@@ -1,5 +1,5 @@
 use crate::database::{Database, DatabaseError};
-use crate::domain::{Group, GroupOwner};
+use crate::domain::{Group, Owner};
 use chrono::{DateTime, Utc};
 use rusqlite::{OptionalExtension, Row, params};
 use std::collections::BTreeSet;
@@ -172,7 +172,7 @@ impl From<StoredGroup> for Group {
             name: stored.name,
             device_ids: stored.device_ids,
             revision: stored.revision,
-            owner: GroupOwner::Hearth,
+            owner: Owner::Hearth,
             external_id: None,
         }
     }
@@ -310,7 +310,7 @@ mod tests {
         assert_eq!(group.name, "Group");
         assert_eq!(group.revision, 3);
         assert_eq!(group.device_ids, BTreeSet::from(["a".to_string(), "b".to_string()]));
-        assert_eq!(group.owner, GroupOwner::Hearth);
+        assert_eq!(group.owner, Owner::Hearth);
         assert_eq!(group.external_id, None);
     }
 

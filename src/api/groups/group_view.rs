@@ -1,4 +1,4 @@
-use crate::domain::{Group, GroupOwner};
+use crate::domain::{Group, Owner};
 use crate::group_store::StoredGroup;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -45,11 +45,11 @@ impl From<StoredGroup> for GroupView {
     }
 }
 
-impl From<&GroupOwner> for GroupOwnerView {
-    fn from(owner: &GroupOwner) -> Self {
+impl From<&Owner> for GroupOwnerView {
+    fn from(owner: &Owner) -> Self {
         match owner {
-            GroupOwner::Hearth => GroupOwnerView::Hearth,
-            GroupOwner::Integration => GroupOwnerView::Integration,
+            Owner::Hearth => GroupOwnerView::Hearth,
+            Owner::Integration => GroupOwnerView::Integration,
         }
     }
 }
