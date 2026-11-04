@@ -74,6 +74,8 @@ pub struct GroupChanged {
 pub struct ZoneChanged {
     pub id: String,
     pub name: Option<String>,
+    pub group_ids: Option<BTreeSet<String>>,
     pub device_ids: Option<BTreeSet<String>>,
+    pub revision: Option<u64>,
     pub external_id: Option<String>,
 }

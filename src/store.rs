@@ -5,7 +5,7 @@ use crate::domain::{Device, Event, Group, GroupChanged, InitiatedBy, Owner, Zone
 use crate::metrics::{Metric, ResultOutcomeLabel};
 use crate::property_changed_reducer::reduce_property_changed_event;
 use metrics::{counter, gauge};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
@@ -306,13 +306,15 @@ impl Store {
                 gauge!(Metric::StoreZoneCount.name()).set(self.zones.len() as f64);
                 None
             }
-            Event::ZoneChanged(ZoneChanged { id, name, device_ids, external_id }) => {
+            Event::ZoneChanged(ZoneChanged { id, name, group_ids, device_ids, revision, external_id }) => {
                 let zone = match self.zones.get(&id) {
                     Some(existing) => {
                         let existing = Zone::clone(existing);
                         Zone {
                             name: name.unwrap_or(existing.name),
+                            group_ids: group_ids.unwrap_or(existing.group_ids),
                             device_ids: device_ids.unwrap_or(existing.device_ids),
+                            revision: revision.unwrap_or(existing.revision),
                             external_id: external_id.or(existing.external_id),
                             ..existing
                         }
@@ -321,7 +323,7 @@ impl Store {
                         (Some(name), Some(device_ids)) => Zone {
                             id: id.clone(),
                             name,
-                            group_ids: BTreeSet::new(),
+                            group_ids: group_ids.unwrap_or_default(),
                             device_ids,
                             revision: 0,
                             owner: Owner::Integration,
@@ -1004,7 +1006,9 @@ mod tests {
         Event::ZoneChanged(ZoneChanged {
             id: id.to_string(),
             name: name.map(str::to_string),
+            group_ids: None,
             device_ids: device_ids.map(|ids| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>()),
+            revision: None,
             external_id: None,
         })
     }
@@ -1013,7 +1017,9 @@ mod tests {
         Event::ZoneChanged(ZoneChanged {
             id: id.to_string(),
             name: None,
+            group_ids: None,
             device_ids: None,
+            revision: None,
             external_id: Some(external_id.to_string()),
         })
     }
@@ -1037,7 +1043,9 @@ mod tests {
         tx.send(Event::ZoneChanged(ZoneChanged {
             id: "zone".to_string(),
             name: Some("Zone".to_string()),
+            group_ids: None,
             device_ids: Some(BTreeSet::from(["a".to_string(), "b".to_string()])),
+            revision: None,
             external_id: Some("grouped-light".to_string()),
         }))
         .await
@@ -1111,6 +1119,145 @@ mod tests {
         let stored = &update.snapshot.zones["zone"];
         assert_eq!(stored.revision, 3);
         assert_eq!(stored.owner, Owner::Hearth);
+    }
+
+    fn zone_changed_with_revision(id: &str, revision: u64) -> Event {
+        Event::ZoneChanged(ZoneChanged {
+            id: id.to_string(),
+            name: None,
+            group_ids: None,
+            device_ids: None,
+            revision: Some(revision),
+            external_id: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn zone_changed_with_a_revision_updates_the_revision_of_an_existing_zone() {
+        let (tx, mut reactive_rx) = start_store_with_zones(vec![hearth_zone("zone", "Zone", &["a"])]);
+
+        tx.send(zone_changed_with_revision("zone", 3)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let expected = Zone { revision: 3, ..hearth_zone("zone", "Zone", &["a"]) };
+        assert_eq!(*update.snapshot.zones["zone"], expected);
+    }
+
+    #[tokio::test]
+    async fn zone_changed_without_a_revision_keeps_the_existing_revision() {
+        let initial = Zone { revision: 2, ..hearth_zone("zone", "Zone", &["a"]) };
+        let (tx, mut reactive_rx) = start_store_with_zones(vec![initial]);
+
+        tx.send(zone_changed("zone", Some("Renamed"), None)).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones["zone"].revision, 2);
+        assert_eq!(update.snapshot.zones["zone"].name, "Renamed");
+    }
+
+    #[tokio::test]
+    async fn zone_changed_ignores_the_revision_of_an_unknown_zone() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::ZoneChanged(ZoneChanged {
+            id: "zone".to_string(),
+            name: Some("Zone".to_string()),
+            group_ids: None,
+            device_ids: Some(BTreeSet::from(["a".to_string()])),
+            revision: Some(5),
+            external_id: None,
+        }))
+        .await
+        .unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones["zone"].revision, 0);
+    }
+
+    #[tokio::test]
+    async fn zone_changed_with_groups_replaces_the_groups_of_an_existing_zone() {
+        let initial = Zone { group_ids: BTreeSet::from(["g".to_string()]), ..hearth_zone("zone", "Zone", &["a"]) };
+        let (tx, mut reactive_rx) = start_store_with_zones(vec![initial]);
+
+        tx.send(Event::ZoneChanged(ZoneChanged {
+            id: "zone".to_string(),
+            name: None,
+            group_ids: Some(BTreeSet::from(["h".to_string(), "i".to_string()])),
+            device_ids: None,
+            revision: None,
+            external_id: None,
+        }))
+        .await
+        .unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let zone = &update.snapshot.zones["zone"];
+        assert_eq!(zone.group_ids, BTreeSet::from(["h".to_string(), "i".to_string()]));
+        assert_eq!(zone.device_ids, BTreeSet::from(["a".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn zone_changed_without_groups_keeps_the_existing_groups() {
+        let initial = Zone { group_ids: BTreeSet::from(["g".to_string()]), ..hearth_zone("zone", "Zone", &["a"]) };
+        let (tx, mut reactive_rx) = start_store_with_zones(vec![initial]);
+
+        tx.send(zone_changed("zone", Some("Renamed"), Some(&["b"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones["zone"].group_ids, BTreeSet::from(["g".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn zone_changed_with_a_revision_applies_the_name_groups_and_devices_too() {
+        let (tx, mut reactive_rx) = start_store_with_zones(vec![hearth_zone("zone", "Zone", &["a"])]);
+
+        tx.send(Event::ZoneChanged(ZoneChanged {
+            id: "zone".to_string(),
+            name: Some("Renamed".to_string()),
+            group_ids: Some(BTreeSet::from(["g".to_string()])),
+            device_ids: Some(BTreeSet::from(["b".to_string(), "c".to_string()])),
+            revision: Some(1),
+            external_id: None,
+        }))
+        .await
+        .unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        let expected = Zone {
+            revision: 1,
+            group_ids: BTreeSet::from(["g".to_string()]),
+            ..hearth_zone("zone", "Renamed", &["b", "c"])
+        };
+        assert_eq!(*update.snapshot.zones["zone"], expected);
+    }
+
+    #[tokio::test]
+    async fn zone_changed_for_a_new_zone_without_groups_creates_a_zone_without_groups() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(zone_changed("zone", Some("Zone"), Some(&["a"]))).await.unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert!(update.snapshot.zones["zone"].group_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn zone_changed_for_a_new_zone_creates_it_with_the_groups() {
+        let (tx, mut reactive_rx) = start_store();
+
+        tx.send(Event::ZoneChanged(ZoneChanged {
+            id: "zone".to_string(),
+            name: Some("Zone".to_string()),
+            group_ids: Some(BTreeSet::from(["g".to_string()])),
+            device_ids: Some(BTreeSet::new()),
+            revision: None,
+            external_id: None,
+        }))
+        .await
+        .unwrap();
+        let update = reactive_rx.recv().await.unwrap();
+
+        assert_eq!(update.snapshot.zones["zone"].group_ids, BTreeSet::from(["g".to_string()]));
     }
 
     #[tokio::test]

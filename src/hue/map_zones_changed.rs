@@ -17,8 +17,14 @@ fn upsert(zone: HueZoneChanged, snapshot: &StoreSnapshot) -> Vec<Event> {
         .children
         .map(|children| children.iter().filter_map(|light| device_id_for_light(&light.rid, snapshot)).collect());
     let external_id = zone.services.as_deref().and_then(grouped_light_id);
-    let zone_changed =
-        ZoneChanged { id: zone.id, name: zone.metadata.and_then(|metadata| metadata.name), device_ids, external_id };
+    let zone_changed = ZoneChanged {
+        id: zone.id,
+        name: zone.metadata.and_then(|metadata| metadata.name),
+        group_ids: None,
+        device_ids,
+        revision: None,
+        external_id,
+    };
     vec![Event::ZoneChanged(zone_changed)]
 }
 
@@ -76,7 +82,9 @@ mod tests {
         Event::ZoneChanged(ZoneChanged {
             id: "zone".to_string(),
             name: name.map(str::to_string),
+            group_ids: None,
             device_ids: device_ids.map(|ids| ids.iter().map(|id| id.to_string()).collect()),
+            revision: None,
             external_id: None,
         })
     }
@@ -152,7 +160,9 @@ mod tests {
             vec![Event::ZoneChanged(ZoneChanged {
                 id: "zone".to_string(),
                 name: Some("Downstairs".to_string()),
+                group_ids: None,
                 device_ids: Some(BTreeSet::from(["device-a".to_string()])),
+                revision: None,
                 external_id: Some("grouped-light".to_string()),
             })]
         );

@@ -1,7 +1,7 @@
 use crate::database::{Database, DatabaseError};
 use crate::domain::{Owner, Zone};
 use chrono::{DateTime, Utc};
-use rusqlite::{Row, params};
+use rusqlite::{OptionalExtension, Row, params};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
@@ -52,6 +52,50 @@ impl ZoneStore {
                     )
                     .map_err(|err| if is_name_conflict(&err) { InsertError::NameAlreadyExists } else { err.into() })?;
                 Ok(stored_zone)
+            })
+            .await
+    }
+
+    pub async fn update(
+        &self,
+        id: &str,
+        base_revision: u64,
+        name: &str,
+        group_ids: &BTreeSet<String>,
+        device_ids: &BTreeSet<String>,
+    ) -> Result<StoredZone, UpdateError> {
+        let id = id.to_string();
+        let name = name.to_string();
+        let group_ids = serde_json::json!(group_ids);
+        let device_ids = serde_json::json!(device_ids);
+        self.database
+            .call(move |conn| {
+                let now = Utc::now().to_rfc3339();
+                let updated = conn
+                    .query_row(
+                        "UPDATE zones SET name = ?3, group_ids = ?4, device_ids = ?5, revision = revision + 1, updated_at = ?6
+                        WHERE id = ?1 AND revision = ?2
+                        RETURNING id, revision, name, group_ids, device_ids, created_at, updated_at",
+                        params![id, base_revision as i64, name, group_ids, device_ids, now],
+                        row_to_stored_zone,
+                    )
+                    .optional()
+                    .map_err(|err| if is_name_conflict(&err) { UpdateError::NameAlreadyExists } else { err.into() })?;
+
+                if let Some(updated) = updated {
+                    return Ok(updated);
+                }
+
+                // No row matched; either the zone doesn't exist or someone else updated it first
+                let current: Option<i64> = conn
+                    .query_row("SELECT revision FROM zones WHERE id = ?1", params![id], |row| row.get(0))
+                    .optional()?;
+                match current {
+                    None => Err(UpdateError::NotFound),
+                    Some(current) => {
+                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
+                    }
+                }
             })
             .await
     }
@@ -149,6 +193,32 @@ impl From<DatabaseError> for InsertError {
 }
 
 impl From<rusqlite::Error> for InsertError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum UpdateError {
+    #[error("zone not found")]
+    NotFound,
+    #[error(
+        "revision conflict: update is based on revision {base_revision}, but the current revision is {current_revision}"
+    )]
+    RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error("a zone with this name already exists")]
+    NameAlreadyExists,
+    #[error(transparent)]
+    Store(#[from] ZoneStoreError),
+}
+
+impl From<DatabaseError> for UpdateError {
+    fn from(err: DatabaseError) -> Self {
+        Self::Store(err.into())
+    }
+}
+
+impl From<rusqlite::Error> for UpdateError {
     fn from(err: rusqlite::Error) -> Self {
         Self::Store(err.into())
     }
@@ -499,5 +569,195 @@ mod tests {
         let rows = store.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Downstairs");
+    }
+
+    #[rstest]
+    #[case::same_case("Other")]
+    #[case::different_case("oTHER")]
+    #[tokio::test]
+    async fn update_rejects_a_name_used_by_another_zone(#[case] name: &str) {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", r#"["g"]"#, r#"["a"]"#, None).await;
+        insert_row(&store, "other", "Other", "[]", "[]", None).await;
+
+        let result = store.update("zone", 0, name, &ids(&["h"]), &ids(&["b"])).await;
+
+        assert!(matches!(result, Err(UpdateError::NameAlreadyExists)), "got {result:?}");
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows[1].name, "Upstairs", "the zone must be unchanged");
+        assert_eq!(rows[1].group_ids, ids(&["g"]));
+        assert_eq!(rows[1].device_ids, ids(&["a"]));
+        assert_eq!(rows[1].revision, 0);
+    }
+
+    #[rstest]
+    #[case::same_name("Upstairs")]
+    #[case::different_case("UPSTAIRS")]
+    #[tokio::test]
+    async fn update_allows_a_zone_to_keep_its_own_name(#[case] name: &str) {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", "[]", r#"["a"]"#, None).await;
+
+        let updated = store.update("zone", 0, name, &ids(&[]), &ids(&["b"])).await.expect("update succeeded");
+
+        assert_eq!(updated.name, name);
+        assert_eq!(updated.revision, 1);
+    }
+
+    #[tokio::test]
+    async fn update_replaces_the_name_groups_and_devices_and_returns_the_stored_zone() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", r#"["g"]"#, r#"["a"]"#, None).await;
+
+        let updated = store.update("zone", 0, "Attic", &ids(&["room", "hall"]), &ids(&["lamp", "desk"])).await;
+
+        let updated = updated.expect("update succeeded");
+        assert_eq!(updated.id, "zone");
+        assert_eq!(updated.name, "Attic");
+        assert_eq!(updated.group_ids, ids(&["hall", "room"]));
+        assert_eq!(updated.device_ids, ids(&["desk", "lamp"]));
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows[0].name, "Attic");
+        assert_eq!(rows[0].group_ids, ids(&["hall", "room"]));
+        assert_eq!(rows[0].device_ids, ids(&["desk", "lamp"]));
+    }
+
+    #[rstest]
+    #[case::groups_only(&["g"], &[])]
+    #[case::devices_only(&[], &["a"])]
+    #[case::neither(&[], &[])]
+    #[tokio::test]
+    async fn update_accepts_a_zone_without_groups_or_without_devices(
+        #[case] group_ids: &[&str],
+        #[case] device_ids: &[&str],
+    ) {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", r#"["x"]"#, r#"["y"]"#, None).await;
+
+        let updated = store.update("zone", 0, "Upstairs", &ids(group_ids), &ids(device_ids)).await;
+
+        let updated = updated.expect("update succeeded");
+        assert_eq!(updated.group_ids, ids(group_ids));
+        assert_eq!(updated.device_ids, ids(device_ids));
+    }
+
+    #[tokio::test]
+    async fn update_stores_the_ids_as_sorted_json_arrays() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", "[]", "[]", None).await;
+
+        store.update("zone", 0, "Upstairs", &ids(&["y", "x"]), &ids(&["b", "a"])).await.expect("update succeeded");
+
+        let (group_ids, device_ids): (String, String) = store
+            .database
+            .call(|conn| {
+                conn.query_row("SELECT group_ids, device_ids FROM zones", [], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .map_err(DatabaseError::from)
+            })
+            .await
+            .expect("query");
+        assert_eq!(group_ids, r#"["x","y"]"#);
+        assert_eq!(device_ids, r#"["a","b"]"#);
+    }
+
+    #[tokio::test]
+    async fn update_increments_the_revision() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", "[]", "[]", None).await;
+
+        let first = store.update("zone", 0, "Upstairs", &ids(&[]), &ids(&["a"])).await.expect("first update succeeded");
+        let second =
+            store.update("zone", 1, "Upstairs", &ids(&[]), &ids(&["b"])).await.expect("second update succeeded");
+
+        assert_eq!(first.revision, 1);
+        assert_eq!(second.revision, 2);
+        assert_eq!(store.list().await.expect("list succeeded")[0].revision, 2);
+    }
+
+    #[tokio::test]
+    async fn update_sets_updated_at_and_keeps_created_at() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", "[]", "[]", None).await;
+        execute(&store, "UPDATE zones SET created_at = '2000-01-01T00:00:00Z'").await;
+        let before = Utc::now();
+
+        let updated = store.update("zone", 0, "Upstairs", &ids(&[]), &ids(&["a"])).await.expect("update succeeded");
+
+        let long_ago = DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(updated.created_at, long_ago);
+        assert!(updated.updated_at.expect("updated_at is set") >= before, "got {updated:?}");
+    }
+
+    #[tokio::test]
+    async fn update_leaves_other_zones_untouched() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", "[]", "[]", None).await;
+        insert_row(&store, "other", "Other", r#"["g"]"#, r#"["x"]"#, None).await;
+
+        store.update("zone", 0, "Renamed", &ids(&["h"]), &ids(&["a"])).await.expect("update succeeded");
+
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows[0].id, "other");
+        assert_eq!(rows[0].name, "Other");
+        assert_eq!(rows[0].group_ids, ids(&["g"]));
+        assert_eq!(rows[0].device_ids, ids(&["x"]));
+        assert_eq!(rows[0].revision, 0);
+        assert_eq!(rows[0].updated_at, None);
+    }
+
+    #[rstest]
+    #[case::fresh_database(&[])]
+    #[case::other_zones(&["other"])]
+    #[tokio::test]
+    async fn update_returns_not_found_for_an_unknown_id(#[case] existing_ids: &[&str]) {
+        let store = open_in_memory();
+        for id in existing_ids {
+            insert_row(&store, id, id, "[]", "[]", None).await;
+        }
+
+        let result = store.update("zone", 0, "Upstairs", &ids(&[]), &ids(&["a"])).await;
+
+        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
+        assert_eq!(store.list().await.expect("list succeeded").len(), existing_ids.len(), "update must not create");
+    }
+
+    #[rstest]
+    #[case::behind(1, 2)]
+    #[case::ahead(5, 2)]
+    #[tokio::test]
+    async fn update_returns_a_revision_conflict_for_a_mismatching_base_revision(
+        #[case] base_revision: u64,
+        #[case] current_revision: u64,
+    ) {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", r#"["g"]"#, r#"["a"]"#, None).await;
+        execute(&store, "UPDATE zones SET revision = 2").await;
+
+        let result = store.update("zone", base_revision, "Renamed", &ids(&["h"]), &ids(&["b"])).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(UpdateError::RevisionConflict { base_revision: b, current_revision: c })
+                    if b == base_revision && c == current_revision
+            ),
+            "got {result:?}"
+        );
+        let rows = store.list().await.expect("list succeeded");
+        assert_eq!(rows[0].name, "Upstairs", "a conflicting update must not change the zone");
+        assert_eq!(rows[0].group_ids, ids(&["g"]));
+        assert_eq!(rows[0].device_ids, ids(&["a"]));
+        assert_eq!(rows[0].revision, 2);
+    }
+
+    #[tokio::test]
+    async fn update_fails_for_a_stored_revision_out_of_range() {
+        let store = open_in_memory();
+        insert_row(&store, "zone", "Upstairs", "[]", "[]", None).await;
+        execute(&store, "UPDATE zones SET revision = -1").await;
+
+        let result = store.update("zone", 0, "Upstairs", &ids(&[]), &ids(&[])).await;
+
+        assert!(matches!(result, Err(UpdateError::Store(ZoneStoreError::InvalidRevision(-1)))), "got {result:?}");
     }
 }
