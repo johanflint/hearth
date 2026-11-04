@@ -203,8 +203,6 @@ impl From<UpdateError> for UpdateGroupError {
 
 #[derive(Debug, Error)]
 pub enum DeleteGroupError {
-    #[error("group in use by {} flow(s)", .0.len())]
-    InUse(Vec<FlowSummary>),
     #[error("group not found")]
     NotFound,
     #[error("group not owned")]
@@ -213,6 +211,8 @@ pub enum DeleteGroupError {
         "revision conflict: delete is based on revision {base_revision}, but the current revision is {current_revision}"
     )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
+    #[error("group in use by {} flow(s)", .0.len())]
+    InUse(Vec<FlowSummary>),
     #[error("store is unavailable")]
     StoreUnavailable,
     #[error(transparent)]

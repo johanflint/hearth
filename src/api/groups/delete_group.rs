@@ -34,9 +34,6 @@ fn invalid_query(err: QueryRejection) -> Response {
 fn delete_error_response(err: DeleteGroupError) -> Response {
     let error_message = err.to_string();
     match err {
-        DeleteGroupError::InUse(flows) => {
-            (StatusCode::CONFLICT, Json(InUseErrorResponse::new("groupInUse", error_message, flows))).into_response()
-        }
         DeleteGroupError::NotFound => {
             (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("groupNotFound"))).into_response()
         }
@@ -45,6 +42,9 @@ fn delete_error_response(err: DeleteGroupError) -> Response {
         }
         DeleteGroupError::RevisionConflict { .. } => {
             (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response()
+        }
+        DeleteGroupError::InUse(flows) => {
+            (StatusCode::CONFLICT, Json(InUseErrorResponse::new("groupInUse", error_message, flows))).into_response()
         }
         DeleteGroupError::StoreUnavailable => {
             error!("❌ Store is unavailable");
