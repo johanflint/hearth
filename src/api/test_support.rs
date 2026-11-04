@@ -12,6 +12,7 @@ use crate::preset_registry::PresetRegistry;
 use crate::preset_service::PresetService;
 use crate::preset_store::PresetStore;
 use crate::store::StoreSnapshot;
+use crate::zone_service::ZoneService;
 use axum::response::Response;
 use chrono::Utc;
 use http_body_util::BodyExt;
@@ -119,11 +120,12 @@ fn build_state(
         snapshot_rx.clone(),
     ));
     let group_service = Arc::new(GroupService::new(
-        snapshot_rx,
+        snapshot_rx.clone(),
         Arc::new(GroupStore::new(database.clone())),
         Arc::clone(&flow_registry),
         store_tx,
     ));
+    let zone_service = Arc::new(ZoneService::new(snapshot_rx));
     let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, Arc::clone(&flow_registry)));
     // Tasks that keep running until a test aborts them
     let core_tasks = CoreTasks {
@@ -138,6 +140,7 @@ fn build_state(
         vec![],
         flow_service,
         group_service,
+        zone_service,
         preset_service,
     );
     (Fixture { state, flow_store, flow_registry, scheduler_rx }, database)

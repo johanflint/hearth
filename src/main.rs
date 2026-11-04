@@ -17,6 +17,7 @@ use crate::preset_service::PresetService;
 use crate::preset_store::PresetStore;
 use crate::store::Store;
 use crate::store_listener::store_listener;
+use crate::zone_service::ZoneService;
 use crate::zone_store::ZoneStore;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::path::Path;
@@ -60,6 +61,7 @@ mod store;
 mod store_listener;
 #[cfg(test)]
 mod test_support;
+mod zone_service;
 mod zone_store;
 
 #[tokio::main]
@@ -139,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let store_rx_clone = store.notifier();
     let integrations_rx_clone = store.notifier();
     let group_service_rx_clone = store.notifier();
+    let zone_service_rx_clone = store.notifier();
     let store_handle = task::spawn(async move {
         store.listen().await;
     });
@@ -161,6 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let core_tasks =
         Arc::new(CoreTasks { store: store_handle, scheduler: scheduler_handle, store_listener: store_listener_handle });
     let group_service = Arc::new(GroupService::new(group_service_rx_clone, group_store, flow_registry, tx.clone()));
+    let zone_service = Arc::new(ZoneService::new(zone_service_rx_clone));
     let api_state = ApiState::new(
         prometheus_handle,
         database,
@@ -168,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         integrations.clone(),
         flow_service,
         group_service,
+        zone_service,
         preset_service,
     );
     server::start(config.core().port(), api_state).await?;
