@@ -1,7 +1,9 @@
 use crate::domain::{Preset, Value, VersionedPreset};
 use crate::flow_registry::{FlowRegistry, FlowSummary};
 use crate::preset_registry::{PresetRegistry, RegisterResult, UnregisterResult};
-use crate::preset_store::{DeleteError, InsertError, PresetStore, PresetStoreError, StoredPreset, UpdateError};
+use crate::preset_repository::{
+    DeleteError, InsertError, PresetRepository, PresetRepositoryError, StoredPreset, UpdateError,
+};
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::debug;
@@ -9,34 +11,34 @@ use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct PresetService {
-    preset_store: Arc<PresetStore>,
+    preset_repository: Arc<PresetRepository>,
     preset_registry: Arc<PresetRegistry>,
     flow_registry: Arc<FlowRegistry>,
 }
 
 impl PresetService {
     pub fn new(
-        preset_store: Arc<PresetStore>,
+        preset_repository: Arc<PresetRepository>,
         preset_registry: Arc<PresetRegistry>,
         flow_registry: Arc<FlowRegistry>,
     ) -> Self {
-        PresetService { preset_store, preset_registry, flow_registry }
+        PresetService { preset_repository, preset_registry, flow_registry }
     }
 
     pub async fn list(&self) -> Result<Vec<StoredPreset>, ListPresetError> {
-        Ok(self.preset_store.list().await?)
+        Ok(self.preset_repository.list().await?)
     }
 
     pub async fn retrieve_preset(&self, id: &str) -> Result<StoredPreset, RetrievePresetError> {
-        self.preset_store.by_id(id).await?.ok_or(RetrievePresetError::NotFound)
+        self.preset_repository.by_id(id).await?.ok_or(RetrievePresetError::NotFound)
     }
 
     pub async fn create_preset(&self, name: &str, value: Value) -> Result<StoredPreset, CreatePresetError> {
         let id = Uuid::now_v7().to_string();
         let json = serde_json::to_value(&value).map_err(CreatePresetError::UnsupportedValue)?;
-        let stored = self.preset_store.insert(&id, name, json).await?;
+        let stored = self.preset_repository.insert(&id, name, json).await?;
 
-        // Registry last, so a failed store write leaves it untouched
+        // Registry last, so a failed repository write leaves it untouched
         let preset = Preset { id: stored.id.clone(), name: stored.name.clone(), value };
         self.preset_registry.register(VersionedPreset { preset: Arc::new(preset), revision: stored.revision });
 
@@ -51,9 +53,9 @@ impl PresetService {
         value: Value,
     ) -> Result<StoredPreset, UpdatePresetError> {
         let json = serde_json::to_value(&value).map_err(UpdatePresetError::UnsupportedValue)?;
-        let stored = self.preset_store.update(id, base_revision, name, json).await?;
+        let stored = self.preset_repository.update(id, base_revision, name, json).await?;
 
-        // Registry last, so a failed store write leaves it untouched
+        // Registry last, so a failed repository write leaves it untouched
         let preset = Preset { id: stored.id.clone(), name: stored.name.clone(), value };
         match self.preset_registry.register(VersionedPreset { preset: Arc::new(preset), revision: stored.revision }) {
             RegisterResult::Added | RegisterResult::Replaced => {}
@@ -66,7 +68,7 @@ impl PresetService {
     }
 
     pub async fn delete_preset(&self, id: &str, base_revision: u64) -> Result<(), DeletePresetError> {
-        let stored = self.preset_store.by_id(id).await?.ok_or(DeletePresetError::NotFound)?;
+        let stored = self.preset_repository.by_id(id).await?.ok_or(DeletePresetError::NotFound)?;
         if stored.revision != base_revision {
             return Err(DeletePresetError::RevisionConflict { base_revision, current_revision: stored.revision });
         }
@@ -76,9 +78,9 @@ impl PresetService {
             return Err(DeletePresetError::InUse(flows));
         }
 
-        self.preset_store.delete(id, base_revision).await?;
+        self.preset_repository.delete(id, base_revision).await?;
 
-        // The store is authoritative, so the preset is deleted no matter the registry
+        // The repository is authoritative, so the preset is deleted no matter the registry
         match self.preset_registry.unregister(id, base_revision) {
             UnregisterResult::Deleted => {}
             UnregisterResult::NotFound => {
@@ -95,7 +97,7 @@ impl PresetService {
 #[derive(Debug, Error)]
 pub enum ListPresetError {
     #[error(transparent)]
-    Internal(#[from] PresetStoreError),
+    Internal(#[from] PresetRepositoryError),
 }
 
 #[derive(Debug, Error)]
@@ -103,7 +105,7 @@ pub enum RetrievePresetError {
     #[error("preset not found")]
     NotFound,
     #[error(transparent)]
-    Internal(#[from] PresetStoreError),
+    Internal(#[from] PresetRepositoryError),
 }
 
 #[derive(Debug, Error)]
@@ -113,14 +115,14 @@ pub enum CreatePresetError {
     #[error("unsupported value: {0}")]
     UnsupportedValue(serde_json::Error),
     #[error(transparent)]
-    Internal(#[from] PresetStoreError),
+    Internal(#[from] PresetRepositoryError),
 }
 
 impl From<InsertError> for CreatePresetError {
     fn from(err: InsertError) -> Self {
         match err {
             InsertError::NameAlreadyExists => Self::NameAlreadyExists,
-            InsertError::Store(err) => Self::Internal(err),
+            InsertError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -138,7 +140,7 @@ pub enum UpdatePresetError {
     #[error("a preset with this name already exists")]
     NameAlreadyExists,
     #[error(transparent)]
-    Internal(#[from] PresetStoreError),
+    Internal(#[from] PresetRepositoryError),
 }
 
 impl From<UpdateError> for UpdatePresetError {
@@ -149,7 +151,7 @@ impl From<UpdateError> for UpdatePresetError {
                 Self::RevisionConflict { base_revision, current_revision }
             }
             UpdateError::NameAlreadyExists => Self::NameAlreadyExists,
-            UpdateError::Store(err) => Self::Internal(err),
+            UpdateError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -165,7 +167,7 @@ pub enum DeletePresetError {
     )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
     #[error(transparent)]
-    Internal(#[from] PresetStoreError),
+    Internal(#[from] PresetRepositoryError),
 }
 
 impl From<DeleteError> for DeletePresetError {
@@ -175,7 +177,7 @@ impl From<DeleteError> for DeletePresetError {
             DeleteError::RevisionConflict { base_revision, current_revision } => {
                 DeletePresetError::RevisionConflict { base_revision, current_revision }
             }
-            DeleteError::Store(err) => DeletePresetError::Internal(err),
+            DeleteError::Repository(err) => DeletePresetError::Internal(err),
         }
     }
 }
@@ -206,10 +208,10 @@ mod tests {
         flows: Vec<VersionedFlow>,
     ) -> (PresetService, Database, Arc<PresetRegistry>) {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
-        let preset_store = Arc::new(PresetStore::new(database.clone()));
+        let preset_repository = Arc::new(PresetRepository::new(database.clone()));
         let preset_registry = Arc::new(PresetRegistry::new(presets));
         let flow_registry = Arc::new(FlowRegistry::new(flows));
-        (PresetService::new(preset_store, Arc::clone(&preset_registry), flow_registry), database, preset_registry)
+        (PresetService::new(preset_repository, Arc::clone(&preset_registry), flow_registry), database, preset_registry)
     }
 
     fn preset(id: &str, name: &str, value: Value, revision: u64) -> VersionedPreset {
@@ -232,7 +234,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_returns_an_empty_list_for_an_empty_store() {
+    async fn list_returns_an_empty_list_for_an_empty_repository() {
         let (service, _) = create_service();
 
         let presets = service.list().await.expect("list succeeded");
@@ -253,13 +255,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_fails_when_the_store_fails() {
+    async fn list_fails_when_the_repository_fails() {
         let (service, database) = create_service();
         insert_row(&database, "corrupt", "not valid json").await;
 
         let result = service.list().await;
 
-        assert!(matches!(result, Err(ListPresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
+        assert!(matches!(result, Err(ListPresetError::Internal(PresetRepositoryError::Sqlite(_)))), "got {result:?}");
     }
 
     #[tokio::test]
@@ -285,13 +287,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retrieve_preset_fails_when_the_store_fails() {
+    async fn retrieve_preset_fails_when_the_repository_fails() {
         let (service, database) = create_service();
         insert_row(&database, "preset", "not valid json").await;
 
         let result = service.retrieve_preset("preset").await;
 
-        assert!(matches!(result, Err(RetrievePresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
+        assert!(
+            matches!(result, Err(RetrievePresetError::Internal(PresetRepositoryError::Sqlite(_)))),
+            "got {result:?}"
+        );
     }
 
     async fn set_revision(database: &Database, revision: i64) {
@@ -359,7 +364,7 @@ mod tests {
 
         let result = service.update_preset("preset", 0, "Older", Value::Boolean(false)).await;
 
-        assert_eq!(result.expect("the store accepted the update").revision, 1);
+        assert_eq!(result.expect("the repository accepted the update").revision, 1);
         let registered = registry.by_id("preset").expect("preset is registered");
         assert_eq!(registered.name, "Newer");
         assert_eq!(registered.revision, 5);
@@ -399,7 +404,7 @@ mod tests {
             "got {result:?}"
         );
         let stored = service.retrieve_preset("preset").await.expect("retrieve succeeded");
-        assert_eq!(stored.value, serde_json::json!(true), "the store must be unchanged");
+        assert_eq!(stored.value, serde_json::json!(true), "the repository must be unchanged");
         assert_eq!(stored.revision, 2);
         let registered = registry.by_id("preset").expect("preset is registered");
         assert_eq!(registered.name, "Old", "the registry must be unchanged");
@@ -419,7 +424,7 @@ mod tests {
 
         assert!(matches!(result, Err(UpdatePresetError::UnsupportedValue(_))), "got {result:?}");
         let stored = service.retrieve_preset("preset").await.expect("retrieve succeeded");
-        assert_eq!(stored.name, "preset", "the store must be unchanged");
+        assert_eq!(stored.name, "preset", "the repository must be unchanged");
         assert_eq!(stored.value, serde_json::json!(true));
         assert_eq!(stored.revision, 0);
         let registered = registry.by_id("preset").expect("preset is registered");
@@ -427,7 +432,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_preset_fails_and_leaves_the_registry_unchanged_when_the_store_fails() {
+    async fn update_preset_fails_and_leaves_the_registry_unchanged_when_the_repository_fails() {
         let (service, database, registry) =
             create_service_with_registry(vec![preset("preset", "Old", Value::Boolean(true), 0)]);
         insert_row(&database, "preset", "true").await;
@@ -438,7 +443,7 @@ mod tests {
 
         let result = service.update_preset("preset", 0, "Dim", Value::Boolean(false)).await;
 
-        assert!(matches!(result, Err(UpdatePresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
+        assert!(matches!(result, Err(UpdatePresetError::Internal(PresetRepositoryError::Sqlite(_)))), "got {result:?}");
         let registered = registry.by_id("preset").expect("preset is registered");
         assert_eq!(registered.name, "Old");
         assert_eq!(registered.revision, 0);
@@ -457,7 +462,7 @@ mod tests {
 
         assert!(matches!(result, Err(UpdatePresetError::NameAlreadyExists)), "got {result:?}");
         let stored = service.retrieve_preset("preset").await.expect("retrieve succeeded");
-        assert_eq!(stored.name, "preset", "the store must be unchanged");
+        assert_eq!(stored.name, "preset", "the repository must be unchanged");
         assert_eq!(stored.revision, 0);
         let registered = registry.by_id("preset").expect("preset is registered");
         assert_eq!(registered.name, "preset", "the registry must be unchanged");
@@ -539,7 +544,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_preset_fails_when_the_store_fails() {
+    async fn create_preset_fails_when_the_repository_fails() {
         let (service, database, _) = create_service_with_registry(vec![]);
         database
             .call(|conn| conn.execute("DROP TABLE presets", []).map_err(DatabaseError::from))
@@ -548,18 +553,21 @@ mod tests {
 
         let result = service.create_preset("Dim", Value::Boolean(true)).await;
 
-        assert!(matches!(result, Err(CreatePresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
+        assert!(matches!(result, Err(CreatePresetError::Internal(PresetRepositoryError::Sqlite(_)))), "got {result:?}");
     }
 
     #[tokio::test]
-    async fn delete_preset_deletes_the_preset_from_the_store_and_the_registry() {
+    async fn delete_preset_deletes_the_preset_from_the_repository_and_the_registry() {
         let (service, database, registry) =
             create_service_with_registry(vec![preset("preset", "preset", Value::Boolean(true), 0)]);
         insert_row(&database, "preset", "true").await;
 
         service.delete_preset("preset", 0).await.expect("delete succeeded");
 
-        assert!(service.list().await.expect("list succeeded").is_empty(), "the preset must be deleted from the store");
+        assert!(
+            service.list().await.expect("list succeeded").is_empty(),
+            "the preset must be deleted from the repository"
+        );
         assert!(registry.by_id("preset").is_none(), "the preset must be deleted from the registry");
     }
 
@@ -579,7 +587,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_preset_deletes_a_registry_entry_that_lags_behind_the_store() {
+    async fn delete_preset_deletes_a_registry_entry_that_lags_behind_the_repository() {
         let (service, database, registry) =
             create_service_with_registry(vec![preset("preset", "preset", Value::Boolean(true), 0)]);
         insert_row(&database, "preset", "true").await;
@@ -587,7 +595,10 @@ mod tests {
 
         service.delete_preset("preset", 1).await.expect("delete succeeded");
 
-        assert!(service.list().await.expect("list succeeded").is_empty(), "the preset must be deleted from the store");
+        assert!(
+            service.list().await.expect("list succeeded").is_empty(),
+            "the preset must be deleted from the repository"
+        );
         assert!(registry.by_id("preset").is_none(), "the preset must be deleted from the registry");
     }
 
@@ -599,20 +610,26 @@ mod tests {
 
         service.delete_preset("preset", 0).await.expect("delete succeeded");
 
-        assert!(service.list().await.expect("list succeeded").is_empty(), "the preset must be deleted from the store");
+        assert!(
+            service.list().await.expect("list succeeded").is_empty(),
+            "the preset must be deleted from the repository"
+        );
         assert!(registry.by_id("preset").is_none());
     }
 
     #[tokio::test]
     async fn delete_preset_deletes_but_does_not_unregister_when_the_registry_has_a_newer_revision() {
-        // A concurrent update stored and registered revision 1 after this delete's store write
+        // A concurrent update stored and registered revision 1 after this delete's repository write
         let (service, database, registry) =
             create_service_with_registry(vec![preset("preset", "Newer", Value::Boolean(true), 1)]);
         insert_row(&database, "preset", "true").await;
 
         service.delete_preset("preset", 0).await.expect("delete succeeded");
 
-        assert!(service.list().await.expect("list succeeded").is_empty(), "the preset must be deleted from the store");
+        assert!(
+            service.list().await.expect("list succeeded").is_empty(),
+            "the preset must be deleted from the repository"
+        );
         let registered = registry.by_id("preset").expect("preset is registered");
         assert_eq!(registered.name, "Newer", "the registry must be unchanged");
         assert_eq!(registered.revision, 1);
@@ -654,13 +671,14 @@ mod tests {
             ),
             "got {result:?}"
         );
-        let stored = service.retrieve_preset("preset").await.expect("the preset must not be deleted from the store");
+        let stored =
+            service.retrieve_preset("preset").await.expect("the preset must not be deleted from the repository");
         assert_eq!(stored.revision, 2);
         assert!(registry.by_id("preset").is_some(), "the preset must not be deleted from the registry");
     }
 
     #[tokio::test]
-    async fn delete_preset_fails_and_leaves_the_registry_unchanged_when_the_store_fails() {
+    async fn delete_preset_fails_and_leaves_the_registry_unchanged_when_the_repository_fails() {
         let (service, database, registry) =
             create_service_with_registry(vec![preset("preset", "preset", Value::Boolean(true), 0)]);
         database
@@ -670,7 +688,7 @@ mod tests {
 
         let result = service.delete_preset("preset", 0).await;
 
-        assert!(matches!(result, Err(DeletePresetError::Internal(PresetStoreError::Sqlite(_)))), "got {result:?}");
+        assert!(matches!(result, Err(DeletePresetError::Internal(PresetRepositoryError::Sqlite(_)))), "got {result:?}");
         assert!(registry.by_id("preset").is_some(), "the registry must be unchanged");
     }
 
@@ -687,7 +705,7 @@ mod tests {
         let Err(DeletePresetError::InUse(flows)) = result else { panic!("expected InUse, got {result:?}") };
         let summaries: Vec<_> = flows.iter().map(|f| (f.id.as_str(), f.name.as_str(), f.revision)).collect();
         assert_eq!(summaries, vec![("flow", "Flow", 3)]);
-        service.retrieve_preset("preset").await.expect("the preset must not be deleted from the store");
+        service.retrieve_preset("preset").await.expect("the preset must not be deleted from the repository");
         assert!(registry.by_id("preset").is_some(), "the preset must not be deleted from the registry");
     }
 
@@ -737,7 +755,7 @@ mod tests {
         let result = service.delete_preset("preset", 0).await;
 
         assert!(matches!(result, Err(DeletePresetError::InUse(_))), "got {result:?}");
-        service.retrieve_preset("preset").await.expect("the preset must not be deleted from the store");
+        service.retrieve_preset("preset").await.expect("the preset must not be deleted from the repository");
     }
 
     #[tokio::test]

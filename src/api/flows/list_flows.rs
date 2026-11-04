@@ -28,7 +28,7 @@ pub(super) async fn list_flows(State(state): State<ApiState>) -> Result<Response
 fn list_error_response(err: ListFlowsError) -> Response {
     match err {
         ListFlowsError::Internal(err) => {
-            error!("❌ Failed to list flows from store: {err}");
+            error!("❌ Failed to list flows from the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -71,7 +71,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_flows_returns_an_empty_list_for_an_empty_store() {
+    async fn list_flows_returns_an_empty_list_for_an_empty_repository() {
         let Fixture { state, .. } = create_state(FlowRegistry::new(Vec::new()));
 
         let response = call_list_flows(state).await;
@@ -82,9 +82,9 @@ mod tests {
 
     #[tokio::test]
     async fn list_flows_returns_the_stored_flows_with_camel_case_fields() {
-        let Fixture { state, flow_store, .. } = create_state(FlowRegistry::new(vec![]));
-        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
-        flow_store.update(VALID_FLOW_ID, 0, valid_flow_document()).await.expect("update store");
+        let Fixture { state, flow_repository, .. } = create_state(FlowRegistry::new(vec![]));
+        flow_repository.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed repository");
+        flow_repository.update(VALID_FLOW_ID, 0, valid_flow_document()).await.expect("update the repository");
 
         let response = call_list_flows(state).await;
 

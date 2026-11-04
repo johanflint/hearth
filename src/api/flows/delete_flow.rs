@@ -45,7 +45,7 @@ fn delete_error_response(err: DeleteFlowError) -> Response {
             (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response()
         }
         DeleteFlowError::Internal(err) => {
-            error!("❌ Failed to delete flow from store: {err}");
+            error!("❌ Failed to delete flow from the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
         DeleteFlowError::CommitFailed(err) => {
@@ -66,7 +66,7 @@ mod tests {
     use crate::flow_loader;
     use crate::flow_loader::SerializedFlow;
     use crate::flow_registry::FlowRegistry;
-    use crate::flow_store::FlowStore;
+    use crate::flow_repository::FlowRepository;
     use axum::body::Body;
     use axum::http::Request;
     use std::sync::Arc;
@@ -88,28 +88,31 @@ mod tests {
     }
 
     // Stores a validflow at the given revision
-    async fn seed_store(flow_store: &FlowStore, revision: u64) {
-        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
+    async fn seed_repository(flow_repository: &FlowRepository, revision: u64) {
+        flow_repository.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed repository");
         for base_revision in 0..revision {
-            flow_store.update(VALID_FLOW_ID, base_revision, valid_flow_document()).await.expect("seed store revision");
+            flow_repository
+                .update(VALID_FLOW_ID, base_revision, valid_flow_document())
+                .await
+                .expect("seed repository revision");
         }
     }
 
-    /// Seeds the store and registry with the valid flow at the given revision, like at boot
+    /// Seeds the repository and registry with the valid flow at the given revision, like at boot
     async fn create_seeded_state(revision: u64) -> Fixture {
         let fixture = create_state(FlowRegistry::new(vec![valid_versioned_flow(revision)]));
-        seed_store(&fixture.flow_store, revision).await;
+        seed_repository(&fixture.flow_repository, revision).await;
         fixture
     }
 
     #[tokio::test]
     async fn delete_flow_returns_204_no_content_when_the_base_revision_matches() {
-        let Fixture { state, flow_store, scheduler_rx: _scheduler_rx, .. } = create_seeded_state(0).await;
+        let Fixture { state, flow_repository, scheduler_rx: _scheduler_rx, .. } = create_seeded_state(0).await;
 
         let response = call_delete_flow(state, &delete_uri(VALID_FLOW_ID, 0)).await;
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
-        let stored_flow = flow_store.by_id(VALID_FLOW_ID).await.expect("by_id succeeded");
+        let stored_flow = flow_repository.by_id(VALID_FLOW_ID).await.expect("by_id succeeded");
         assert!(stored_flow.is_none(), "flow must be deleted, got {stored_flow:?}");
     }
 
@@ -133,10 +136,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_flow_deletes_a_registry_entry_that_lags_behind_the_store() {
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } =
+    async fn delete_flow_deletes_a_registry_entry_that_lags_behind_the_repository() {
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } =
             create_state(FlowRegistry::new(vec![valid_versioned_flow(0)]));
-        seed_store(&flow_store, 1).await;
+        seed_repository(&flow_repository, 1).await;
 
         let response = call_delete_flow(state, &delete_uri(VALID_FLOW_ID, 1)).await;
 
@@ -148,19 +151,19 @@ mod tests {
     #[tokio::test]
     async fn delete_flow_deletes_a_stored_flow_that_is_not_registered() {
         // E.g. a flow that failed to load at boot
-        let Fixture { state, flow_store, mut scheduler_rx, .. } = create_state(FlowRegistry::new(vec![]));
-        seed_store(&flow_store, 0).await;
+        let Fixture { state, flow_repository, mut scheduler_rx, .. } = create_state(FlowRegistry::new(vec![]));
+        seed_repository(&flow_repository, 0).await;
 
         let response = call_delete_flow(state, &delete_uri(VALID_FLOW_ID, 0)).await;
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
-        assert!(flow_store.by_id(VALID_FLOW_ID).await.unwrap().is_none(), "flow must be deleted");
+        assert!(flow_repository.by_id(VALID_FLOW_ID).await.unwrap().is_none(), "flow must be deleted");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
     }
 
     #[tokio::test]
     async fn delete_flow_returns_409_conflict_for_a_stale_base_revision() {
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_seeded_state(1).await;
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } = create_seeded_state(1).await;
 
         let response = call_delete_flow(state, &delete_uri(VALID_FLOW_ID, 0)).await;
 
@@ -168,34 +171,43 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body["code"], "revisionConflict");
         assert_eq!(body["message"], "revision conflict: delete is based on revision 0, but the current revision is 1");
-        assert!(flow_store.by_id(VALID_FLOW_ID).await.unwrap().is_some(), "flow must not be deleted from the store");
+        assert!(
+            flow_repository.by_id(VALID_FLOW_ID).await.unwrap().is_some(),
+            "flow must not be deleted from the repository"
+        );
         assert!(flow_registry.by_id(VALID_FLOW_ID).is_some(), "flow must not be deleted from the registry");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
     }
 
     #[tokio::test]
     async fn delete_flow_returns_409_conflict_for_a_future_base_revision() {
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_seeded_state(0).await;
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } = create_seeded_state(0).await;
 
         let response = call_delete_flow(state, &delete_uri(VALID_FLOW_ID, 1)).await;
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
         assert_eq!(body_json(response).await["code"], "revisionConflict");
-        assert!(flow_store.by_id(VALID_FLOW_ID).await.unwrap().is_some(), "flow must not be deleted from the store");
+        assert!(
+            flow_repository.by_id(VALID_FLOW_ID).await.unwrap().is_some(),
+            "flow must not be deleted from the repository"
+        );
         assert!(flow_registry.by_id(VALID_FLOW_ID).is_some(), "flow must not be deleted from the registry");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
     }
 
     #[tokio::test]
     async fn delete_flow_returns_503_service_unavailable_when_the_scheduler_is_gone() {
-        let Fixture { state, flow_store, flow_registry, scheduler_rx } = create_seeded_state(0).await;
+        let Fixture { state, flow_repository, flow_registry, scheduler_rx } = create_seeded_state(0).await;
         drop(scheduler_rx);
 
         let response = call_delete_flow(state, &delete_uri(VALID_FLOW_ID, 0)).await;
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body_json(response).await["code"], "schedulerUnavailable");
-        assert!(flow_store.by_id(VALID_FLOW_ID).await.unwrap().is_some(), "flow must not be deleted from the store");
+        assert!(
+            flow_repository.by_id(VALID_FLOW_ID).await.unwrap().is_some(),
+            "flow must not be deleted from the repository"
+        );
         assert!(flow_registry.by_id(VALID_FLOW_ID).is_some(), "flow must not be deleted from the registry");
     }
 
@@ -211,13 +223,13 @@ mod tests {
 
     #[tokio::test]
     async fn delete_flow_returns_400_bad_request_without_a_base_revision() {
-        let Fixture { state, flow_store, .. } = create_seeded_state(0).await;
+        let Fixture { state, flow_repository, .. } = create_seeded_state(0).await;
 
         let response = call_delete_flow(state, &format!("/api/flows/{VALID_FLOW_ID}")).await;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(body_json(response).await["code"], "invalidQuery");
-        assert!(flow_store.by_id(VALID_FLOW_ID).await.unwrap().is_some(), "flow must not be deleted");
+        assert!(flow_repository.by_id(VALID_FLOW_ID).await.unwrap().is_some(), "flow must not be deleted");
     }
 
     #[tokio::test]

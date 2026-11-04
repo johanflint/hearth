@@ -1,13 +1,15 @@
 use crate::flow_engine::VersionedFlow;
 use crate::flow_loader::factory::from_json_value;
-use crate::flow_store::{FlowStore, FlowStoreError};
+use crate::flow_repository::{FlowRepository, FlowRepositoryError};
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
 #[instrument(skip_all)]
-pub async fn load_flows_from_store(flow_store: &FlowStore) -> Result<Vec<VersionedFlow>, FlowStoreError> {
+pub async fn load_flows_from_store(
+    flow_repository: &FlowRepository,
+) -> Result<Vec<VersionedFlow>, FlowRepositoryError> {
     info!("🗄️ Loading flows...");
-    let stored_flows = flow_store.list().await?;
+    let stored_flows = flow_repository.list().await?;
     let mut flows = Vec::with_capacity(stored_flows.len());
     let mut failed = 0;
 
@@ -34,18 +36,18 @@ mod tests {
 
     #[tokio::test]
     async fn load_flows_from_store_skips_invalid_flows_and_preserves_revisions() {
-        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
-        let flow_store = FlowStore::new(database);
+        let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
+        let flow_repository = FlowRepository::new(database);
         let valid_flow = json!({"id": "validFlow", "name": "Valid", "nodes": [{"id": "startNode", "type": "startNode", "outgoingNode": "endNode"}, {"id": "endNode", "type": "endNode"}]});
-        flow_store.insert("validFlow", valid_flow.clone()).await.expect("insert valid flow");
-        flow_store.update("validFlow", 0, valid_flow).await.expect("update valid flow");
+        flow_repository.insert("validFlow", valid_flow.clone()).await.expect("insert valid flow");
+        flow_repository.update("validFlow", 0, valid_flow).await.expect("update valid flow");
         // Valid JSON, but not a valid flow
-        flow_store
+        flow_repository
             .insert("invalidFlow", json!({"id": "invalidFlow", "name": "Invalid", "nodes": []}))
             .await
             .expect("insert invalid flow");
 
-        let flows = load_flows_from_store(&flow_store).await.expect("load succeeded");
+        let flows = load_flows_from_store(&flow_repository).await.expect("load succeeded");
 
         assert_eq!(flows.len(), 1);
         assert_eq!(flows[0].id(), "validFlow");

@@ -1,7 +1,7 @@
 use crate::domain::{Event, Owner, Zone, ZoneChanged};
 use crate::flow_registry::{FlowRegistry, FlowSummary};
 use crate::store::StoreSnapshot;
-use crate::zone_store::{DeleteError, InsertError, StoredZone, UpdateError, ZoneStore, ZoneStoreError};
+use crate::zone_repository::{DeleteError, InsertError, StoredZone, UpdateError, ZoneRepository, ZoneRepositoryError};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use thiserror::Error;
@@ -11,7 +11,7 @@ use tokio::sync::watch::Receiver;
 #[derive(Debug)]
 pub struct ZoneService {
     snapshot_rx: Receiver<StoreSnapshot>,
-    zone_store: Arc<ZoneStore>,
+    zone_repository: Arc<ZoneRepository>,
     flow_registry: Arc<FlowRegistry>,
     store_tx: Sender<Event>,
 }
@@ -19,11 +19,11 @@ pub struct ZoneService {
 impl ZoneService {
     pub fn new(
         snapshot_rx: Receiver<StoreSnapshot>,
-        zone_store: Arc<ZoneStore>,
+        zone_repository: Arc<ZoneRepository>,
         flow_registry: Arc<FlowRegistry>,
         store_tx: Sender<Event>,
     ) -> Self {
-        ZoneService { snapshot_rx, zone_store, flow_registry, store_tx }
+        ZoneService { snapshot_rx, zone_repository, flow_registry, store_tx }
     }
 
     pub fn list(&self) -> Vec<Arc<Zone>> {
@@ -79,11 +79,12 @@ impl ZoneService {
 
         let permit = self.store_tx.reserve().await.map_err(|_| CreateZoneError::StoreUnavailable)?;
 
-        let stored_zone =
-            self.zone_store.insert(id, name, &zone.group_ids, &zone.device_ids).await.map_err(|err| match err {
+        let stored_zone = self.zone_repository.insert(id, name, &zone.group_ids, &zone.device_ids).await.map_err(
+            |err| match err {
                 InsertError::NameAlreadyExists => CreateZoneError::NameAlreadyExists,
-                InsertError::Store(err) => CreateZoneError::Internal(err),
-            })?;
+                InsertError::Repository(err) => CreateZoneError::Internal(err),
+            },
+        )?;
 
         permit.send(Event::ZoneCreated(Zone { revision: stored_zone.revision, ..zone }));
         Ok(stored_zone)
@@ -131,7 +132,8 @@ impl ZoneService {
         }
 
         let permit = self.store_tx.reserve().await.map_err(|_| UpdateZoneError::StoreUnavailable)?;
-        let stored_zone = self.zone_store.update(id, base_revision, name, &zone.group_ids, &zone.device_ids).await?;
+        let stored_zone =
+            self.zone_repository.update(id, base_revision, name, &zone.group_ids, &zone.device_ids).await?;
         permit.send(Event::ZoneChanged(ZoneChanged {
             id: id.to_string(),
             name: Some(name.to_string()),
@@ -159,7 +161,7 @@ impl ZoneService {
         }
 
         let permit = self.store_tx.reserve().await.map_err(|_| DeleteZoneError::StoreUnavailable)?;
-        self.zone_store.delete(id, base_revision).await?;
+        self.zone_repository.delete(id, base_revision).await?;
         permit.send(Event::ZoneRemoved { zone_id: id.to_string() });
 
         Ok(())
@@ -187,7 +189,7 @@ pub enum CreateZoneError {
     #[error("store is unavailable")]
     StoreUnavailable,
     #[error(transparent)]
-    Internal(#[from] ZoneStoreError),
+    Internal(#[from] ZoneRepositoryError),
 }
 
 #[derive(Debug, Error)]
@@ -211,7 +213,7 @@ pub enum UpdateZoneError {
     )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
     #[error(transparent)]
-    Internal(#[from] ZoneStoreError),
+    Internal(#[from] ZoneRepositoryError),
 }
 
 impl From<UpdateError> for UpdateZoneError {
@@ -222,7 +224,7 @@ impl From<UpdateError> for UpdateZoneError {
                 Self::RevisionConflict { base_revision, current_revision }
             }
             UpdateError::NameAlreadyExists => Self::NameAlreadyExists,
-            UpdateError::Store(err) => Self::Internal(err),
+            UpdateError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -242,7 +244,7 @@ pub enum DeleteZoneError {
     #[error("store is unavailable")]
     StoreUnavailable,
     #[error(transparent)]
-    Internal(#[from] ZoneStoreError),
+    Internal(#[from] ZoneRepositoryError),
 }
 
 impl From<DeleteError> for DeleteZoneError {
@@ -252,7 +254,7 @@ impl From<DeleteError> for DeleteZoneError {
             DeleteError::RevisionConflict { base_revision, current_revision } => {
                 Self::RevisionConflict { base_revision, current_revision }
             }
-            DeleteError::Store(err) => Self::Internal(err),
+            DeleteError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -289,14 +291,14 @@ mod tests {
     fn service(rx: Receiver<StoreSnapshot>) -> ZoneService {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let (store_tx, _store_rx) = mpsc::channel(1);
-        ZoneService::new(rx, Arc::new(ZoneStore::new(database)), Arc::new(FlowRegistry::new(vec![])), store_tx)
+        ZoneService::new(rx, Arc::new(ZoneRepository::new(database)), Arc::new(FlowRegistry::new(vec![])), store_tx)
     }
 
     /// Bind `store_rx` when the service reserves a permit: dropping it, e.g. by leaving it out with `..`,
     /// makes the store unavailable.
     struct Fixture {
         service: ZoneService,
-        zone_store: Arc<ZoneStore>,
+        zone_repository: Arc<ZoneRepository>,
         store_rx: mpsc::Receiver<Event>,
     }
 
@@ -306,12 +308,12 @@ mod tests {
 
     fn create_service_with_flows(snapshot: StoreSnapshot, flows: Vec<VersionedFlow>) -> Fixture {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
-        let zone_store = Arc::new(ZoneStore::new(database));
+        let zone_repository = Arc::new(ZoneRepository::new(database));
         let (store_tx, store_rx) = mpsc::channel(8);
         let (_tx, rx) = watch::channel(snapshot);
         let flow_registry = Arc::new(FlowRegistry::new(flows));
-        let service = ZoneService::new(rx, Arc::clone(&zone_store), flow_registry, store_tx);
-        Fixture { service, zone_store, store_rx }
+        let service = ZoneService::new(rx, Arc::clone(&zone_repository), flow_registry, store_tx);
+        Fixture { service, zone_repository, store_rx }
     }
 
     /// A service whose `zones` table is gone, so every database call fails
@@ -320,7 +322,7 @@ mod tests {
         let (store_tx, store_rx) = mpsc::channel(8);
         let (_tx, rx) = watch::channel(snapshot);
         let flow_registry = Arc::new(FlowRegistry::new(vec![]));
-        let service = ZoneService::new(rx, Arc::new(ZoneStore::new(database.clone())), flow_registry, store_tx);
+        let service = ZoneService::new(rx, Arc::new(ZoneRepository::new(database.clone())), flow_registry, store_tx);
         database
             .call(|conn| conn.execute("DROP TABLE zones", []).map_err(crate::database::DatabaseError::from))
             .await
@@ -463,11 +465,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_zone_persists_the_zone() {
-        let Fixture { service, zone_store, store_rx: _store_rx } = create_service(snapshot_with(&["g"], &["a"]));
+        let Fixture { service, zone_repository, store_rx: _store_rx } = create_service(snapshot_with(&["g"], &["a"]));
 
         service.create_zone("zone", "Downstairs", ids(&["g"]), ids(&["a"])).await.unwrap();
 
-        let stored = zone_store.list().await.unwrap();
+        let stored = zone_repository.list().await.unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!((stored[0].id.as_str(), stored[0].name.as_str()), ("zone", "Downstairs"));
         assert_eq!(stored[0].group_ids, set(&["g"]));
@@ -525,12 +527,12 @@ mod tests {
 
     #[tokio::test]
     async fn create_zone_rejects_a_zone_without_groups_and_devices() {
-        let Fixture { service, zone_store, mut store_rx } = create_service(StoreSnapshot::default());
+        let Fixture { service, zone_repository, mut store_rx } = create_service(StoreSnapshot::default());
 
         let result = service.create_zone("zone", "Empty", vec![], vec![]).await;
 
         assert!(matches!(result, Err(CreateZoneError::ZoneEmpty)), "got {result:?}");
-        assert!(zone_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(zone_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -538,12 +540,12 @@ mod tests {
     async fn create_zone_rejects_an_existing_id() {
         let snapshot =
             StoreSnapshot { zones: snapshot(vec![zone("zone", "Existing")]).zones, ..snapshot_with(&[], &["a"]) };
-        let Fixture { service, zone_store, mut store_rx } = create_service(snapshot);
+        let Fixture { service, zone_repository, mut store_rx } = create_service(snapshot);
 
         let result = service.create_zone("zone", "Downstairs", vec![], ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateZoneError::IdAlreadyExists)), "got {result:?}");
-        assert!(zone_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(zone_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -554,30 +556,30 @@ mod tests {
     async fn create_zone_rejects_a_name_in_use_by_another_zone(#[case] name: &str) {
         let snapshot =
             StoreSnapshot { zones: snapshot(vec![zone("other", "Downstairs")]).zones, ..snapshot_with(&[], &["a"]) };
-        let Fixture { service, zone_store, mut store_rx } = create_service(snapshot);
+        let Fixture { service, zone_repository, mut store_rx } = create_service(snapshot);
 
         let result = service.create_zone("zone", name, vec![], ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateZoneError::NameAlreadyExists)), "got {result:?}");
-        assert!(zone_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(zone_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn create_zone_rejects_a_name_stored_but_not_yet_in_the_snapshot() {
-        let Fixture { service, zone_store, mut store_rx } = create_service(snapshot_with(&[], &["a"]));
-        zone_store.insert("other", "Downstairs", &set(&[]), &set(&["a"])).await.unwrap();
+        let Fixture { service, zone_repository, mut store_rx } = create_service(snapshot_with(&[], &["a"]));
+        zone_repository.insert("other", "Downstairs", &set(&[]), &set(&["a"])).await.unwrap();
 
         let result = service.create_zone("zone", "downstairs", vec![], ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateZoneError::NameAlreadyExists)), "got {result:?}");
-        assert_eq!(zone_store.list().await.unwrap().len(), 1);
+        assert_eq!(zone_repository.list().await.unwrap().len(), 1);
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn create_zone_rejects_unknown_groups_and_lists_all_of_them_sorted() {
-        let Fixture { service, zone_store, mut store_rx } = create_service(snapshot_with(&["known"], &[]));
+        let Fixture { service, zone_repository, mut store_rx } = create_service(snapshot_with(&["known"], &[]));
 
         let result = service.create_zone("zone", "Downstairs", ids(&["z", "known", "a"]), vec![]).await;
 
@@ -585,13 +587,13 @@ mod tests {
             panic!("expected UnknownGroups, got {result:?}");
         };
         assert_eq!(err.to_string(), "unknown group ids: 'a, z'");
-        assert!(zone_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(zone_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn create_zone_rejects_unknown_devices_and_lists_all_of_them_sorted() {
-        let Fixture { service, zone_store, mut store_rx } = create_service(snapshot_with(&[], &["known"]));
+        let Fixture { service, zone_repository, mut store_rx } = create_service(snapshot_with(&[], &["known"]));
 
         let result = service.create_zone("zone", "Downstairs", vec![], ids(&["z", "known", "a"])).await;
 
@@ -599,7 +601,7 @@ mod tests {
             panic!("expected UnknownDevices, got {result:?}");
         };
         assert_eq!(err.to_string(), "unknown device ids: 'a, z'");
-        assert!(zone_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(zone_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -623,13 +625,13 @@ mod tests {
 
     #[tokio::test]
     async fn create_zone_fails_without_storing_when_the_store_is_gone() {
-        let Fixture { service, zone_store, store_rx } = create_service(snapshot_with(&[], &["a"]));
+        let Fixture { service, zone_repository, store_rx } = create_service(snapshot_with(&[], &["a"]));
         drop(store_rx);
 
         let result = service.create_zone("zone", "Downstairs", vec![], ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateZoneError::StoreUnavailable)), "got {result:?}");
-        assert!(zone_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(zone_repository.list().await.unwrap().is_empty(), "nothing must be stored");
     }
 
     #[tokio::test]
@@ -660,7 +662,7 @@ mod tests {
         });
         let zones = snapshot(other_zones.into_iter().chain([stored]).collect()).zones;
         let fixture = create_service(StoreSnapshot { zones, ..snapshot_with(group_ids, device_ids) });
-        fixture.zone_store.insert("zone", "Downstairs", &set(&["g"]), &set(&["a"])).await.unwrap();
+        fixture.zone_repository.insert("zone", "Downstairs", &set(&["g"]), &set(&["a"])).await.unwrap();
         fixture
     }
 
@@ -668,8 +670,8 @@ mod tests {
         create_service_with_zone_and_snapshot_zones(group_ids, device_ids, vec![]).await
     }
 
-    async fn assert_zone_unchanged(zone_store: &ZoneStore) {
-        let stored = zone_store.list().await.unwrap();
+    async fn assert_zone_unchanged(zone_repository: &ZoneRepository) {
+        let stored = zone_repository.list().await.unwrap();
         let zone = stored.iter().find(|zone| zone.id == "zone").expect("the zone is stored");
         assert_eq!((zone.name.as_str(), zone.revision), ("Downstairs", 0), "the zone must be unchanged");
         assert_eq!((&zone.group_ids, &zone.device_ids), (&set(&["g"]), &set(&["a"])));
@@ -691,12 +693,12 @@ mod tests {
 
     #[tokio::test]
     async fn update_zone_persists_the_changes() {
-        let Fixture { service, zone_store, store_rx: _store_rx } =
+        let Fixture { service, zone_repository, store_rx: _store_rx } =
             create_service_with_zone(&["g", "h"], &["a", "b"]).await;
 
         service.update_zone("zone", 0, "Upstairs", ids(&["h"]), ids(&["b"])).await.unwrap();
 
-        let stored = zone_store.list().await.unwrap();
+        let stored = zone_repository.list().await.unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Upstairs", 1));
         assert_eq!((&stored[0].group_ids, &stored[0].device_ids), (&set(&["h"]), &set(&["b"])));
@@ -752,18 +754,19 @@ mod tests {
 
     #[tokio::test]
     async fn update_zone_rejects_a_zone_without_groups_and_devices() {
-        let Fixture { service, zone_store, mut store_rx } = create_service_with_zone(&["g"], &["a"]).await;
+        let Fixture { service, zone_repository, mut store_rx } = create_service_with_zone(&["g"], &["a"]).await;
 
         let result = service.update_zone("zone", 0, "Upstairs", vec![], vec![]).await;
 
         assert!(matches!(result, Err(UpdateZoneError::ZoneEmpty)), "got {result:?}");
-        assert_zone_unchanged(&zone_store).await;
+        assert_zone_unchanged(&zone_repository).await;
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn update_zone_rejects_unknown_groups_and_lists_all_of_them_sorted() {
-        let Fixture { service, zone_store, mut store_rx } = create_service_with_zone(&["known", "g"], &["a"]).await;
+        let Fixture { service, zone_repository, mut store_rx } =
+            create_service_with_zone(&["known", "g"], &["a"]).await;
 
         let result = service.update_zone("zone", 0, "Upstairs", ids(&["z", "known", "b"]), vec![]).await;
 
@@ -771,13 +774,14 @@ mod tests {
             panic!("expected UnknownGroups, got {result:?}");
         };
         assert_eq!(err.to_string(), "unknown group ids: 'b, z'");
-        assert_zone_unchanged(&zone_store).await;
+        assert_zone_unchanged(&zone_repository).await;
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn update_zone_rejects_unknown_devices_and_lists_all_of_them_sorted() {
-        let Fixture { service, zone_store, mut store_rx } = create_service_with_zone(&["g"], &["known", "a"]).await;
+        let Fixture { service, zone_repository, mut store_rx } =
+            create_service_with_zone(&["g"], &["known", "a"]).await;
 
         let result = service.update_zone("zone", 0, "Upstairs", vec![], ids(&["z", "known", "b"])).await;
 
@@ -785,7 +789,7 @@ mod tests {
             panic!("expected UnknownDevices, got {result:?}");
         };
         assert_eq!(err.to_string(), "unknown device ids: 'b, z'");
-        assert_zone_unchanged(&zone_store).await;
+        assert_zone_unchanged(&zone_repository).await;
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -809,12 +813,12 @@ mod tests {
 
     #[tokio::test]
     async fn update_zone_returns_not_found_for_an_unknown_id() {
-        let Fixture { service, zone_store, mut store_rx } = create_service_with_zone(&["g"], &["a"]).await;
+        let Fixture { service, zone_repository, mut store_rx } = create_service_with_zone(&["g"], &["a"]).await;
 
         let result = service.update_zone("unknown", 0, "Upstairs", ids(&["g"]), vec![]).await;
 
         assert!(matches!(result, Err(UpdateZoneError::NotFound)), "got {result:?}");
-        assert_eq!(zone_store.list().await.unwrap().len(), 1, "update must not create a zone");
+        assert_eq!(zone_repository.list().await.unwrap().len(), 1, "update must not create a zone");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -823,7 +827,7 @@ mod tests {
     #[case::ahead(5)]
     #[tokio::test]
     async fn update_zone_returns_a_revision_conflict_for_a_mismatching_base_revision(#[case] base_revision: u64) {
-        let Fixture { service, zone_store, mut store_rx } = create_service_with_zone(&["g"], &["a"]).await;
+        let Fixture { service, zone_repository, mut store_rx } = create_service_with_zone(&["g"], &["a"]).await;
 
         let result = service.update_zone("zone", base_revision, "Upstairs", ids(&["g"]), vec![]).await;
 
@@ -834,7 +838,7 @@ mod tests {
             ),
             "got {result:?}"
         );
-        assert_zone_unchanged(&zone_store).await;
+        assert_zone_unchanged(&zone_repository).await;
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -843,13 +847,13 @@ mod tests {
     #[case::different_case("oTHER")]
     #[tokio::test]
     async fn update_zone_rejects_a_name_in_use_by_another_zone(#[case] name: &str) {
-        let Fixture { service, zone_store, mut store_rx } = create_service_with_zone(&["g"], &["a"]).await;
-        zone_store.insert("other", "Other", &set(&["g"]), &set(&[])).await.unwrap();
+        let Fixture { service, zone_repository, mut store_rx } = create_service_with_zone(&["g"], &["a"]).await;
+        zone_repository.insert("other", "Other", &set(&["g"]), &set(&[])).await.unwrap();
 
         let result = service.update_zone("zone", 0, name, ids(&["g"]), vec![]).await;
 
         assert!(matches!(result, Err(UpdateZoneError::NameAlreadyExists)), "got {result:?}");
-        assert_zone_unchanged(&zone_store).await;
+        assert_zone_unchanged(&zone_repository).await;
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -858,25 +862,25 @@ mod tests {
     #[case::different_case("hUE zONE")]
     #[tokio::test]
     async fn update_zone_rejects_a_name_in_use_by_an_integration_zone(#[case] name: &str) {
-        let Fixture { service, zone_store, mut store_rx } =
+        let Fixture { service, zone_repository, mut store_rx } =
             create_service_with_zone_and_snapshot_zones(&["g"], &["a"], vec![zone("hue", "Hue zone")]).await;
 
         let result = service.update_zone("zone", 0, name, ids(&["g"]), vec![]).await;
 
         assert!(matches!(result, Err(UpdateZoneError::NameAlreadyExists)), "got {result:?}");
-        assert_zone_unchanged(&zone_store).await;
+        assert_zone_unchanged(&zone_repository).await;
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn update_zone_rejects_a_zone_owned_by_an_integration() {
-        let Fixture { service, zone_store, mut store_rx } =
+        let Fixture { service, zone_repository, mut store_rx } =
             create_service_with_zone_and_snapshot_zones(&["g"], &["a"], vec![zone("hue", "Hue zone")]).await;
 
         let result = service.update_zone("hue", 0, "Renamed", ids(&["g"]), vec![]).await;
 
         assert!(matches!(result, Err(UpdateZoneError::NotOwned)), "got {result:?}");
-        assert_zone_unchanged(&zone_store).await;
+        assert_zone_unchanged(&zone_repository).await;
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -892,13 +896,13 @@ mod tests {
 
     #[tokio::test]
     async fn update_zone_fails_without_storing_when_the_store_is_gone() {
-        let Fixture { service, zone_store, store_rx } = create_service_with_zone(&["g"], &["a"]).await;
+        let Fixture { service, zone_repository, store_rx } = create_service_with_zone(&["g"], &["a"]).await;
         drop(store_rx);
 
         let result = service.update_zone("zone", 0, "Upstairs", ids(&["g"]), vec![]).await;
 
         assert!(matches!(result, Err(UpdateZoneError::StoreUnavailable)), "got {result:?}");
-        assert_zone_unchanged(&zone_store).await;
+        assert_zone_unchanged(&zone_repository).await;
     }
 
     #[tokio::test]
@@ -918,27 +922,27 @@ mod tests {
 
     async fn create_service_for_delete_with_flows(flows: Vec<VersionedFlow>) -> Fixture {
         let fixture = create_service_with_flows(snapshot(vec![hearth_zone("zone", "Downstairs")]), flows);
-        fixture.zone_store.insert("zone", "Downstairs", &set(&["g"]), &set(&[])).await.unwrap();
+        fixture.zone_repository.insert("zone", "Downstairs", &set(&["g"]), &set(&[])).await.unwrap();
         fixture
     }
 
     #[tokio::test]
     async fn delete_zone_removes_the_stored_zone() {
-        let Fixture { service, zone_store, store_rx: _store_rx } = create_service_for_delete().await;
+        let Fixture { service, zone_repository, store_rx: _store_rx } = create_service_for_delete().await;
 
         service.delete_zone("zone", 0).await.unwrap();
 
-        assert!(zone_store.list().await.unwrap().is_empty(), "the zone must be deleted");
+        assert!(zone_repository.list().await.unwrap().is_empty(), "the zone must be deleted");
     }
 
     #[tokio::test]
     async fn delete_zone_only_removes_the_given_zone() {
-        let Fixture { service, zone_store, store_rx: _store_rx } = create_service_for_delete().await;
-        zone_store.insert("other", "Other", &set(&["g"]), &set(&[])).await.unwrap();
+        let Fixture { service, zone_repository, store_rx: _store_rx } = create_service_for_delete().await;
+        zone_repository.insert("other", "Other", &set(&["g"]), &set(&[])).await.unwrap();
 
         service.delete_zone("zone", 0).await.unwrap();
 
-        let stored = zone_store.list().await.unwrap();
+        let stored = zone_repository.list().await.unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].id, "other");
     }
@@ -955,12 +959,12 @@ mod tests {
 
     #[tokio::test]
     async fn delete_zone_returns_not_found_for_an_unknown_id() {
-        let Fixture { service, zone_store, mut store_rx } = create_service_for_delete().await;
+        let Fixture { service, zone_repository, mut store_rx } = create_service_for_delete().await;
 
         let result = service.delete_zone("unknown", 0).await;
 
         assert!(matches!(result, Err(DeleteZoneError::NotFound)), "got {result:?}");
-        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(zone_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -989,7 +993,7 @@ mod tests {
     #[case::ahead(5)]
     #[tokio::test]
     async fn delete_zone_returns_a_revision_conflict_for_a_mismatching_base_revision(#[case] base_revision: u64) {
-        let Fixture { service, zone_store, mut store_rx } = create_service_for_delete().await;
+        let Fixture { service, zone_repository, mut store_rx } = create_service_for_delete().await;
 
         let result = service.delete_zone("zone", base_revision).await;
 
@@ -1000,14 +1004,14 @@ mod tests {
             ),
             "got {result:?}"
         );
-        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(zone_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn delete_zone_returns_a_revision_conflict_when_the_snapshot_is_behind_the_database() {
-        let Fixture { service, zone_store, mut store_rx } = create_service_for_delete().await;
-        zone_store.update("zone", 0, "Downstairs", &set(&["g"]), &set(&[])).await.unwrap();
+        let Fixture { service, zone_repository, mut store_rx } = create_service_for_delete().await;
+        zone_repository.update("zone", 0, "Downstairs", &set(&["g"]), &set(&[])).await.unwrap();
 
         let result = service.delete_zone("zone", 0).await;
 
@@ -1015,19 +1019,19 @@ mod tests {
             matches!(result, Err(DeleteZoneError::RevisionConflict { base_revision: 0, current_revision: 1 })),
             "got {result:?}"
         );
-        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(zone_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
         assert!(store_rx.try_recv().is_err(), "no event must be sent after a failed delete");
     }
 
     #[tokio::test]
     async fn delete_zone_fails_without_deleting_when_the_store_is_gone() {
-        let Fixture { service, zone_store, store_rx } = create_service_for_delete().await;
+        let Fixture { service, zone_repository, store_rx } = create_service_for_delete().await;
         drop(store_rx);
 
         let result = service.delete_zone("zone", 0).await;
 
         assert!(matches!(result, Err(DeleteZoneError::StoreUnavailable)), "got {result:?}");
-        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(zone_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
     }
 
     #[tokio::test]
@@ -1048,7 +1052,7 @@ mod tests {
             flow_using_zones("a", "Flow A", 0, &["other", "zone"]),
             flow_using_zones("c", "Flow C", 1, &["other"]),
         ];
-        let Fixture { service, zone_store, mut store_rx } = create_service_for_delete_with_flows(flows).await;
+        let Fixture { service, zone_repository, mut store_rx } = create_service_for_delete_with_flows(flows).await;
 
         let result = service.delete_zone("zone", 0).await;
 
@@ -1059,7 +1063,7 @@ mod tests {
         let DeleteZoneError::InUse(summaries) = err else { unreachable!() };
         let summaries: Vec<_> = summaries.iter().map(|s| (s.id.as_str(), s.name.as_str(), s.revision)).collect();
         assert_eq!(summaries, [("a", "Flow A", 0), ("b", "Flow B", 2)]);
-        assert_eq!(zone_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(zone_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -1099,10 +1103,11 @@ mod tests {
     #[tokio::test]
     async fn delete_zone_ignores_flows_using_other_zones() {
         let flows = vec![flow_using_zones("a", "Flow A", 0, &["other"])];
-        let Fixture { service, zone_store, store_rx: _store_rx } = create_service_for_delete_with_flows(flows).await;
+        let Fixture { service, zone_repository, store_rx: _store_rx } =
+            create_service_for_delete_with_flows(flows).await;
 
         service.delete_zone("zone", 0).await.unwrap();
 
-        assert!(zone_store.list().await.unwrap().is_empty(), "the zone must be deleted");
+        assert!(zone_repository.list().await.unwrap().is_empty(), "the zone must be deleted");
     }
 }

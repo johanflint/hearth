@@ -44,7 +44,7 @@ fn delete_error_response(err: DeletePresetError) -> Response {
             (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response()
         }
         DeletePresetError::Internal(err) => {
-            error!("❌ Failed to delete preset from store: {err}");
+            error!("❌ Failed to delete preset from the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_preset_returns_500_internal_server_error_when_the_store_fails() {
+    async fn delete_preset_returns_500_internal_server_error_when_the_repository_fails() {
         let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
         database
             .call(|conn| conn.execute("DROP TABLE presets", []).map_err(DatabaseError::from))

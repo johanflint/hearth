@@ -25,7 +25,7 @@ struct ListPresetsResponse {
 fn list_error_response(err: ListPresetError) -> Response {
     match err {
         ListPresetError::Internal(err) => {
-            error!("❌ Failed to list presets from store: {err}");
+            error!("❌ Failed to list presets from the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -51,7 +51,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_presets_returns_an_empty_list_for_an_empty_store() {
+    async fn list_presets_returns_an_empty_list_for_an_empty_repository() {
         let state = create_state(FlowRegistry::new(vec![])).state;
 
         let response = call_list_presets(state).await;
@@ -85,7 +85,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_presets_returns_a_storage_error_when_the_store_fails() {
+    async fn list_presets_returns_a_storage_error_when_the_repository_fails() {
         let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
         insert_preset_row(&database, "corrupt", "Corrupt", "not valid json").await;
 

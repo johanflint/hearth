@@ -46,7 +46,7 @@ fn create_error_response(err: CreateFlowError) -> Response {
             (StatusCode::CONFLICT, Json(ErrorResponse::new_code_only("flowAlreadyExists"))).into_response()
         }
         CreateFlowError::Internal(err) => {
-            error!("❌ Failed to persist flow to store: {err}");
+            error!("❌ Failed to persist flow to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
         CreateFlowError::CommitFailed(err) => {
@@ -88,14 +88,15 @@ mod tests {
 
     #[tokio::test]
     async fn create_flow_stores_registers_and_reconciles_a_new_flow() {
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_state(FlowRegistry::new(vec![]));
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } =
+            create_state(FlowRegistry::new(vec![]));
 
         let response = call_create_flow(state, &create_request(VALID_FLOW_JSON)).await;
 
         assert_eq!(response.status(), StatusCode::CREATED);
         assert_eq!(response.headers()[header::LOCATION], format!("/api/flows/{VALID_FLOW_ID}"));
         assert_eq!(body_json(response).await, json!({"id": VALID_FLOW_ID, "revision": 0}));
-        let stored_flow = flow_store.by_id(VALID_FLOW_ID).await.expect("by_id succeeded").expect("flow stored");
+        let stored_flow = flow_repository.by_id(VALID_FLOW_ID).await.expect("by_id succeeded").expect("flow stored");
         assert_eq!(stored_flow.document, valid_flow_document(), "stored document must be the flow");
         assert_eq!(flow_registry.by_id(VALID_FLOW_ID).expect("flow in registry").revision, 0);
         assert!(matches!(scheduler_rx.try_recv(), Ok(SchedulerCommand::Reconcile { revision: 0, .. })));
@@ -103,8 +104,9 @@ mod tests {
 
     #[tokio::test]
     async fn create_flow_returns_409_conflict_for_an_existing_flow() {
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_state(FlowRegistry::new(vec![]));
-        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } =
+            create_state(FlowRegistry::new(vec![]));
+        flow_repository.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed repository");
 
         let response = call_create_flow(state, &create_request(VALID_FLOW_JSON)).await;
 
@@ -116,38 +118,39 @@ mod tests {
 
     #[tokio::test]
     async fn create_flow_returns_503_service_unavailable_when_the_scheduler_is_gone() {
-        let Fixture { state, flow_store, flow_registry, scheduler_rx } = create_state(FlowRegistry::new(vec![]));
+        let Fixture { state, flow_repository, flow_registry, scheduler_rx } = create_state(FlowRegistry::new(vec![]));
         drop(scheduler_rx);
 
         let response = call_create_flow(state, &create_request(VALID_FLOW_JSON)).await;
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body_json(response).await["code"], "schedulerUnavailable");
-        assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(flow_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(flow_registry.by_id(VALID_FLOW_ID).is_none(), "nothing must be registered");
     }
 
     #[tokio::test]
     async fn create_flow_returns_422_unprocessable_entity_for_a_semantically_invalid_flow() {
-        let Fixture { state, flow_store, mut scheduler_rx, .. } = create_state(FlowRegistry::new(vec![]));
+        let Fixture { state, flow_repository, mut scheduler_rx, .. } = create_state(FlowRegistry::new(vec![]));
 
         let response = call_create_flow(state, &create_request(INVALID_FLOW_JSON)).await;
 
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body_json(response).await["code"], "missingEndNode");
-        assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(flow_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
     }
 
     #[tokio::test]
     async fn create_flow_returns_422_validation_failed_for_a_flow_with_an_unknown_group() {
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_state(FlowRegistry::new(vec![]));
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } =
+            create_state(FlowRegistry::new(vec![]));
 
         let response = call_create_flow(state, &create_request(UNKNOWN_GROUP_FLOW_JSON)).await;
 
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_unknown_group_validation_failure(&body_json(response).await);
-        assert!(flow_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(flow_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(flow_registry.by_id("flow").is_none(), "nothing must be registered");
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
     }

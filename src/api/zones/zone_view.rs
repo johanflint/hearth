@@ -1,6 +1,6 @@
 use crate::api::owner_view::OwnerView;
 use crate::domain::Zone;
-use crate::zone_store::StoredZone;
+use crate::zone_repository::StoredZone;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::sync::Arc;

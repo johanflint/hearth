@@ -36,7 +36,7 @@ fn retrieve_error_response(id: &str, err: RetrieveFlowError) -> Response {
     match err {
         RetrieveFlowError::NotFound => StatusCode::NOT_FOUND.into_response(),
         RetrieveFlowError::Internal(err) => {
-            error!("❌ Failed to retrieve flow '{id}' from store: {err}");
+            error!("❌ Failed to retrieve flow '{id}' from the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -60,8 +60,8 @@ mod tests {
 
     #[tokio::test]
     async fn retrieve_flow_returns_the_stored_flow_as_a_json_object() {
-        let Fixture { state, flow_store, .. } = create_state(FlowRegistry::new(vec![]));
-        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
+        let Fixture { state, flow_repository, .. } = create_state(FlowRegistry::new(vec![]));
+        flow_repository.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed repository");
 
         let response = call_retrieve_flow(state, VALID_FLOW_ID).await;
 

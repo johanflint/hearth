@@ -43,7 +43,7 @@ fn update_error_response(err: UpdatePresetError) -> Response {
             (StatusCode::CONFLICT, Json(ErrorResponse::new_code_only("presetNameAlreadyExists"))).into_response()
         }
         UpdatePresetError::Internal(err) => {
-            error!("❌ Failed to persist preset to store: {err}");
+            error!("❌ Failed to persist preset to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_preset_returns_a_storage_error_when_the_store_fails() {
+    async fn update_preset_returns_a_storage_error_when_the_repository_fails() {
         let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
         insert_preset_row(&database, "corrupt", "Corrupt", "not valid json").await;
         database

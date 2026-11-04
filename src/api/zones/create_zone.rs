@@ -48,7 +48,7 @@ fn create_error_response(err: CreateZoneError) -> Response {
             (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("storeUnavailable"))).into_response()
         }
         CreateZoneError::Internal(_) => {
-            error!("❌ Failed to persist zone to store: {err}");
+            error!("❌ Failed to persist zone to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -72,7 +72,7 @@ mod tests {
     use crate::domain::{Event, Group, Owner, Zone};
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
-    use crate::zone_store::ZoneStore;
+    use crate::zone_repository::ZoneRepository;
     use axum::body::Body;
     use axum::http::Request;
     use serde_json::json;
@@ -93,12 +93,7 @@ mod tests {
         let groups: HashMap<_, _> = group_ids.iter().map(|id| (id.to_string(), Arc::new(group(id)))).collect();
         let devices: HashMap<_, _> =
             device_ids.iter().map(|id| (id.to_string(), Arc::new(DeviceBuilder::new(id).build()))).collect();
-        let snapshot = StoreSnapshot {
-            zones: Arc::new(zones),
-            groups: Arc::new(groups),
-            devices: Arc::new(devices),
-            ..Default::default()
-        };
+        let snapshot = StoreSnapshot { zones: Arc::new(zones), groups: Arc::new(groups), devices: Arc::new(devices) };
         let (store_tx, store_rx) = mpsc::channel(8);
         let (state, database) = create_state_with_store_tx(snapshot, store_tx);
         Fixture { state, database, store_rx }
@@ -144,7 +139,7 @@ mod tests {
     }
 
     async fn stored_zone_ids(database: Database) -> Vec<String> {
-        let stored = ZoneStore::new(database).list().await.expect("list succeeded");
+        let stored = ZoneRepository::new(database).list().await.expect("list succeeded");
         stored.into_iter().map(|zone| zone.id).collect()
     }
 

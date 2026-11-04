@@ -23,7 +23,7 @@ fn retrieve_error_response(id: &str, err: RetrievePresetError) -> Response {
     match err {
         RetrievePresetError::NotFound => StatusCode::NOT_FOUND.into_response(),
         RetrievePresetError::Internal(err) => {
-            error!("❌ Failed to retrieve preset '{id}' from store: {err}");
+            error!("❌ Failed to retrieve preset '{id}' from the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -78,7 +78,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retrieve_preset_returns_a_storage_error_when_the_store_fails() {
+    async fn retrieve_preset_returns_a_storage_error_when_the_repository_fails() {
         let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
         insert_preset_row(&database, "corrupt", "Corrupt", "not valid json").await;
 

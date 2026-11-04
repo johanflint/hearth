@@ -4,16 +4,16 @@ use crate::database::{Database, DatabaseError};
 use crate::domain::Event;
 use crate::flow_engine::SchedulerCommand;
 use crate::flow_registry::FlowRegistry;
-use crate::flow_store::FlowStore;
-use crate::group_store::GroupStore;
+use crate::flow_repository::FlowRepository;
+use crate::group_repository::GroupRepository;
 use crate::preset_registry::PresetRegistry;
-use crate::preset_store::PresetStore;
+use crate::preset_repository::PresetRepository;
 use crate::services::FlowService;
 use crate::services::GroupService;
 use crate::services::PresetService;
 use crate::services::ZoneService;
 use crate::store::StoreSnapshot;
-use crate::zone_store::ZoneStore;
+use crate::zone_repository::ZoneRepository;
 use axum::response::Response;
 use chrono::Utc;
 use http_body_util::BodyExt;
@@ -55,7 +55,7 @@ pub(super) fn valid_flow_document() -> serde_json::Value {
 /// makes the scheduler unavailable.
 pub(super) struct Fixture {
     pub(super) state: ApiState,
-    pub(super) flow_store: Arc<FlowStore>,
+    pub(super) flow_repository: Arc<FlowRepository>,
     pub(super) flow_registry: Arc<FlowRegistry>,
     pub(super) scheduler_rx: mpsc::Receiver<SchedulerCommand>,
 }
@@ -70,7 +70,7 @@ pub(super) fn create_state_with_snapshot(snapshot: StoreSnapshot) -> ApiState {
 }
 
 /// The API state with the given snapshot and store event sender, to inspect the events a handler sends.
-/// Also returns the database behind the stores.
+/// Also returns the database behind the repositories.
 pub(super) fn create_state_with_store_tx(
     snapshot: StoreSnapshot,
     store_tx: mpsc::Sender<Event>,
@@ -95,7 +95,7 @@ fn draining_store_tx() -> mpsc::Sender<Event> {
     store_tx
 }
 
-/// Also returns the database behind the stores, to seed rows the stores can't write
+/// Also returns the database behind the repositories, to seed rows the repositories can't write
 pub(super) fn create_state_with_database(flow_registry: FlowRegistry) -> (Fixture, Database) {
     build_state(flow_registry, StoreSnapshot::default(), draining_store_tx())
 }
@@ -107,14 +107,14 @@ fn build_state(
 ) -> (Fixture, Database) {
     let (scheduler_tx, scheduler_rx) = mpsc::channel(8);
     let handle = PrometheusBuilder::new().build_recorder().handle();
-    let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory flow store");
-    let flow_store = Arc::new(FlowStore::new(database.clone()));
+    let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
+    let flow_repository = Arc::new(FlowRepository::new(database.clone()));
     let flow_registry = Arc::new(flow_registry);
-    let preset_store = Arc::new(PresetStore::new(database.clone()));
+    let preset_repository = Arc::new(PresetRepository::new(database.clone()));
     let preset_registry = Arc::new(PresetRegistry::new(vec![]));
     let (_, snapshot_rx) = watch::channel(snapshot);
     let flow_service = Arc::new(FlowService::new(
-        Arc::clone(&flow_store),
+        Arc::clone(&flow_repository),
         Arc::clone(&flow_registry),
         preset_registry.clone(),
         scheduler_tx,
@@ -122,17 +122,17 @@ fn build_state(
     ));
     let group_service = Arc::new(GroupService::new(
         snapshot_rx.clone(),
-        Arc::new(GroupStore::new(database.clone())),
+        Arc::new(GroupRepository::new(database.clone())),
         Arc::clone(&flow_registry),
         store_tx.clone(),
     ));
     let zone_service = Arc::new(ZoneService::new(
         snapshot_rx,
-        Arc::new(ZoneStore::new(database.clone())),
+        Arc::new(ZoneRepository::new(database.clone())),
         Arc::clone(&flow_registry),
         store_tx,
     ));
-    let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, Arc::clone(&flow_registry)));
+    let preset_service = Arc::new(PresetService::new(preset_repository, preset_registry, Arc::clone(&flow_registry)));
     // Tasks that keep running until a test aborts them
     let core_tasks = CoreTasks {
         store: tokio::spawn(std::future::pending()),
@@ -149,7 +149,7 @@ fn build_state(
         zone_service,
         preset_service,
     );
-    (Fixture { state, flow_store, flow_registry, scheduler_rx }, database)
+    (Fixture { state, flow_repository, flow_registry, scheduler_rx }, database)
 }
 
 pub(super) async fn body_json(response: Response) -> serde_json::Value {
@@ -172,7 +172,7 @@ pub(super) async fn insert_preset_row(database: &Database, id: &str, name: &str,
         .expect("insert preset row");
 }
 
-/// Writes a preset's revision directly, the store only ever increments it by one
+/// Writes a preset's revision directly, the repository only ever increments it by one
 pub(super) async fn set_preset_revision(database: &Database, id: &str, revision: i64) {
     let id = id.to_string();
     database
