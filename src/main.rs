@@ -2,7 +2,7 @@ use crate::api::ApiState;
 use crate::app_config::AppConfig;
 use crate::core_tasks::CoreTasks;
 use crate::database::Database;
-use crate::domain::{Event, Group, controller_registry};
+use crate::domain::{Event, Group, Zone, controller_registry};
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::flow_service::FlowService;
@@ -17,6 +17,7 @@ use crate::preset_service::PresetService;
 use crate::preset_store::PresetStore;
 use crate::store::Store;
 use crate::store_listener::store_listener;
+use crate::zone_store::ZoneStore;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::path::Path;
 use std::sync::Arc;
@@ -59,6 +60,7 @@ mod store;
 mod store_listener;
 #[cfg(test)]
 mod test_support;
+mod zone_store;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -91,7 +93,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
     let group_store = Arc::new(GroupStore::new(database.clone()));
     let groups = group_store.list().await?.into_iter().map(Group::from).collect();
-    let (mut store, store_reactive_rx) = Store::new(rx, groups);
+    let zone_store = Arc::new(ZoneStore::new(database.clone()));
+    let zones = zone_store.list().await?.into_iter().map(Zone::from).collect();
+    let (mut store, store_reactive_rx) = Store::new(rx, groups, zones);
 
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let scheduler_tx_clone = scheduler_tx.clone();
