@@ -1,7 +1,7 @@
 use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
-use crate::api::flows::flow_error::flow_factory_error_response;
-use crate::api::parse_request::{invalid_json, parse_request};
+use crate::api::flows::flow_error::validate_error_response;
+use crate::api::parse_request::parse_request;
 use crate::flow_service::UpdateFlowError;
 use axum::Json;
 use axum::body::Bytes;
@@ -30,8 +30,7 @@ pub(super) async fn update_flow(
 
 fn update_error_response(err: UpdateFlowError) -> Response {
     match err {
-        UpdateFlowError::InvalidDocument(err) => invalid_json(err),
-        UpdateFlowError::InvalidFlow(err) => flow_factory_error_response(err),
+        UpdateFlowError::Invalid(err) => validate_error_response(err),
         UpdateFlowError::IdMismatch { id, flow_id } => {
             let response =
                 ErrorResponse::new("flowIdMismatch", format!("body id '{flow_id}' does not match path id '{id}'"));
@@ -78,7 +77,8 @@ mod tests {
     use super::*;
     use crate::api::flows::router;
     use crate::api::test_support::{
-        Fixture, VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state, valid_flow_document,
+        Fixture, UNKNOWN_GROUP_FLOW_JSON, VALID_FLOW_ID, VALID_FLOW_JSON, assert_unknown_group_validation_failure,
+        body_json, create_state, valid_flow_document,
     };
     use crate::flow_engine::{SchedulerCommand, VersionedFlow};
     use crate::flow_loader;
@@ -265,6 +265,20 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body_json(response).await["code"], "missingEndNode");
         assert!(scheduler_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn update_flow_returns_422_validation_failed_for_a_flow_with_an_unknown_group() {
+        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_seeded_state().await;
+
+        let response = call_update_flow(state, "flow", &update_request(0, UNKNOWN_GROUP_FLOW_JSON)).await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_unknown_group_validation_failure(&body_json(response).await);
+        let stored_flow = flow_store.by_id(VALID_FLOW_ID).await.unwrap().expect("flow stored");
+        assert_eq!(stored_flow.revision, 0, "store must be unchanged");
+        assert_eq!(flow_registry.by_id(VALID_FLOW_ID).expect("flow in registry").revision, 0);
+        assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
     }
 
     #[tokio::test]
