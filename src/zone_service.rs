@@ -1,6 +1,7 @@
 use crate::domain::Zone;
 use crate::store::StoreSnapshot;
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::watch::Receiver;
 
 #[derive(Debug)]
@@ -20,6 +21,16 @@ impl ZoneService {
         zones.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
         zones
     }
+
+    pub fn retrieve_zone(&self, id: &str) -> Result<Arc<Zone>, RetrieveZoneError> {
+        self.snapshot_rx.borrow().zones.get(id).cloned().ok_or(RetrieveZoneError::NotFound)
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum RetrieveZoneError {
+    #[error("zone not found")]
+    NotFound,
 }
 
 #[cfg(test)]
@@ -98,5 +109,42 @@ mod tests {
         tx.send(snapshot(vec![zone("1", "Upstairs"), zone("2", "Garden")])).unwrap();
 
         assert_eq!(names(&service.list()), vec!["Garden", "Upstairs"]);
+    }
+
+    #[test]
+    fn retrieve_zone_returns_the_zone_with_the_id() {
+        let (_tx, rx) = watch::channel(snapshot(vec![zone("1", "Garden"), zone("2", "Upstairs")]));
+
+        let found = ZoneService::new(rx).retrieve_zone("2").unwrap();
+
+        assert_eq!(found.name, "Upstairs");
+    }
+
+    #[test]
+    fn retrieve_zone_returns_not_found_for_an_unknown_id() {
+        let (_tx, rx) = watch::channel(snapshot(vec![zone("1", "Garden")]));
+
+        let result = ZoneService::new(rx).retrieve_zone("unknown");
+
+        assert!(matches!(result, Err(RetrieveZoneError::NotFound)));
+    }
+
+    #[test]
+    fn retrieve_zone_does_not_match_on_the_name() {
+        let (_tx, rx) = watch::channel(snapshot(vec![zone("1", "Garden")]));
+
+        let result = ZoneService::new(rx).retrieve_zone("Garden");
+
+        assert!(matches!(result, Err(RetrieveZoneError::NotFound)));
+    }
+
+    #[test]
+    fn retrieve_zone_follows_the_latest_snapshot() {
+        let (tx, rx) = watch::channel(StoreSnapshot::default());
+        let service = ZoneService::new(rx);
+
+        tx.send(snapshot(vec![zone("1", "Garden")])).unwrap();
+
+        assert!(service.retrieve_zone("1").is_ok());
     }
 }

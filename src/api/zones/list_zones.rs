@@ -1,13 +1,10 @@
 use crate::api::ApiState;
-use crate::api::owner_view::OwnerView;
-use crate::domain::Zone;
+use crate::api::zones::zone_view::ZoneView;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 pub(super) async fn list_zones(State(state): State<ApiState>) -> Result<Response, Response> {
     let zones: Vec<_> = state.zone_service.list().into_iter().map(ZoneView::from).collect();
@@ -20,43 +17,20 @@ struct ListZonesResponse {
     zones: Vec<ZoneView>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct ZoneView {
-    pub id: String,
-    pub name: String,
-    pub group_ids: BTreeSet<String>,
-    pub device_ids: BTreeSet<String>,
-    pub revision: u64,
-    pub owner: OwnerView,
-}
-
-impl From<Arc<Zone>> for ZoneView {
-    fn from(zone: Arc<Zone>) -> Self {
-        Self {
-            id: zone.id.clone(),
-            name: zone.name.clone(),
-            group_ids: zone.group_ids.clone(),
-            device_ids: zone.device_ids.clone(),
-            revision: zone.revision,
-            owner: (&zone.owner).into(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::test_support::{body_json, create_state, create_state_with_snapshot};
     use crate::api::zones::router;
-    use crate::domain::Owner;
+    use crate::domain::{Owner, Zone};
     use crate::flow_registry::FlowRegistry;
     use crate::store::StoreSnapshot;
     use axum::body::Body;
     use axum::http::Request;
     use rstest::rstest;
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
+    use std::sync::Arc;
     use tower::ServiceExt;
 
     async fn call_list_zones(state: ApiState) -> Response {
