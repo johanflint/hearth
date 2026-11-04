@@ -359,7 +359,7 @@ fn is_exact_match(
 mod tests {
     use super::*;
     use crate::domain::property::{BooleanProperty, PropertyType};
-    use crate::domain::{Color, Group, GroupOwner, Zone};
+    use crate::domain::{Color, Group, Owner, Zone};
     use crate::domain::{Number, Value};
     use crate::flow_engine::action::DeviceCommand;
     use crate::flow_engine::flow::{FlowLink, FlowNode, FlowNodeKind};
@@ -1157,7 +1157,7 @@ mod tests {
             name: id.to_string(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: external_id.map(str::to_string),
         }
     }
@@ -1178,7 +1178,7 @@ mod tests {
             group_ids: group_ids.iter().map(|id| id.to_string()).collect(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
-            owner: GroupOwner::Hearth,
+            owner: Owner::Hearth,
             external_id: external_id.map(str::to_string),
         }
     }

@@ -19,10 +19,10 @@ pub fn map_connectivity_changed(property: ZigbeeConnectivityChanged) -> Vec<Even
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::Owner;
+    use crate::hue::domain::HueOwner;
 
-    fn owner() -> Owner {
-        Owner { rid: "3a3225cb-dcda-46fb-8f21-00a8c76024bc".to_string(), rtype: "device".to_string() }
+    fn owner() -> HueOwner {
+        HueOwner { rid: "3a3225cb-dcda-46fb-8f21-00a8c76024bc".to_string(), rtype: "device".to_string() }
     }
 
     #[test]

@@ -45,6 +45,7 @@ pub enum Event {
         group_id: String,
     },
     DiscoveredZones(Vec<Zone>),
+    ZoneCreated(Zone),
     ZoneChanged(ZoneChanged),
     ZoneRemoved {
         zone_id: String,
@@ -73,6 +74,8 @@ pub struct GroupChanged {
 pub struct ZoneChanged {
     pub id: String,
     pub name: Option<String>,
+    pub group_ids: Option<BTreeSet<String>>,
     pub device_ids: Option<BTreeSet<String>>,
+    pub revision: Option<u64>,
     pub external_id: Option<String>,
 }

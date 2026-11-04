@@ -1,4 +1,5 @@
-use crate::domain::{Group, GroupOwner};
+use crate::api::owner_view::OwnerView;
+use crate::domain::Group;
 use crate::group_store::StoredGroup;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -11,14 +12,7 @@ pub(super) struct GroupView {
     pub name: String,
     pub device_ids: BTreeSet<String>,
     pub revision: u64,
-    pub owner: GroupOwnerView,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) enum GroupOwnerView {
-    Hearth,
-    Integration,
+    pub owner: OwnerView,
 }
 
 impl From<Arc<Group>> for GroupView {
@@ -40,16 +34,7 @@ impl From<StoredGroup> for GroupView {
             name: group.name,
             device_ids: group.device_ids,
             revision: group.revision,
-            owner: GroupOwnerView::Hearth,
-        }
-    }
-}
-
-impl From<&GroupOwner> for GroupOwnerView {
-    fn from(owner: &GroupOwner) -> Self {
-        match owner {
-            GroupOwner::Hearth => GroupOwnerView::Hearth,
-            GroupOwner::Integration => GroupOwnerView::Integration,
+            owner: OwnerView::Hearth,
         }
     }
 }

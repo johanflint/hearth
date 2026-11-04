@@ -111,11 +111,26 @@ impl Action for ControlZoneAction {
     }
 }
 
+impl ControlZoneAction {
+    #[cfg(test)]
+    pub fn new(
+        zone_id: String,
+        claim: Option<ClaimMode>,
+        property: HashMap<String, PropertyCommand>,
+    ) -> ControlZoneAction {
+        ControlZoneAction { zone_id, claim, property }
+    }
+
+    pub fn zone_id(&self) -> &str {
+        &self.zone_id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::property::{NumberProperty, PropertyType, ValueKind};
-    use crate::domain::{Device, Group, GroupOwner, Number, Value, Zone};
+    use crate::domain::{Device, Group, Number, Owner, Value, Zone};
     use crate::flow_engine::action::device_command::DeviceCommand;
     use crate::store::{DeviceMap, GroupMap, ZoneMap};
     use crate::test_support::{DeviceBuilder, property_command, resolved_property_command};
@@ -153,7 +168,7 @@ mod tests {
             name: "Room".to_string(),
             device_ids: ["lamp2", "lamp3"].iter().map(|id| id.to_string()).collect(),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: None,
         };
         let groups: GroupMap = HashMap::from([(room.id.clone(), Arc::new(room))]);
@@ -164,7 +179,7 @@ mod tests {
             group_ids: zone_group_ids.iter().map(|id| id.to_string()).collect(),
             device_ids: zone_device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
-            owner: GroupOwner::Hearth,
+            owner: Owner::Hearth,
             external_id: None,
         };
         let zones: ZoneMap = HashMap::from([(zone.id.clone(), Arc::new(zone))]);

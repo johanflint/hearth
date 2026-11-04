@@ -1,4 +1,4 @@
-use crate::hue::domain::Owner;
+use crate::hue::domain::HueOwner;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct ContactGet {
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     #[allow(dead_code)]
     pub enabled: bool,
     pub contact_report: Option<ContactReport>,
@@ -29,7 +29,7 @@ pub enum ContactState {
 pub struct ContactChanged {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub contact_report: Option<ContactReport>,
 }
 

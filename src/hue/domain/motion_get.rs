@@ -1,4 +1,4 @@
-use crate::hue::domain::Owner;
+use crate::hue::domain::HueOwner;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize)]
 pub struct MotionGet {
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub enabled: bool,
     pub motion: Motion,
     pub sensitivity: Sensitivity,
@@ -70,7 +70,7 @@ pub enum MotionType {
 pub struct MotionChanged {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub enabled: Option<bool>,
     pub motion: Option<Motion>,
     pub sensitivity: Option<SensitivityChanged>,

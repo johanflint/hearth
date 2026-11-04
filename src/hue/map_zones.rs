@@ -1,4 +1,4 @@
-use crate::domain::{GroupOwner, Zone};
+use crate::domain::{Owner, Zone};
 use crate::hue::domain::{LightGet, ZoneGet};
 use crate::hue::map_rooms::grouped_light_id;
 use std::collections::BTreeSet;
@@ -25,7 +25,7 @@ fn map_zone(zone: ZoneGet, lights: &[LightGet]) -> Result<Zone, MapZonesError> {
         group_ids: BTreeSet::new(), // Hue zones never contain rooms (groups)
         device_ids,
         revision: 0,
-        owner: GroupOwner::Integration,
+        owner: Owner::Integration,
         external_id,
     })
 }
@@ -47,11 +47,11 @@ pub enum MapZonesError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::{Metadata, On, Owner};
+    use crate::hue::domain::{HueOwner, Metadata, On};
     use pretty_assertions::assert_eq;
 
-    fn owner(rid: &str, rtype: &str) -> Owner {
-        Owner { rid: rid.to_string(), rtype: rtype.to_string() }
+    fn owner(rid: &str, rtype: &str) -> HueOwner {
+        HueOwner { rid: rid.to_string(), rtype: rtype.to_string() }
     }
 
     fn light(id: &str, device_id: &str) -> LightGet {
@@ -92,7 +92,7 @@ mod tests {
                 group_ids: BTreeSet::new(),
                 device_ids: ids(&["device-1", "device-2"]),
                 revision: 0,
-                owner: GroupOwner::Integration,
+                owner: Owner::Integration,
                 external_id: Some("grouped-light".to_string()),
             }]
         );

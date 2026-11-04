@@ -1,4 +1,4 @@
-use crate::domain::{Group, GroupOwner};
+use crate::domain::{Device, Group, Owner};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ pub struct Zone {
     pub group_ids: BTreeSet<String>,
     pub device_ids: BTreeSet<String>,
     pub revision: u64,
-    pub owner: GroupOwner,
+    pub owner: Owner,
     pub external_id: Option<String>,
 }
 
@@ -30,11 +30,19 @@ impl Zone {
     ) -> impl Iterator<Item = &'a String> {
         self.group_ids.iter().filter(|id| !groups.contains_key(*id))
     }
+
+    pub fn unknown_device_ids<'a>(
+        &'a self,
+        devices: &'a HashMap<String, Arc<Device>>,
+    ) -> impl Iterator<Item = &'a String> {
+        self.device_ids.iter().filter(|id| !devices.contains_key(*id))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::DeviceBuilder;
     use pretty_assertions::assert_eq;
 
     fn group(id: &str, device_ids: &[&str]) -> Arc<Group> {
@@ -43,7 +51,7 @@ mod tests {
             name: id.to_string(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: None,
         })
     }
@@ -59,7 +67,7 @@ mod tests {
             group_ids: group_ids.iter().map(|id| id.to_string()).collect(),
             device_ids: device_ids.iter().map(|id| id.to_string()).collect(),
             revision: 0,
-            owner: GroupOwner::Hearth,
+            owner: Owner::Hearth,
             external_id: None,
         }
     }
@@ -159,5 +167,48 @@ mod tests {
         let zone = zone(&["ghost"], &[]);
 
         assert!(unknown_group_ids(&zone, &HashMap::new()).is_empty());
+    }
+
+    fn devices(ids: &[&str]) -> HashMap<String, Arc<Device>> {
+        ids.iter().map(|id| (id.to_string(), Arc::new(DeviceBuilder::new(id).build()))).collect()
+    }
+
+    fn unknown_device_ids(zone: &Zone, devices: &HashMap<String, Arc<Device>>) -> Vec<String> {
+        zone.unknown_device_ids(devices).cloned().collect()
+    }
+
+    #[test]
+    fn unknown_device_ids_is_empty_when_every_device_is_known() {
+        let zone = zone(&["lamp1", "lamp2"], &[]);
+
+        assert!(unknown_device_ids(&zone, &devices(&["lamp1", "lamp2", "lamp3"])).is_empty());
+    }
+
+    #[test]
+    fn unknown_device_ids_returns_the_devices_that_are_not_in_the_store() {
+        let zone = zone(&["ghost", "lamp1", "phantom"], &[]);
+
+        assert_eq!(unknown_device_ids(&zone, &devices(&["lamp1"])), ["ghost", "phantom"]);
+    }
+
+    #[test]
+    fn unknown_device_ids_returns_every_device_when_the_store_has_none() {
+        let zone = zone(&["lamp2", "lamp1"], &[]);
+
+        assert_eq!(unknown_device_ids(&zone, &HashMap::new()), ["lamp1", "lamp2"]);
+    }
+
+    #[test]
+    fn unknown_device_ids_is_empty_for_a_zone_without_devices() {
+        let zone = zone(&[], &["room"]);
+
+        assert!(unknown_device_ids(&zone, &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn unknown_device_ids_ignores_unknown_groups() {
+        let zone = zone(&["lamp1"], &["ghost"]);
+
+        assert!(unknown_device_ids(&zone, &devices(&["lamp1"])).is_empty());
     }
 }

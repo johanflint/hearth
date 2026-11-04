@@ -12,6 +12,8 @@ use crate::preset_registry::PresetRegistry;
 use crate::preset_service::PresetService;
 use crate::preset_store::PresetStore;
 use crate::store::StoreSnapshot;
+use crate::zone_service::ZoneService;
+use crate::zone_store::ZoneStore;
 use axum::response::Response;
 use chrono::Utc;
 use http_body_util::BodyExt;
@@ -119,8 +121,14 @@ fn build_state(
         snapshot_rx.clone(),
     ));
     let group_service = Arc::new(GroupService::new(
-        snapshot_rx,
+        snapshot_rx.clone(),
         Arc::new(GroupStore::new(database.clone())),
+        Arc::clone(&flow_registry),
+        store_tx.clone(),
+    ));
+    let zone_service = Arc::new(ZoneService::new(
+        snapshot_rx,
+        Arc::new(ZoneStore::new(database.clone())),
         Arc::clone(&flow_registry),
         store_tx,
     ));
@@ -138,6 +146,7 @@ fn build_state(
         vec![],
         flow_service,
         group_service,
+        zone_service,
         preset_service,
     );
     (Fixture { state, flow_store, flow_registry, scheduler_rx }, database)

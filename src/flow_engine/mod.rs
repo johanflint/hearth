@@ -13,6 +13,7 @@ mod versioned_flow;
 
 pub use action::CommandMap;
 pub use action::ControlGroupAction;
+pub use action::ControlZoneAction;
 pub use context::Context;
 pub use engine::FlowEngineError;
 pub use engine::FlowExecutionReport;

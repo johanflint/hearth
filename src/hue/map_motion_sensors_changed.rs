@@ -51,13 +51,13 @@ mod tests {
     use crate::domain::Number::PositiveInt;
     use crate::domain::property::PropertyLocator;
     use crate::hue::domain::{
-        Motion, MotionChanged, MotionReport, MotionType, Owner, SensitivityChanged, SensitivityStatus,
+        HueOwner, Motion, MotionChanged, MotionReport, MotionType, SensitivityChanged, SensitivityStatus,
     };
     use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
     use chrono::{TimeZone, Utc};
 
-    fn owner() -> Owner {
-        Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() }
+    fn owner() -> HueOwner {
+        HueOwner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() }
     }
 
     fn motion_changed() -> MotionChanged {

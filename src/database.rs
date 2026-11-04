@@ -88,6 +88,16 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL,
         updated_at TEXT
     )",
+    // v4: zones owned by Hearth. Integration zones are discovered, not stored.
+    "CREATE TABLE zones (
+        id TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        group_ids TEXT NOT NULL, -- JSON array of group ids
+        device_ids TEXT NOT NULL, -- JSON array of device ids
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+    )",
 ];
 
 #[derive(Error, Debug)]

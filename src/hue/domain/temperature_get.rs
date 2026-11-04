@@ -1,4 +1,4 @@
-use crate::hue::domain::Owner;
+use crate::hue::domain::HueOwner;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
@@ -7,7 +7,7 @@ use serde::Deserialize;
 pub struct TemperatureGet {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     #[allow(dead_code)]
     pub enabled: bool,
     pub temperature: Temperature,
@@ -29,7 +29,7 @@ pub struct TemperatureReport {
 pub struct TemperatureChanged {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub temperature: Option<Temperature>,
 }
 

@@ -27,11 +27,11 @@ pub fn map_light_level_changed(property: LightLevelChanged) -> Vec<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::{Light, LightLevelReport, Owner};
+    use crate::hue::domain::{HueOwner, Light, LightLevelReport};
     use chrono::{TimeZone, Utc};
 
-    fn owner() -> Owner {
-        Owner { rid: "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3".to_string(), rtype: "device".to_string() }
+    fn owner() -> HueOwner {
+        HueOwner { rid: "dbe91174-8fe5-4309-b7d7-3f15ec1e57d3".to_string(), rtype: "device".to_string() }
     }
 
     #[test]

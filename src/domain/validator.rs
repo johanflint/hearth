@@ -217,7 +217,7 @@ impl Problem {
 mod tests {
     use super::*;
     use crate::domain::property::{BooleanProperty, CartesianCoordinate, NumberProperty, PropertyType};
-    use crate::domain::{Color, GroupOwner, Number, Preset, Value, VersionedPreset};
+    use crate::domain::{Color, Number, Owner, Preset, Value, VersionedPreset};
     use crate::flow_engine::Expression::*;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
@@ -926,7 +926,7 @@ mod tests {
             name: "Room".to_string(),
             device_ids: BTreeSet::from([KNOWN_DEVICE_ID.to_string()]),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: None,
         };
         let zone = Zone {
@@ -935,7 +935,7 @@ mod tests {
             group_ids: BTreeSet::from(["room".to_string()]),
             device_ids: BTreeSet::new(),
             revision: 0,
-            owner: GroupOwner::Hearth,
+            owner: Owner::Hearth,
             external_id: None,
         };
 

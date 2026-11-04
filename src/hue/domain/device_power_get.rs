@@ -1,4 +1,4 @@
-use crate::hue::domain::Owner;
+use crate::hue::domain::HueOwner;
 use serde::Deserialize;
 
 // API: https://developers.meethue.com/develop/hue-api-v2/api-reference/#resource_device_power_get
@@ -6,7 +6,7 @@ use serde::Deserialize;
 pub struct DevicePowerGet {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub power_state: PowerState,
 }
 
@@ -21,6 +21,6 @@ pub struct PowerState {
 pub struct DevicePowerChanged {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub power_state: Option<PowerState>,
 }

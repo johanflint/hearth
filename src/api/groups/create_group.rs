@@ -64,7 +64,7 @@ mod tests {
     use crate::api::groups::router;
     use crate::api::test_support::{body_json, create_state_with_store_tx};
     use crate::database::{Database, DatabaseError};
-    use crate::domain::{Event, Group, GroupOwner};
+    use crate::domain::{Event, Group, Owner};
     use crate::group_store::GroupStore;
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
@@ -99,7 +99,7 @@ mod tests {
             name: name.to_string(),
             device_ids: BTreeSet::new(),
             revision: 0,
-            owner: GroupOwner::Integration,
+            owner: Owner::Integration,
             external_id: Some("external".to_string()),
         }
     }
@@ -155,7 +155,7 @@ mod tests {
         let Event::GroupCreated(group) = store_rx.try_recv().expect("an event was sent") else {
             panic!("expected a GroupCreated event");
         };
-        assert_eq!((group.id.as_str(), group.owner), ("kitchen", GroupOwner::Hearth));
+        assert_eq!((group.id.as_str(), group.owner), ("kitchen", Owner::Hearth));
     }
 
     #[tokio::test]

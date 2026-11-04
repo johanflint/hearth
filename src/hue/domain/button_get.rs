@@ -1,4 +1,4 @@
-use crate::hue::domain::Owner;
+use crate::hue::domain::HueOwner;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct ButtonGet {
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub metadata: ButtonMetadata,
     pub button: Button,
 }
@@ -33,7 +33,7 @@ pub struct ButtonReport {
 #[derive(Debug, Deserialize)]
 pub struct ButtonChanged {
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub button: Option<ButtonUpdate>,
 }
 

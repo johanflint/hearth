@@ -1,5 +1,5 @@
 use crate::domain::property::{CartesianCoordinate, Gamut};
-use crate::hue::domain::hue_response::Owner;
+use crate::hue::domain::hue_response::HueOwner;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -7,7 +7,7 @@ use std::time::Duration;
 #[derive(Debug, Deserialize)]
 pub struct LightGet {
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub on: On,
     pub dimming: Option<Dimming>,
     pub color_temperature: Option<ColorTemperature>,
@@ -133,7 +133,7 @@ pub enum GamutType {
 pub struct LightChanged {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub on: Option<On>,
     pub dimming: Option<Dimming>,
     pub color_temperature: Option<ChangedColorTemperature>,

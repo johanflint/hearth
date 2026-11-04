@@ -34,9 +34,6 @@ fn invalid_query(err: QueryRejection) -> Response {
 fn delete_error_response(err: DeleteGroupError) -> Response {
     let error_message = err.to_string();
     match err {
-        DeleteGroupError::InUse(flows) => {
-            (StatusCode::CONFLICT, Json(InUseErrorResponse::new("groupInUse", error_message, flows))).into_response()
-        }
         DeleteGroupError::NotFound => {
             (StatusCode::NOT_FOUND, Json(ErrorResponse::new_code_only("groupNotFound"))).into_response()
         }
@@ -45,6 +42,9 @@ fn delete_error_response(err: DeleteGroupError) -> Response {
         }
         DeleteGroupError::RevisionConflict { .. } => {
             (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response()
+        }
+        DeleteGroupError::InUse(flows) => {
+            (StatusCode::CONFLICT, Json(InUseErrorResponse::new("groupInUse", error_message, flows))).into_response()
         }
         DeleteGroupError::StoreUnavailable => {
             error!("❌ Store is unavailable");
@@ -63,7 +63,7 @@ mod tests {
     use crate::api::groups::router;
     use crate::api::test_support::{body_json, create_state_with_flows};
     use crate::database::{Database, DatabaseError};
-    use crate::domain::{Event, Group, GroupOwner};
+    use crate::domain::{Event, Group, Owner};
     use crate::flow_engine::VersionedFlow;
     use crate::flow_registry::{FlowRegistry, FlowSummary};
     use crate::group_store::{GroupStore, StoredGroup};
@@ -83,7 +83,7 @@ mod tests {
         store_rx: mpsc::Receiver<Event>,
     }
 
-    fn group(id: &str, name: &str, owner: GroupOwner) -> Group {
+    fn group(id: &str, name: &str, owner: Owner) -> Group {
         Group {
             id: id.to_string(),
             name: name.to_string(),
@@ -108,7 +108,7 @@ mod tests {
         let (state, database) = create_state_with_flows(FlowRegistry::new(flows), snapshot, store_tx);
 
         let group_store = GroupStore::new(database.clone());
-        for group in groups.iter().filter(|group| group.owner == GroupOwner::Hearth) {
+        for group in groups.iter().filter(|group| group.owner == Owner::Hearth) {
             group_store.insert(&group.id, &group.name, &group.device_ids).await.expect("insert succeeded");
         }
         Fixture { state, database, store_rx }
@@ -131,7 +131,7 @@ mod tests {
     #[tokio::test]
     async fn delete_group_returns_204_no_content_and_deletes_the_group() {
         let Fixture { state, database, store_rx: _store_rx } =
-            create_state(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)]).await;
+            create_state(vec![group("kitchen", "Kitchen", Owner::Hearth)]).await;
 
         let response = call_delete_group(state, &delete_uri("kitchen", 0)).await;
 
@@ -142,8 +142,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_group_sends_a_group_removed_event_to_the_store() {
-        let Fixture { state, mut store_rx, .. } =
-            create_state(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)]).await;
+        let Fixture { state, mut store_rx, .. } = create_state(vec![group("kitchen", "Kitchen", Owner::Hearth)]).await;
 
         call_delete_group(state, &delete_uri("kitchen", 0)).await;
 
@@ -156,11 +155,8 @@ mod tests {
 
     #[tokio::test]
     async fn delete_group_only_deletes_the_given_group() {
-        let Fixture { state, database, store_rx: _store_rx } = create_state(vec![
-            group("kitchen", "Kitchen", GroupOwner::Hearth),
-            group("hall", "Hall", GroupOwner::Hearth),
-        ])
-        .await;
+        let Fixture { state, database, store_rx: _store_rx } =
+            create_state(vec![group("kitchen", "Kitchen", Owner::Hearth), group("hall", "Hall", Owner::Hearth)]).await;
 
         let response = call_delete_group(state, &delete_uri("kitchen", 0)).await;
 
@@ -173,7 +169,7 @@ mod tests {
     #[tokio::test]
     async fn delete_group_returns_404_not_found_for_an_unknown_group() {
         let Fixture { state, database, mut store_rx } =
-            create_state(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)]).await;
+            create_state(vec![group("kitchen", "Kitchen", Owner::Hearth)]).await;
 
         let response = call_delete_group(state, &delete_uri("unknown", 0)).await;
 
@@ -186,7 +182,7 @@ mod tests {
     #[tokio::test]
     async fn delete_group_returns_422_unprocessable_entity_for_a_group_owned_by_an_integration() {
         let Fixture { state, mut store_rx, .. } =
-            create_state(vec![group("hue", "Hue room", GroupOwner::Integration)]).await;
+            create_state(vec![group("hue", "Hue room", Owner::Integration)]).await;
 
         let response = call_delete_group(state, &delete_uri("hue", 0)).await;
 
@@ -201,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn delete_group_returns_409_conflict_for_a_mismatching_base_revision(#[case] base_revision: u64) {
         let Fixture { state, database, mut store_rx } =
-            create_state(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)]).await;
+            create_state(vec![group("kitchen", "Kitchen", Owner::Hearth)]).await;
 
         let response = call_delete_group(state, &delete_uri("kitchen", base_revision)).await;
 
@@ -223,7 +219,7 @@ mod tests {
     #[tokio::test]
     async fn delete_group_returns_400_bad_request_for_an_invalid_base_revision(#[case] uri: &str) {
         let Fixture { state, database, mut store_rx } =
-            create_state(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)]).await;
+            create_state(vec![group("kitchen", "Kitchen", Owner::Hearth)]).await;
 
         let response = call_delete_group(state, uri).await;
 
@@ -236,7 +232,7 @@ mod tests {
     #[tokio::test]
     async fn delete_group_returns_503_service_unavailable_when_the_store_is_gone() {
         let Fixture { state, database, store_rx } =
-            create_state(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)]).await;
+            create_state(vec![group("kitchen", "Kitchen", Owner::Hearth)]).await;
         drop(store_rx);
 
         let response = call_delete_group(state, &delete_uri("kitchen", 0)).await;
@@ -249,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn delete_group_returns_500_internal_server_error_when_the_database_fails() {
         let Fixture { state, database, mut store_rx } =
-            create_state(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)]).await;
+            create_state(vec![group("kitchen", "Kitchen", Owner::Hearth)]).await;
         database
             .call(|conn| conn.execute("DROP TABLE groups", []).map_err(DatabaseError::from))
             .await
@@ -270,7 +266,7 @@ mod tests {
             flow_using_groups("c", "Flow C", 1, &["hall"]),
         ];
         let Fixture { state, database, mut store_rx } =
-            create_state_with_flows_using(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)], flows).await;
+            create_state_with_flows_using(vec![group("kitchen", "Kitchen", Owner::Hearth)], flows).await;
 
         let response = call_delete_group(state, &delete_uri("kitchen", 0)).await;
 
@@ -293,7 +289,7 @@ mod tests {
     async fn delete_group_ignores_flows_using_other_groups() {
         let flows = vec![flow_using_groups("a", "Flow A", 0, &["hall"])];
         let Fixture { state, database, store_rx: _store_rx } =
-            create_state_with_flows_using(vec![group("kitchen", "Kitchen", GroupOwner::Hearth)], flows).await;
+            create_state_with_flows_using(vec![group("kitchen", "Kitchen", Owner::Hearth)], flows).await;
 
         let response = call_delete_group(state, &delete_uri("kitchen", 0)).await;
 

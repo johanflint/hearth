@@ -3,7 +3,7 @@ use crate::domain::{Device, DeviceType, Value};
 use crate::flow_engine::Expression::{self, Literal};
 use crate::flow_engine::flow::{ActionFlowNode, Flow, FlowLink, FlowNode, FlowNodeKind};
 use crate::flow_engine::property_command::{PropertyCommand, ResolvedPropertyCommand};
-use crate::flow_engine::{ControlGroupAction, VersionedFlow};
+use crate::flow_engine::{ControlGroupAction, ControlZoneAction, VersionedFlow};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -66,6 +66,24 @@ pub(crate) fn flow_using_groups(id: &str, name: &str, revision: u64, group_ids: 
     let end_node = FlowNode::new(format!("{id}_end"), vec![], FlowNodeKind::End);
     let first_node = group_ids.iter().enumerate().rev().fold(end_node, |next, (index, group_id)| {
         let action = ControlGroupAction::new(group_id.to_string(), None, HashMap::new());
+        let kind = FlowNodeKind::Action(ActionFlowNode::new(Box::new(action)));
+        FlowNode::new(format!("{id}_action_{index}"), vec![FlowLink::new(Arc::new(next), Value::None)], kind)
+    });
+    let start_node = FlowNode::new(
+        format!("{id}_start"),
+        vec![FlowLink::new(Arc::new(first_node), Value::None)],
+        FlowNodeKind::Start,
+    );
+    let flow = Flow::new(id.to_string(), name.to_string(), None, None, Arc::new(start_node), HashMap::new())
+        .expect("valid flow");
+    VersionedFlow { flow: Arc::new(flow), revision }
+}
+
+/// A flow that only references the zones, through one control zone action per zone id, in a chain
+pub(crate) fn flow_using_zones(id: &str, name: &str, revision: u64, zone_ids: &[&str]) -> VersionedFlow {
+    let end_node = FlowNode::new(format!("{id}_end"), vec![], FlowNodeKind::End);
+    let first_node = zone_ids.iter().enumerate().rev().fold(end_node, |next, (index, zone_id)| {
+        let action = ControlZoneAction::new(zone_id.to_string(), None, HashMap::new());
         let kind = FlowNodeKind::Action(ActionFlowNode::new(Box::new(action)));
         FlowNode::new(format!("{id}_action_{index}"), vec![FlowLink::new(Arc::new(next), Value::None)], kind)
     });

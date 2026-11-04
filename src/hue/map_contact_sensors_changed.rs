@@ -26,12 +26,12 @@ pub fn map_contact_sensors_changed(property: ContactChanged) -> Vec<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::{ContactReport, ContactState as HueContactState, Owner};
+    use crate::hue::domain::{ContactReport, ContactState as HueContactState, HueOwner};
     use chrono::{TimeZone, Utc};
     use rstest::rstest;
 
-    fn owner() -> Owner {
-        Owner { rid: "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77".to_string(), rtype: "device".to_string() }
+    fn owner() -> HueOwner {
+        HueOwner { rid: "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77".to_string(), rtype: "device".to_string() }
     }
 
     #[test]
