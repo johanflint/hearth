@@ -15,7 +15,7 @@ pub struct HueError {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-pub struct Owner {
+pub struct HueOwner {
     pub rid: String,
     pub rtype: String,
 }

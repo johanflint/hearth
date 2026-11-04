@@ -73,7 +73,7 @@ fn enrich_device_power(device: &mut Device, device_power_map: &HashMap<String, D
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::{Owner, PowerState};
+    use crate::hue::domain::{HueOwner, PowerState};
     use crate::test_support::DeviceBuilder;
 
     #[test]
@@ -82,7 +82,7 @@ mod tests {
         let mut devices = vec![device];
         let connectivity_list = vec![ZigbeeConnectivityGet {
             id: "connectivity".to_string(),
-            owner: Owner { rid: "device".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "device".to_string(), rtype: "device".to_string() },
             status: "connected".to_string(),
         }];
 
@@ -115,7 +115,7 @@ mod tests {
         let mut devices = vec![device];
         let device_power_list = vec![DevicePowerGet {
             id: "power".to_string(),
-            owner: Owner { rid: "device".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "device".to_string(), rtype: "device".to_string() },
             power_state: PowerState { battery_level: Some(76), battery_state: Some("low".to_string()) },
         }];
 
@@ -140,7 +140,7 @@ mod tests {
         let mut devices = vec![device];
         let device_power_list = vec![DevicePowerGet {
             id: "power".to_string(),
-            owner: Owner { rid: "device".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "device".to_string(), rtype: "device".to_string() },
             power_state: PowerState { battery_level: None, battery_state: None },
         }];
 

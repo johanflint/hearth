@@ -1,4 +1,4 @@
-use crate::hue::domain::Owner;
+use crate::hue::domain::HueOwner;
 use serde::Deserialize;
 
 // API: https://developers.meethue.com/develop/hue-api-v2/api-reference/#resource_zigbee_connectivity_get
@@ -6,7 +6,7 @@ use serde::Deserialize;
 pub struct ZigbeeConnectivityGet {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub status: String, // One of connected, disconnected, connectivity_issue, unidirectional_incoming
 }
 
@@ -14,6 +14,6 @@ pub struct ZigbeeConnectivityGet {
 pub struct ZigbeeConnectivityChanged {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub status: Option<String>,
 }

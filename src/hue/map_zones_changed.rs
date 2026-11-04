@@ -35,13 +35,13 @@ fn has_light_id(device: &Device, light_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::{Owner, ZoneMetadataChanged};
+    use crate::hue::domain::{HueOwner, ZoneMetadataChanged};
     use crate::test_support::DeviceBuilder;
     use std::collections::BTreeSet;
     use std::sync::Arc;
 
-    fn owner(rid: &str, rtype: &str) -> Owner {
-        Owner { rid: rid.to_string(), rtype: rtype.to_string() }
+    fn owner(rid: &str, rtype: &str) -> HueOwner {
+        HueOwner { rid: rid.to_string(), rtype: rtype.to_string() }
     }
 
     fn lamp(device_id: &str, light_id: &str) -> Device {

@@ -1,5 +1,5 @@
 use crate::domain::{Group, Owner};
-use crate::hue::domain::{Owner as HueOwner, RoomGet};
+use crate::hue::domain::{HueOwner, RoomGet};
 use std::collections::{BTreeSet, HashSet};
 
 const GROUPED_LIGHT: &str = "grouped_light";
@@ -40,7 +40,7 @@ pub fn grouped_light_id(services: &[HueOwner]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::{Metadata, Owner as HueOwner};
+    use crate::hue::domain::{HueOwner, Metadata};
     use pretty_assertions::assert_eq;
 
     fn owner(rid: &str, rtype: &str) -> HueOwner {

@@ -60,7 +60,7 @@ mod tests {
     use crate::domain::Event::{BooleanPropertyChanged, ColorPropertyChanged, NumberPropertyChanged};
     use crate::domain::Number::{Float, PositiveInt};
     use crate::domain::property::Gamut;
-    use crate::hue::domain::{ChangedColor, ChangedColorTemperature, ColorGamut, Dimming, On, Owner, Xy};
+    use crate::hue::domain::{ChangedColor, ChangedColorTemperature, ColorGamut, Dimming, HueOwner, On, Xy};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -68,7 +68,7 @@ mod tests {
     fn maps_no_changes() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: None,
@@ -83,7 +83,7 @@ mod tests {
     fn maps_on_property() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: Some(On { on: true }),
             dimming: None,
             color_temperature: None,
@@ -107,7 +107,7 @@ mod tests {
     fn maps_dimming_property() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: Some(Dimming { brightness: 20.8, min_dim_level: None }),
             color_temperature: None,
@@ -131,7 +131,7 @@ mod tests {
     fn maps_color_temperature_property() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: Some(ChangedColorTemperature { mirek: Some(153), mirek_valid: true }),
@@ -155,7 +155,7 @@ mod tests {
     fn ignores_color_temperature_if_mirek_is_invalid() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: Some(ChangedColorTemperature { mirek: Some(100), mirek_valid: false }),
@@ -172,7 +172,7 @@ mod tests {
     fn ignores_color_temperature_if_mirek_is_out_of_bounds(#[case] mirek: u64, #[case] expected_kelvin: u64) {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: Some(ChangedColorTemperature { mirek: Some(mirek), mirek_valid: true }),
@@ -196,7 +196,7 @@ mod tests {
     fn maps_color_property() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: None,
             dimming: None,
             color_temperature: None,
@@ -232,7 +232,7 @@ mod tests {
     fn passes_initiated_by_to_every_event() {
         let light_changed = LightChanged {
             id: "42".to_string(),
-            owner: Owner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
+            owner: HueOwner { rid: "84a3be14-5d90-4165-ac64-818b7981bb32".to_string(), rtype: "device".to_string() },
             on: Some(On { on: true }),
             dimming: Some(Dimming { brightness: 50.0, min_dim_level: None }),
             color_temperature: Some(ChangedColorTemperature { mirek: Some(300), mirek_valid: true }),

@@ -1,4 +1,4 @@
-use crate::hue::domain::Owner;
+use crate::hue::domain::HueOwner;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
@@ -7,7 +7,7 @@ use serde::Deserialize;
 pub struct LightLevelGet {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     #[allow(dead_code)]
     pub enabled: bool,
     pub light: Light,
@@ -28,6 +28,6 @@ pub struct LightLevelReport {
 pub struct LightLevelChanged {
     #[allow(dead_code)]
     pub id: String,
-    pub owner: Owner,
+    pub owner: HueOwner,
     pub light: Option<Light>,
 }

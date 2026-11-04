@@ -47,7 +47,7 @@ pub enum MapZonesError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::{Metadata, On, Owner as HueOwner};
+    use crate::hue::domain::{HueOwner, Metadata, On};
     use pretty_assertions::assert_eq;
 
     fn owner(rid: &str, rtype: &str) -> HueOwner {

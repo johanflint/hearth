@@ -1,4 +1,4 @@
-use crate::hue::domain::{Metadata, Owner};
+use crate::hue::domain::{HueOwner, Metadata};
 use serde::Deserialize;
 
 // API: https://developers.meethue.com/develop/hue-api-v2/api-reference/#resource_zone_get
@@ -6,16 +6,16 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct ZoneGet {
     pub id: String,
-    pub children: Vec<Owner>, // lights in the zone, unlike a room, which contains devices
-    pub services: Vec<Owner>, // contains the grouped_light of the zone
+    pub children: Vec<HueOwner>, // lights in the zone, unlike a room, which contains devices
+    pub services: Vec<HueOwner>, // contains the grouped_light of the zone
     pub metadata: Metadata,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ZoneChanged {
     pub id: String,
-    pub children: Option<Vec<Owner>>,
-    pub services: Option<Vec<Owner>>,
+    pub children: Option<Vec<HueOwner>>,
+    pub services: Option<Vec<HueOwner>>,
     pub metadata: Option<ZoneMetadataChanged>,
 }
 

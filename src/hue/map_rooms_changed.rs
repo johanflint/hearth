@@ -36,12 +36,12 @@ fn upsert(room: RoomChanged, snapshot: &StoreSnapshot) -> Vec<Event> {
 mod tests {
     use super::*;
     use crate::domain::Device;
-    use crate::hue::domain::{Owner, RoomMetadataChanged};
+    use crate::hue::domain::{HueOwner, RoomMetadataChanged};
     use crate::test_support::DeviceBuilder;
     use std::sync::Arc;
 
-    fn owner(rid: &str) -> Owner {
-        Owner { rid: rid.to_string(), rtype: "device".to_string() }
+    fn owner(rid: &str) -> HueOwner {
+        HueOwner { rid: rid.to_string(), rtype: "device".to_string() }
     }
 
     fn motion_sensor(id: &str) -> Device {
@@ -57,8 +57,8 @@ mod tests {
         }
     }
 
-    fn service(rid: &str, rtype: &str) -> Owner {
-        Owner { rid: rid.to_string(), rtype: rtype.to_string() }
+    fn service(rid: &str, rtype: &str) -> HueOwner {
+        HueOwner { rid: rid.to_string(), rtype: rtype.to_string() }
     }
 
     fn room(name: Option<&str>, children: Option<&[&str]>) -> RoomChanged {
