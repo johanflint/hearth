@@ -5,20 +5,14 @@ use crate::database::Database;
 use crate::domain::{Event, Group, Zone, controller_registry};
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
-use crate::flow_service::FlowService;
-use crate::flow_store::FlowStore;
-use crate::group_service::GroupService;
-use crate::group_store::GroupStore;
 use crate::integration::Discovery;
 use crate::integration_list::{enabled_only, integrations};
 use crate::metrics_layer::MetricsLayer;
 use crate::preset_registry::PresetRegistry;
-use crate::preset_service::PresetService;
-use crate::preset_store::PresetStore;
+use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
+use crate::services::{FlowService, GroupService, PresetService, ZoneService};
 use crate::store::Store;
 use crate::store_listener::store_listener;
-use crate::zone_service::ZoneService;
-use crate::zone_store::ZoneStore;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::path::Path;
 use std::sync::Arc;
@@ -40,11 +34,7 @@ mod extensions;
 mod flow_engine;
 mod flow_loader;
 mod flow_registry;
-mod flow_service;
-mod flow_store;
 mod geo_location_deserializer;
-mod group_service;
-mod group_store;
 mod hue;
 mod integration;
 mod integration_list;
@@ -52,17 +42,15 @@ mod metrics;
 mod metrics_layer;
 mod preset_loader;
 mod preset_registry;
-mod preset_service;
-mod preset_store;
 mod property_changed_reducer;
+mod repositories;
 mod server;
+mod services;
 mod sse;
 mod store;
 mod store_listener;
 #[cfg(test)]
 mod test_support;
-mod zone_service;
-mod zone_store;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -82,21 +70,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let database = Database::open(Path::new(config.db().file_name()))?;
     info!("✅  Started database");
 
-    let flow_store = Arc::new(FlowStore::new(database.clone()));
-    let flows = flow_loader::load_flows_from_store(&flow_store).await?;
+    let flow_repository = Arc::new(FlowRepository::new(database.clone()));
+    let flows = flow_loader::load_flows_from_repository(&flow_repository).await?;
     let flow_registry = Arc::new(FlowRegistry::new(flows));
     info!("✅  Loaded flows");
 
-    let preset_store = Arc::new(PresetStore::new(database.clone()));
-    let presets = preset_loader::load_presets_from_store(&preset_store).await?;
+    let preset_repository = Arc::new(PresetRepository::new(database.clone()));
+    let presets = preset_loader::load_presets_from_repository(&preset_repository).await?;
     let preset_registry = Arc::new(PresetRegistry::new(presets));
     info!("✅  Loaded presets");
 
     let (tx, rx) = mpsc::channel::<Event>(config.core().store_buffer_size());
-    let group_store = Arc::new(GroupStore::new(database.clone()));
-    let groups = group_store.list().await?.into_iter().map(Group::from).collect();
-    let zone_store = Arc::new(ZoneStore::new(database.clone()));
-    let zones = zone_store.list().await?.into_iter().map(Zone::from).collect();
+    let group_repository = Arc::new(GroupRepository::new(database.clone()));
+    let groups = group_repository.list().await?.into_iter().map(Group::from).collect();
+    let zone_repository = Arc::new(ZoneRepository::new(database.clone()));
+    let zones = zone_repository.list().await?.into_iter().map(Zone::from).collect();
     let (mut store, store_reactive_rx) = Store::new(rx, groups, zones);
 
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
@@ -154,18 +142,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("✅  Initialized controllers");
 
     let flow_service = Arc::new(FlowService::new(
-        flow_store,
+        flow_repository,
         flow_registry.clone(),
         preset_registry.clone(),
         scheduler_tx,
         store_rx_clone,
     ));
-    let preset_service = Arc::new(PresetService::new(preset_store, preset_registry, flow_registry.clone()));
+    let preset_service = Arc::new(PresetService::new(preset_repository, preset_registry, flow_registry.clone()));
     let core_tasks =
         Arc::new(CoreTasks { store: store_handle, scheduler: scheduler_handle, store_listener: store_listener_handle });
     let group_service =
-        Arc::new(GroupService::new(group_service_rx_clone, group_store, flow_registry.clone(), tx.clone()));
-    let zone_service = Arc::new(ZoneService::new(zone_service_rx_clone, zone_store, flow_registry, tx.clone()));
+        Arc::new(GroupService::new(group_service_rx_clone, group_repository, flow_registry.clone(), tx.clone()));
+    let zone_service = Arc::new(ZoneService::new(zone_service_rx_clone, zone_repository, flow_registry, tx.clone()));
     let api_state = ApiState::new(
         prometheus_handle,
         database,

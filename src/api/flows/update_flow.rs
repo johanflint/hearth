@@ -2,7 +2,7 @@ use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
 use crate::api::flows::flow_error::validate_error_response;
 use crate::api::parse_request::parse_request;
-use crate::flow_service::UpdateFlowError;
+use crate::services::UpdateFlowError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -48,7 +48,7 @@ fn update_error_response(err: UpdateFlowError) -> Response {
             (StatusCode::CONFLICT, Json(ErrorResponse::new("revisionConflict", err.to_string()))).into_response()
         }
         UpdateFlowError::Internal(err) => {
-            error!("❌ Failed to persist flow to store: {err}");
+            error!("❌ Failed to persist flow to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
         UpdateFlowError::CommitFailed(err) => {
@@ -113,22 +113,23 @@ mod tests {
         VersionedFlow { flow: Arc::new(flow_loader::from_json(payload).unwrap()), revision }
     }
 
-    /// Seeds the store and registry with the valid flow at revision 0, like at boot
+    /// Seeds the repository and registry with the valid flow at revision 0, like at boot
     async fn create_seeded_state() -> Fixture {
         let fixture = create_state(FlowRegistry::new(vec![valid_versioned_flow(0)]));
-        fixture.flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
+        fixture.flow_repository.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed repository");
         fixture
     }
 
     #[tokio::test]
-    async fn update_flow_persists_the_flow_to_the_store() {
-        let Fixture { state, flow_store, flow_registry, scheduler_rx: _scheduler_rx } = create_seeded_state().await;
+    async fn update_flow_persists_the_flow_to_the_repository() {
+        let Fixture { state, flow_repository, flow_registry, scheduler_rx: _scheduler_rx } =
+            create_seeded_state().await;
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
-        let stored_flows = flow_store.list().await.expect("list succeeded");
-        assert_eq!(stored_flows.len(), 1, "expected a single flow in the FlowStore");
+        let stored_flows = flow_repository.list().await.expect("list succeeded");
+        assert_eq!(stored_flows.len(), 1, "expected a single flow in the FlowRepository");
         assert_eq!(stored_flows[0].id, VALID_FLOW_ID);
         assert_eq!(stored_flows[0].revision, 1);
         // Fails if the request envelope was stored instead of the flow
@@ -160,11 +161,11 @@ mod tests {
 
     #[tokio::test]
     async fn update_flow_leaves_the_registry_untouched_and_skips_reconcile_when_a_newer_revision_already_landed() {
-        // Registry that is ahead of the store simulates a concurrent update that landed first
+        // Registry that is ahead of the repository simulates a concurrent update that landed first
         let newer = valid_versioned_flow(5);
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } =
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } =
             create_state(FlowRegistry::new(vec![newer.clone()]));
-        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
+        flow_repository.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed repository");
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;
 
@@ -178,9 +179,9 @@ mod tests {
 
     #[tokio::test]
     async fn update_flow_returns_409_conflict_and_changes_nothing_when_the_base_revision_is_stale() {
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_seeded_state().await;
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } = create_seeded_state().await;
         // Someone else updated the flow first
-        flow_store.update(VALID_FLOW_ID, 0, valid_flow_document()).await.expect("concurrent update");
+        flow_repository.update(VALID_FLOW_ID, 0, valid_flow_document()).await.expect("concurrent update");
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;
 
@@ -188,7 +189,7 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body["code"], "revisionConflict");
         assert_eq!(body["message"], "revision conflict: update is based on revision 0, but the current revision is 1");
-        assert_eq!(flow_store.list().await.unwrap()[0].revision, 1);
+        assert_eq!(flow_repository.list().await.unwrap()[0].revision, 1);
         assert_eq!(flow_registry.by_id(VALID_FLOW_ID).unwrap().revision, 0);
         assert!(scheduler_rx.try_recv().is_err());
     }
@@ -235,13 +236,13 @@ mod tests {
 
     #[tokio::test]
     async fn update_flow_returns_400_bad_request_when_the_flow_is_not_a_valid_serialized_flow() {
-        let Fixture { state, flow_store, mut scheduler_rx, .. } = create_seeded_state().await;
+        let Fixture { state, flow_repository, mut scheduler_rx, .. } = create_seeded_state().await;
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, r#"{"id":"x"}"#)).await;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(body_json(response).await["code"], "invalidJson");
-        assert_eq!(flow_store.list().await.unwrap()[0].revision, 0);
+        assert_eq!(flow_repository.list().await.unwrap()[0].revision, 0);
         assert!(scheduler_rx.try_recv().is_err());
     }
 
@@ -269,35 +270,36 @@ mod tests {
 
     #[tokio::test]
     async fn update_flow_returns_422_validation_failed_for_a_flow_with_an_unknown_group() {
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_seeded_state().await;
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } = create_seeded_state().await;
 
         let response = call_update_flow(state, "flow", &update_request(0, UNKNOWN_GROUP_FLOW_JSON)).await;
 
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_unknown_group_validation_failure(&body_json(response).await);
-        let stored_flow = flow_store.by_id(VALID_FLOW_ID).await.unwrap().expect("flow stored");
-        assert_eq!(stored_flow.revision, 0, "store must be unchanged");
+        let stored_flow = flow_repository.by_id(VALID_FLOW_ID).await.unwrap().expect("flow stored");
+        assert_eq!(stored_flow.revision, 0, "repository must be unchanged");
         assert_eq!(flow_registry.by_id(VALID_FLOW_ID).expect("flow in registry").revision, 0);
         assert!(scheduler_rx.try_recv().is_err(), "nothing must be reconciled");
     }
 
     #[tokio::test]
     async fn update_flow_returns_404_not_found_and_persists_nothing_for_an_unknown_flow() {
-        let Fixture { state, flow_store, mut scheduler_rx, .. } = create_state(FlowRegistry::new(vec![]));
+        let Fixture { state, flow_repository, mut scheduler_rx, .. } = create_state(FlowRegistry::new(vec![]));
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(body_json(response).await["code"], "flowNotFound");
-        assert!(flow_store.list().await.unwrap().is_empty(), "unknown flow must not be persisted");
+        assert!(flow_repository.list().await.unwrap().is_empty(), "unknown flow must not be persisted");
         assert!(scheduler_rx.try_recv().is_err());
     }
 
     #[tokio::test]
     async fn update_flow_returns_registers_and_reconciles_a_flow_that_is_stored_but_not_registered() {
         // E.g. a stored flow that failed to load at boot
-        let Fixture { state, flow_store, flow_registry, mut scheduler_rx } = create_state(FlowRegistry::new(vec![]));
-        flow_store.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed store");
+        let Fixture { state, flow_repository, flow_registry, mut scheduler_rx } =
+            create_state(FlowRegistry::new(vec![]));
+        flow_repository.insert(VALID_FLOW_ID, valid_flow_document()).await.expect("seed repository");
 
         let response = call_update_flow(state, VALID_FLOW_ID, &update_request(0, VALID_FLOW_JSON)).await;
 
@@ -315,7 +317,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_flow_returns_503_service_unavailable_and_changes_nothing_when_the_scheduler_is_unavailable() {
-        let Fixture { state, flow_store, flow_registry, scheduler_rx } = create_seeded_state().await;
+        let Fixture { state, flow_repository, flow_registry, scheduler_rx } = create_seeded_state().await;
 
         // Dropping the receiver simulates the scheduler being gone: `reserve_owned()`
         // then fails immediately instead of waiting for capacity, so the permit is
@@ -326,7 +328,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body_json(response).await["code"], "schedulerUnavailable");
-        assert_eq!(flow_store.list().await.unwrap()[0].revision, 0);
+        assert_eq!(flow_repository.list().await.unwrap()[0].revision, 0);
         assert_eq!(flow_registry.by_id(VALID_FLOW_ID).unwrap().revision, 0);
     }
 
@@ -334,7 +336,7 @@ mod tests {
     async fn update_flow_completes_the_registry_update_and_reconcile_when_the_request_is_cancelled() {
         let Fixture { state, flow_registry, mut scheduler_rx, .. } = create_seeded_state().await;
 
-        // Poll the request once, up to the pending store write, then drop it like a client disconnect
+        // Poll the request once, up to the pending repository write, then drop it like a client disconnect
         let body = update_request(0, VALID_FLOW_JSON);
         let mut request = Box::pin(call_update_flow(state, VALID_FLOW_ID, &body));
         let poll = request.as_mut().poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));

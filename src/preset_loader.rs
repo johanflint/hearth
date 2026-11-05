@@ -1,12 +1,14 @@
 use crate::domain::{Preset, VersionedPreset};
-use crate::preset_store::{PresetStore, PresetStoreError};
+use crate::repositories::{PresetRepository, PresetRepositoryError};
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
 #[instrument(skip_all)]
-pub async fn load_presets_from_store(preset_store: &PresetStore) -> Result<Vec<VersionedPreset>, PresetStoreError> {
+pub async fn load_presets_from_repository(
+    preset_repository: &PresetRepository,
+) -> Result<Vec<VersionedPreset>, PresetRepositoryError> {
     info!("🗄️ Loading presets...");
-    let stored_presets = preset_store.list().await?;
+    let stored_presets = preset_repository.list().await?;
     let mut presets = Vec::with_capacity(stored_presets.len());
     let mut failed = 0;
 
@@ -36,12 +38,12 @@ mod tests {
     use rusqlite::params;
     use std::path::Path;
 
-    fn open_in_memory() -> (Database, PresetStore) {
+    fn open_in_memory() -> (Database, PresetRepository) {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
-        (database.clone(), PresetStore::new(database))
+        (database.clone(), PresetRepository::new(database))
     }
 
-    // PresetStore can't write presets yet, so write the rows directly
+    // PresetRepository can't write presets yet, so write the rows directly
     async fn insert_row(database: &Database, id: &str, value: &str) {
         let (id, value) = (id.to_string(), value.to_string());
         database
@@ -58,12 +60,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_presets_from_store_converts_the_stored_values() {
-        let (database, preset_store) = open_in_memory();
+    async fn load_presets_from_repository_converts_the_stored_values() {
+        let (database, preset_repository) = open_in_memory();
         insert_row(&database, "brightness", "42").await;
         insert_row(&database, "red", r##"{"type":"color","value":"#ff0000"}"##).await;
 
-        let presets = load_presets_from_store(&preset_store).await.expect("load succeeded");
+        let presets = load_presets_from_repository(&preset_repository).await.expect("load succeeded");
 
         assert_eq!(presets.len(), 2);
         assert_eq!(presets[0].id, "brightness");
@@ -75,27 +77,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_presets_from_store_keeps_the_stored_revision() {
-        let (database, preset_store) = open_in_memory();
+    async fn load_presets_from_repository_keeps_the_stored_revision() {
+        let (database, preset_repository) = open_in_memory();
         insert_row(&database, "brightness", "42").await;
         database
             .call(|conn| conn.execute("UPDATE presets SET revision = 7", []).map_err(DatabaseError::from))
             .await
             .expect("set revision");
 
-        let presets = load_presets_from_store(&preset_store).await.expect("load succeeded");
+        let presets = load_presets_from_repository(&preset_repository).await.expect("load succeeded");
 
         assert_eq!(presets[0].revision, 7);
     }
 
     #[tokio::test]
-    async fn load_presets_from_store_skips_invalid_presets() {
-        let (database, preset_store) = open_in_memory();
+    async fn load_presets_from_repository_skips_invalid_presets() {
+        let (database, preset_repository) = open_in_memory();
         insert_row(&database, "valid", "true").await;
         // Valid JSON, but not a valid value
         insert_row(&database, "invalid", r#"{"type":"temperature","value":20}"#).await;
 
-        let presets = load_presets_from_store(&preset_store).await.expect("load succeeded");
+        let presets = load_presets_from_repository(&preset_repository).await.expect("load succeeded");
 
         assert_eq!(presets.len(), 1);
         assert_eq!(presets[0].id, "valid");
@@ -103,13 +105,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_presets_from_store_fails_when_the_store_fails() {
-        let (database, preset_store) = open_in_memory();
+    async fn load_presets_from_repository_fails_when_the_repository_fails() {
+        let (database, preset_repository) = open_in_memory();
         insert_row(&database, "valid", "true").await;
         insert_row(&database, "corrupt", "not valid json").await;
 
-        let result = load_presets_from_store(&preset_store).await;
+        let result = load_presets_from_repository(&preset_repository).await;
 
-        assert!(matches!(result, Err(PresetStoreError::Sqlite(_))), "got {result:?}");
+        assert!(matches!(result, Err(PresetRepositoryError::Sqlite(_))), "got {result:?}");
     }
 }

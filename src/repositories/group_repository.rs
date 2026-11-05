@@ -7,16 +7,16 @@ use thiserror::Error;
 
 /// Persists the groups owned by Hearth. Groups owned by an integration are discovered, not stored.
 #[derive(Debug)]
-pub struct GroupStore {
+pub struct GroupRepository {
     database: Database,
 }
 
-impl GroupStore {
+impl GroupRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
 
-    pub async fn list(&self) -> Result<Vec<StoredGroup>, GroupStoreError> {
+    pub async fn list(&self) -> Result<Vec<StoredGroup>, GroupRepositoryError> {
         self.database
             .call(|conn| {
                 let mut statement = conn
@@ -32,7 +32,7 @@ impl GroupStore {
         id: &str,
         name: &str,
         device_ids: &BTreeSet<String>,
-    ) -> Result<StoredGroup, InsertError> {
+    ) -> Result<StoredGroup, GroupInsertError> {
         let id = id.to_string();
         let name = name.to_string();
         let device_ids = serde_json::json!(device_ids);
@@ -47,7 +47,9 @@ impl GroupStore {
                         params![id, name, device_ids, now],
                         row_to_stored_group,
                     )
-                    .map_err(|err| if is_name_conflict(&err) { InsertError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(
+                        |err| if is_name_conflict(&err) { GroupInsertError::NameAlreadyExists } else { err.into() },
+                    )?;
                 Ok(stored_group)
             })
             .await
@@ -59,7 +61,7 @@ impl GroupStore {
         base_revision: u64,
         name: &str,
         device_ids: &BTreeSet<String>,
-    ) -> Result<StoredGroup, UpdateError> {
+    ) -> Result<StoredGroup, GroupUpdateError> {
         let id = id.to_string();
         let name = name.to_string();
         let device_ids = serde_json::json!(device_ids);
@@ -75,7 +77,9 @@ impl GroupStore {
                         row_to_stored_group,
                     )
                     .optional()
-                    .map_err(|err| if is_name_conflict(&err) { UpdateError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(
+                        |err| if is_name_conflict(&err) { GroupUpdateError::NameAlreadyExists } else { err.into() },
+                    )?;
 
                 if let Some(updated) = updated {
                     return Ok(updated);
@@ -86,16 +90,17 @@ impl GroupStore {
                     .query_row("SELECT revision FROM groups WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(UpdateError::NotFound),
-                    Some(current) => {
-                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
+                    None => Err(GroupUpdateError::NotFound),
+                    Some(current) => Err(GroupUpdateError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
                 }
             })
             .await
     }
 
-    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), GroupDeleteError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -110,10 +115,11 @@ impl GroupStore {
                     .query_row("SELECT revision FROM groups WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(DeleteError::NotFound),
-                    Some(current) => {
-                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
+                    None => Err(GroupDeleteError::NotFound),
+                    Some(current) => Err(GroupDeleteError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
                 }
             })
             .await
@@ -150,8 +156,8 @@ fn is_name_conflict(err: &rusqlite::Error) -> bool {
     matches!(err, rusqlite::Error::SqliteFailure(err, _) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE)
 }
 
-fn to_revision(revision: i64) -> Result<u64, GroupStoreError> {
-    u64::try_from(revision).map_err(|_| GroupStoreError::InvalidRevision(revision))
+fn to_revision(revision: i64) -> Result<u64, GroupRepositoryError> {
+    u64::try_from(revision).map_err(|_| GroupRepositoryError::InvalidRevision(revision))
 }
 
 #[derive(Debug)]
@@ -179,7 +185,7 @@ impl From<StoredGroup> for Group {
 }
 
 #[derive(Error, Debug)]
-pub enum GroupStoreError {
+pub enum GroupRepositoryError {
     #[error(transparent)]
     Database(#[from] DatabaseError),
     #[error("SQLite error: {0}")]
@@ -189,28 +195,28 @@ pub enum GroupStoreError {
 }
 
 #[derive(Error, Debug)]
-pub enum InsertError {
+pub enum GroupInsertError {
     #[error("a group with this name already exists")]
     NameAlreadyExists,
     #[error(transparent)]
-    Store(#[from] GroupStoreError),
+    Repository(#[from] GroupRepositoryError),
 }
 
-// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `GroupStoreError` on their own
-impl From<DatabaseError> for InsertError {
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `GroupRepositoryError` on their own
+impl From<DatabaseError> for GroupInsertError {
     fn from(err: DatabaseError) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for InsertError {
+impl From<rusqlite::Error> for GroupInsertError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum UpdateError {
+pub enum GroupUpdateError {
     #[error("group not found")]
     NotFound,
     #[error(
@@ -220,23 +226,23 @@ pub enum UpdateError {
     #[error("a group with this name already exists")]
     NameAlreadyExists,
     #[error(transparent)]
-    Store(#[from] GroupStoreError),
+    Repository(#[from] GroupRepositoryError),
 }
 
-impl From<DatabaseError> for UpdateError {
+impl From<DatabaseError> for GroupUpdateError {
     fn from(err: DatabaseError) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for UpdateError {
+impl From<rusqlite::Error> for GroupUpdateError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum DeleteError {
+pub enum GroupDeleteError {
     #[error("group not found")]
     NotFound,
     #[error(
@@ -244,18 +250,18 @@ pub enum DeleteError {
     )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
     #[error(transparent)]
-    Store(#[from] GroupStoreError),
+    Repository(#[from] GroupRepositoryError),
 }
 
-impl From<DatabaseError> for DeleteError {
+impl From<DatabaseError> for GroupDeleteError {
     fn from(err: DatabaseError) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for DeleteError {
+impl From<rusqlite::Error> for GroupDeleteError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
@@ -266,15 +272,21 @@ mod tests {
     use rusqlite::params;
     use std::path::Path;
 
-    fn open_in_memory() -> GroupStore {
+    fn open_in_memory() -> GroupRepository {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
-        GroupStore::new(database)
+        GroupRepository::new(database)
     }
 
-    // Bypasses the store to write rows directly
-    async fn insert_row(store: &GroupStore, id: &str, name: &str, device_ids: &str, updated_at: Option<String>) {
+    // Bypasses the repository to write rows directly
+    async fn insert_row(
+        repository: &GroupRepository,
+        id: &str,
+        name: &str,
+        device_ids: &str,
+        updated_at: Option<String>,
+    ) {
         let (id, name, device_ids) = (id.to_string(), name.to_string(), device_ids.to_string());
-        store
+        repository
             .database
             .call(move |conn| {
                 let now = Utc::now().to_rfc3339();
@@ -288,9 +300,13 @@ mod tests {
             .expect("insert row");
     }
 
-    // Bypasses the store to change rows in ways the store never would
-    async fn execute(store: &GroupStore, sql: &'static str) {
-        store.database.call(move |conn| conn.execute(sql, []).map_err(DatabaseError::from)).await.expect("execute");
+    // Bypasses the repository to change rows in ways the repository never would
+    async fn execute(repository: &GroupRepository, sql: &'static str) {
+        repository
+            .database
+            .call(move |conn| conn.execute(sql, []).map_err(DatabaseError::from))
+            .await
+            .expect("execute");
     }
 
     #[test]
@@ -316,20 +332,26 @@ mod tests {
 
     #[tokio::test]
     async fn list_returns_empty_for_a_fresh_database() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         assert!(rows.is_empty());
     }
 
     #[tokio::test]
     async fn list_loads_a_valid_row() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Reading lights", r#"["lamp","desk"]"#, Some("2000-01-01T00:00:00Z".to_string()))
-            .await;
+        let repository = open_in_memory();
+        insert_row(
+            &repository,
+            "group",
+            "Reading lights",
+            r#"["lamp","desk"]"#,
+            Some("2000-01-01T00:00:00Z".to_string()),
+        )
+        .await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "group");
@@ -341,53 +363,53 @@ mod tests {
 
     #[tokio::test]
     async fn list_loads_the_revision() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Group", "[]", None).await;
-        execute(&store, "UPDATE groups SET revision = 7").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Group", "[]", None).await;
+        execute(&repository, "UPDATE groups SET revision = 7").await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         assert_eq!(rows[0].revision, 7);
     }
 
     #[tokio::test]
     async fn list_loads_a_group_without_devices() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Group", "[]", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Group", "[]", None).await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         assert!(rows[0].device_ids.is_empty());
     }
 
     #[tokio::test]
     async fn list_loads_a_device_id_listed_twice_once() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Group", r#"["lamp","lamp"]"#, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Group", r#"["lamp","lamp"]"#, None).await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         assert_eq!(rows[0].device_ids.len(), 1);
     }
 
     #[tokio::test]
     async fn list_handles_null_updated_at() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Group", "[]", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Group", "[]", None).await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         assert_eq!(rows[0].updated_at, None);
     }
 
     #[tokio::test]
     async fn list_orders_the_groups_by_id() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         for id in ["b", "c", "a"] {
-            insert_row(&store, id, id, "[]", None).await;
+            insert_row(&repository, id, id, "[]", None).await;
         }
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         let ids: Vec<_> = rows.iter().map(|row| row.id.as_str()).collect();
         assert_eq!(ids, ["a", "b", "c"]);
@@ -399,14 +421,14 @@ mod tests {
     #[case::not_strings("[1, 2]")]
     #[tokio::test]
     async fn list_fails_on_device_ids_that_are_not_a_json_array_of_strings(#[case] device_ids: &str) {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Group", device_ids, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Group", device_ids, None).await;
 
-        let result = store.list().await;
+        let result = repository.list().await;
 
         // Invalid JSON means the database is corrupt
         assert!(
-            matches!(result, Err(GroupStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _)))),
+            matches!(result, Err(GroupRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _)))),
             "got {result:?}"
         );
     }
@@ -416,28 +438,28 @@ mod tests {
     #[case::updated_at("UPDATE groups SET updated_at = 'yesterday'", 5)]
     #[tokio::test]
     async fn list_fails_on_an_invalid_timestamp(#[case] sql: &'static str, #[case] column: usize) {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Group", "[]", Some(Utc::now().to_rfc3339())).await;
-        execute(&store, sql).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Group", "[]", Some(Utc::now().to_rfc3339())).await;
+        execute(&repository, sql).await;
 
-        let result = store.list().await;
+        let result = repository.list().await;
 
         assert!(
-            matches!(result, Err(GroupStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
+            matches!(result, Err(GroupRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
             "got {result:?}"
         );
     }
 
     #[tokio::test]
     async fn list_fails_when_the_stored_revision_is_negative() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Group", "[]", None).await;
-        execute(&store, "UPDATE groups SET revision = -1").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Group", "[]", None).await;
+        execute(&repository, "UPDATE groups SET revision = -1").await;
 
-        let result = store.list().await;
+        let result = repository.list().await;
 
         assert!(
-            matches!(result, Err(GroupStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(1, _, _)))),
+            matches!(result, Err(GroupRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(1, _, _)))),
             "got {result:?}"
         );
     }
@@ -447,11 +469,11 @@ mod tests {
     #[case::other_case("LIGHTS")]
     #[tokio::test]
     async fn the_schema_rejects_a_second_group_with_the_same_name(#[case] name: &'static str) {
-        let store = open_in_memory();
-        insert_row(&store, "first", "Lights", "[]", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "first", "Lights", "[]", None).await;
         let (id, name) = ("second".to_string(), name.to_string());
 
-        let result = store
+        let result = repository
             .database
             .call(move |conn| {
                 conn.execute(
@@ -474,9 +496,9 @@ mod tests {
 
     #[tokio::test]
     async fn insert_returns_the_stored_group_at_revision_zero() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
 
-        let inserted = store.insert("group", "Reading lights", &device_ids(&["lamp", "desk"])).await;
+        let inserted = repository.insert("group", "Reading lights", &device_ids(&["lamp", "desk"])).await;
 
         let inserted = inserted.expect("insert succeeded");
         assert_eq!(inserted.id, "group");
@@ -488,12 +510,12 @@ mod tests {
 
     #[tokio::test]
     async fn insert_persists_the_group_and_leaves_others_untouched() {
-        let store = open_in_memory();
-        insert_row(&store, "other", "Other", r#"["a"]"#, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "other", "Other", r#"["a"]"#, None).await;
 
-        store.insert("group", "Group", &device_ids(&["b", "c"])).await.expect("insert succeeded");
+        repository.insert("group", "Group", &device_ids(&["b", "c"])).await.expect("insert succeeded");
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].id, "group");
         assert_eq!(rows[0].name, "Group");
@@ -506,21 +528,21 @@ mod tests {
 
     #[tokio::test]
     async fn insert_accepts_a_group_without_devices() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
 
-        let inserted = store.insert("group", "Group", &BTreeSet::new()).await.expect("insert succeeded");
+        let inserted = repository.insert("group", "Group", &BTreeSet::new()).await.expect("insert succeeded");
 
         assert!(inserted.device_ids.is_empty());
-        assert!(store.list().await.expect("list succeeded")[0].device_ids.is_empty());
+        assert!(repository.list().await.expect("list succeeded")[0].device_ids.is_empty());
     }
 
     #[tokio::test]
     async fn insert_stores_the_device_ids_as_a_json_array() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
 
-        store.insert("group", "Group", &device_ids(&["b", "a"])).await.expect("insert succeeded");
+        repository.insert("group", "Group", &device_ids(&["b", "a"])).await.expect("insert succeeded");
 
-        let stored: String = store
+        let stored: String = repository
             .database
             .call(|conn| {
                 conn.query_row("SELECT device_ids FROM groups", [], |row| row.get(0)).map_err(DatabaseError::from)
@@ -535,26 +557,26 @@ mod tests {
     #[case::different_case("lIGHTS")]
     #[tokio::test]
     async fn insert_rejects_a_name_that_is_already_in_use(#[case] name: &str) {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", r#"["a"]"#, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", r#"["a"]"#, None).await;
 
-        let result = store.insert("duplicate", name, &device_ids(&["b"])).await;
+        let result = repository.insert("duplicate", name, &device_ids(&["b"])).await;
 
-        assert!(matches!(result, Err(InsertError::NameAlreadyExists)), "got {result:?}");
-        let rows = store.list().await.expect("list succeeded");
+        assert!(matches!(result, Err(GroupInsertError::NameAlreadyExists)), "got {result:?}");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1, "nothing must be stored");
         assert_eq!(rows[0].device_ids, device_ids(&["a"]));
     }
 
     #[tokio::test]
     async fn insert_fails_for_an_id_that_is_already_in_use() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
 
-        let result = store.insert("group", "Other", &device_ids(&["a"])).await;
+        let result = repository.insert("group", "Other", &device_ids(&["a"])).await;
 
-        assert!(matches!(result, Err(InsertError::Store(GroupStoreError::Sqlite(_)))), "got {result:?}");
-        let rows = store.list().await.expect("list succeeded");
+        assert!(matches!(result, Err(GroupInsertError::Repository(GroupRepositoryError::Sqlite(_)))), "got {result:?}");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Lights");
     }
@@ -564,14 +586,14 @@ mod tests {
     #[case::different_case("oTHER")]
     #[tokio::test]
     async fn update_rejects_a_name_used_by_another_group(#[case] name: &str) {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", r#"["a"]"#, None).await;
-        insert_row(&store, "other", "Other", "[]", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", r#"["a"]"#, None).await;
+        insert_row(&repository, "other", "Other", "[]", None).await;
 
-        let result = store.update("group", 0, name, &device_ids(&["b"])).await;
+        let result = repository.update("group", 0, name, &device_ids(&["b"])).await;
 
-        assert!(matches!(result, Err(UpdateError::NameAlreadyExists)), "got {result:?}");
-        let rows = store.list().await.expect("list succeeded");
+        assert!(matches!(result, Err(GroupUpdateError::NameAlreadyExists)), "got {result:?}");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows[0].name, "Lights", "the group must be unchanged");
         assert_eq!(rows[0].device_ids, device_ids(&["a"]));
         assert_eq!(rows[0].revision, 0);
@@ -582,10 +604,10 @@ mod tests {
     #[case::different_case("LIGHTS")]
     #[tokio::test]
     async fn update_allows_a_group_to_keep_its_own_name(#[case] name: &str) {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", r#"["a"]"#, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", r#"["a"]"#, None).await;
 
-        let updated = store.update("group", 0, name, &device_ids(&["b"])).await.expect("update succeeded");
+        let updated = repository.update("group", 0, name, &device_ids(&["b"])).await.expect("update succeeded");
 
         assert_eq!(updated.name, name);
         assert_eq!(updated.revision, 1);
@@ -593,38 +615,38 @@ mod tests {
 
     #[tokio::test]
     async fn update_replaces_the_name_and_devices_and_returns_the_stored_group() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", r#"["a"]"#, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", r#"["a"]"#, None).await;
 
-        let updated = store.update("group", 0, "Reading lights", &device_ids(&["lamp", "desk"])).await;
+        let updated = repository.update("group", 0, "Reading lights", &device_ids(&["lamp", "desk"])).await;
 
         let updated = updated.expect("update succeeded");
         assert_eq!(updated.id, "group");
         assert_eq!(updated.name, "Reading lights");
         assert_eq!(updated.device_ids, device_ids(&["desk", "lamp"]));
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows[0].name, "Reading lights");
         assert_eq!(rows[0].device_ids, device_ids(&["desk", "lamp"]));
     }
 
     #[tokio::test]
     async fn update_accepts_a_group_without_devices() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", r#"["a"]"#, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", r#"["a"]"#, None).await;
 
-        let updated = store.update("group", 0, "Lights", &BTreeSet::new()).await.expect("update succeeded");
+        let updated = repository.update("group", 0, "Lights", &BTreeSet::new()).await.expect("update succeeded");
 
         assert!(updated.device_ids.is_empty());
     }
 
     #[tokio::test]
     async fn update_stores_the_device_ids_as_a_sorted_json_array() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
 
-        store.update("group", 0, "Lights", &device_ids(&["b", "a"])).await.expect("update succeeded");
+        repository.update("group", 0, "Lights", &device_ids(&["b", "a"])).await.expect("update succeeded");
 
-        let stored: String = store
+        let stored: String = repository
             .database
             .call(|conn| {
                 conn.query_row("SELECT device_ids FROM groups", [], |row| row.get(0)).map_err(DatabaseError::from)
@@ -636,25 +658,26 @@ mod tests {
 
     #[tokio::test]
     async fn update_increments_the_revision() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
 
-        let first = store.update("group", 0, "Lights", &device_ids(&["a"])).await.expect("first update succeeded");
-        let second = store.update("group", 1, "Lights", &device_ids(&["b"])).await.expect("second update succeeded");
+        let first = repository.update("group", 0, "Lights", &device_ids(&["a"])).await.expect("first update succeeded");
+        let second =
+            repository.update("group", 1, "Lights", &device_ids(&["b"])).await.expect("second update succeeded");
 
         assert_eq!(first.revision, 1);
         assert_eq!(second.revision, 2);
-        assert_eq!(store.list().await.expect("list succeeded")[0].revision, 2);
+        assert_eq!(repository.list().await.expect("list succeeded")[0].revision, 2);
     }
 
     #[tokio::test]
     async fn update_sets_updated_at_and_keeps_created_at() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
-        execute(&store, "UPDATE groups SET created_at = '2000-01-01T00:00:00Z'").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
+        execute(&repository, "UPDATE groups SET created_at = '2000-01-01T00:00:00Z'").await;
         let before = Utc::now();
 
-        let updated = store.update("group", 0, "Lights", &device_ids(&["a"])).await.expect("update succeeded");
+        let updated = repository.update("group", 0, "Lights", &device_ids(&["a"])).await.expect("update succeeded");
 
         let long_ago = DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
         assert_eq!(updated.created_at, long_ago);
@@ -663,13 +686,13 @@ mod tests {
 
     #[tokio::test]
     async fn update_leaves_other_groups_untouched() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
-        insert_row(&store, "other", "Other", r#"["x"]"#, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
+        insert_row(&repository, "other", "Other", r#"["x"]"#, None).await;
 
-        store.update("group", 0, "Renamed", &device_ids(&["a"])).await.expect("update succeeded");
+        repository.update("group", 0, "Renamed", &device_ids(&["a"])).await.expect("update succeeded");
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows[1].id, "other");
         assert_eq!(rows[1].name, "Other");
         assert_eq!(rows[1].device_ids, device_ids(&["x"]));
@@ -682,15 +705,19 @@ mod tests {
     #[case::other_groups(&["other"])]
     #[tokio::test]
     async fn update_returns_not_found_for_an_unknown_id(#[case] existing_ids: &[&str]) {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         for id in existing_ids {
-            insert_row(&store, id, id, "[]", None).await;
+            insert_row(&repository, id, id, "[]", None).await;
         }
 
-        let result = store.update("group", 0, "Lights", &device_ids(&["a"])).await;
+        let result = repository.update("group", 0, "Lights", &device_ids(&["a"])).await;
 
-        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
-        assert_eq!(store.list().await.expect("list succeeded").len(), existing_ids.len(), "update must not create");
+        assert!(matches!(result, Err(GroupUpdateError::NotFound)), "got {result:?}");
+        assert_eq!(
+            repository.list().await.expect("list succeeded").len(),
+            existing_ids.len(),
+            "update must not create"
+        );
     }
 
     #[rstest]
@@ -701,21 +728,21 @@ mod tests {
         #[case] base_revision: u64,
         #[case] current_revision: u64,
     ) {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", r#"["a"]"#, None).await;
-        execute(&store, "UPDATE groups SET revision = 2").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", r#"["a"]"#, None).await;
+        execute(&repository, "UPDATE groups SET revision = 2").await;
 
-        let result = store.update("group", base_revision, "Renamed", &device_ids(&["b"])).await;
+        let result = repository.update("group", base_revision, "Renamed", &device_ids(&["b"])).await;
 
         assert!(
             matches!(
                 result,
-                Err(UpdateError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(GroupUpdateError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
         );
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows[0].name, "Lights", "a conflicting update must not change the group");
         assert_eq!(rows[0].device_ids, device_ids(&["a"]));
         assert_eq!(rows[0].revision, 2);
@@ -723,35 +750,38 @@ mod tests {
 
     #[tokio::test]
     async fn update_fails_for_a_stored_revision_out_of_range() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
-        execute(&store, "UPDATE groups SET revision = -1").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
+        execute(&repository, "UPDATE groups SET revision = -1").await;
 
-        let result = store.update("group", 0, "Lights", &BTreeSet::new()).await;
+        let result = repository.update("group", 0, "Lights", &BTreeSet::new()).await;
 
-        assert!(matches!(result, Err(UpdateError::Store(GroupStoreError::InvalidRevision(-1)))), "got {result:?}");
+        assert!(
+            matches!(result, Err(GroupUpdateError::Repository(GroupRepositoryError::InvalidRevision(-1)))),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
     async fn delete_removes_the_group_when_the_base_revision_matches() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
-        execute(&store, "UPDATE groups SET revision = 3").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
+        execute(&repository, "UPDATE groups SET revision = 3").await;
 
-        store.delete("group", 3).await.expect("delete succeeded");
+        repository.delete("group", 3).await.expect("delete succeeded");
 
-        assert!(store.list().await.expect("list succeeded").is_empty(), "group must be deleted");
+        assert!(repository.list().await.expect("list succeeded").is_empty(), "group must be deleted");
     }
 
     #[tokio::test]
     async fn delete_only_removes_the_given_group() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
-        insert_row(&store, "other", "Other", r#"["a"]"#, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
+        insert_row(&repository, "other", "Other", r#"["a"]"#, None).await;
 
-        store.delete("group", 0).await.expect("delete succeeded");
+        repository.delete("group", 0).await.expect("delete succeeded");
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "other");
         assert_eq!(rows[0].name, "Other");
@@ -760,11 +790,11 @@ mod tests {
 
     #[tokio::test]
     async fn delete_frees_the_name_and_id_for_a_new_group() {
-        let store = open_in_memory();
-        store.insert("group", "Lights", &BTreeSet::new()).await.expect("insert succeeded");
+        let repository = open_in_memory();
+        repository.insert("group", "Lights", &BTreeSet::new()).await.expect("insert succeeded");
 
-        store.delete("group", 0).await.expect("delete succeeded");
-        let reinserted = store.insert("group", "lights", &BTreeSet::new()).await.expect("insert succeeded");
+        repository.delete("group", 0).await.expect("delete succeeded");
+        let reinserted = repository.insert("group", "lights", &BTreeSet::new()).await.expect("insert succeeded");
 
         assert_eq!(reinserted.revision, 0);
     }
@@ -777,21 +807,21 @@ mod tests {
         #[case] base_revision: u64,
         #[case] current_revision: u64,
     ) {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
-        execute(&store, "UPDATE groups SET revision = 2").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
+        execute(&repository, "UPDATE groups SET revision = 2").await;
 
-        let result = store.delete("group", base_revision).await;
+        let result = repository.delete("group", base_revision).await;
 
         assert!(
             matches!(
                 result,
-                Err(DeleteError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(GroupDeleteError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
         );
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1, "the group must not be deleted");
         assert_eq!(rows[0].revision, 2);
     }
@@ -801,35 +831,38 @@ mod tests {
     #[case::other_groups(&["other"])]
     #[tokio::test]
     async fn delete_returns_not_found_for_an_unknown_id(#[case] existing_ids: &[&str]) {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         for id in existing_ids {
-            insert_row(&store, id, id, "[]", None).await;
+            insert_row(&repository, id, id, "[]", None).await;
         }
 
-        let result = store.delete("group", 0).await;
+        let result = repository.delete("group", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
-        assert_eq!(store.list().await.expect("list succeeded").len(), existing_ids.len());
+        assert!(matches!(result, Err(GroupDeleteError::NotFound)), "got {result:?}");
+        assert_eq!(repository.list().await.expect("list succeeded").len(), existing_ids.len());
     }
 
     #[tokio::test]
     async fn delete_fails_for_a_stored_revision_out_of_range() {
-        let store = open_in_memory();
-        insert_row(&store, "group", "Lights", "[]", None).await;
-        execute(&store, "UPDATE groups SET revision = -1").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "group", "Lights", "[]", None).await;
+        execute(&repository, "UPDATE groups SET revision = -1").await;
 
-        let result = store.delete("group", 0).await;
+        let result = repository.delete("group", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::Store(GroupStoreError::InvalidRevision(-1)))), "got {result:?}");
+        assert!(
+            matches!(result, Err(GroupDeleteError::Repository(GroupRepositoryError::InvalidRevision(-1)))),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
-    async fn delete_fails_when_the_store_fails() {
-        let store = open_in_memory();
-        execute(&store, "DROP TABLE groups").await;
+    async fn delete_fails_when_the_repository_fails() {
+        let repository = open_in_memory();
+        execute(&repository, "DROP TABLE groups").await;
 
-        let result = store.delete("group", 0).await;
+        let result = repository.delete("group", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::Store(GroupStoreError::Sqlite(_)))), "got {result:?}");
+        assert!(matches!(result, Err(GroupDeleteError::Repository(GroupRepositoryError::Sqlite(_)))), "got {result:?}");
     }
 }

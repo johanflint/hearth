@@ -1,6 +1,6 @@
 use crate::api::ApiState;
 use crate::api::zones::zone_view::ZoneView;
-use crate::zone_service::RetrieveZoneError;
+use crate::services::RetrieveZoneError;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;

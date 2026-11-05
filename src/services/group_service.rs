@@ -1,6 +1,8 @@
 use crate::domain::{Event, Group, GroupChanged, Owner};
 use crate::flow_registry::{FlowRegistry, FlowSummary};
-use crate::group_store::{DeleteError, GroupStore, GroupStoreError, InsertError, StoredGroup, UpdateError};
+use crate::repositories::{
+    GroupDeleteError, GroupInsertError, GroupRepository, GroupRepositoryError, GroupUpdateError, StoredGroup,
+};
 use crate::store::StoreSnapshot;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -11,7 +13,7 @@ use tokio::sync::watch::Receiver;
 #[derive(Debug)]
 pub struct GroupService {
     snapshot_rx: Receiver<StoreSnapshot>,
-    group_store: Arc<GroupStore>,
+    group_repository: Arc<GroupRepository>,
     flow_registry: Arc<FlowRegistry>,
     store_tx: Sender<Event>,
 }
@@ -19,11 +21,11 @@ pub struct GroupService {
 impl GroupService {
     pub fn new(
         snapshot_rx: Receiver<StoreSnapshot>,
-        group_store: Arc<GroupStore>,
+        group_repository: Arc<GroupRepository>,
         flow_registry: Arc<FlowRegistry>,
         store_tx: Sender<Event>,
     ) -> Self {
-        GroupService { snapshot_rx, group_store, flow_registry, store_tx }
+        GroupService { snapshot_rx, group_repository, flow_registry, store_tx }
     }
 
     pub fn list(&self) -> Vec<Arc<Group>> {
@@ -71,10 +73,11 @@ impl GroupService {
 
         let permit = self.store_tx.reserve().await.map_err(|_| CreateGroupError::StoreUnavailable)?;
 
-        let stored_group = self.group_store.insert(id, name, &group.device_ids).await.map_err(|err| match err {
-            InsertError::NameAlreadyExists => CreateGroupError::NameAlreadyExists,
-            InsertError::Store(err) => CreateGroupError::Internal(err),
-        })?;
+        let stored_group =
+            self.group_repository.insert(id, name, &group.device_ids).await.map_err(|err| match err {
+                GroupInsertError::NameAlreadyExists => CreateGroupError::NameAlreadyExists,
+                GroupInsertError::Repository(err) => CreateGroupError::Internal(err),
+            })?;
 
         permit.send(Event::GroupCreated(Group { revision: stored_group.revision, ..group }));
         Ok(stored_group)
@@ -109,7 +112,7 @@ impl GroupService {
 
         let device_ids: BTreeSet<String> = device_ids.into_iter().collect(); // BTreeSet dedupes
         let permit = self.store_tx.reserve().await.map_err(|_| UpdateGroupError::StoreUnavailable)?;
-        let stored_group = self.group_store.update(id, base_revision, name, &device_ids).await?;
+        let stored_group = self.group_repository.update(id, base_revision, name, &device_ids).await?;
 
         permit.send(Event::GroupChanged(GroupChanged {
             id: id.to_string(),
@@ -137,7 +140,7 @@ impl GroupService {
         }
 
         let permit = self.store_tx.reserve().await.map_err(|_| DeleteGroupError::StoreUnavailable)?;
-        self.group_store.delete(id, base_revision).await?;
+        self.group_repository.delete(id, base_revision).await?;
         permit.send(Event::GroupRemoved { group_id: id.to_string() });
 
         Ok(())
@@ -163,7 +166,7 @@ pub enum CreateGroupError {
     #[error("store is unavailable")]
     StoreUnavailable,
     #[error(transparent)]
-    Internal(#[from] GroupStoreError),
+    Internal(#[from] GroupRepositoryError),
 }
 
 #[derive(Debug, Error)]
@@ -185,18 +188,18 @@ pub enum UpdateGroupError {
     #[error("store is unavailable")]
     StoreUnavailable,
     #[error(transparent)]
-    Internal(#[from] GroupStoreError),
+    Internal(#[from] GroupRepositoryError),
 }
 
-impl From<UpdateError> for UpdateGroupError {
-    fn from(err: UpdateError) -> Self {
+impl From<GroupUpdateError> for UpdateGroupError {
+    fn from(err: GroupUpdateError) -> Self {
         match err {
-            UpdateError::NotFound => Self::NotFound,
-            UpdateError::RevisionConflict { base_revision, current_revision } => {
+            GroupUpdateError::NotFound => Self::NotFound,
+            GroupUpdateError::RevisionConflict { base_revision, current_revision } => {
                 Self::RevisionConflict { base_revision, current_revision }
             }
-            UpdateError::NameAlreadyExists => Self::NameAlreadyExists,
-            UpdateError::Store(err) => Self::Internal(err),
+            GroupUpdateError::NameAlreadyExists => Self::NameAlreadyExists,
+            GroupUpdateError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -216,17 +219,17 @@ pub enum DeleteGroupError {
     #[error("store is unavailable")]
     StoreUnavailable,
     #[error(transparent)]
-    Internal(#[from] GroupStoreError),
+    Internal(#[from] GroupRepositoryError),
 }
 
-impl From<DeleteError> for DeleteGroupError {
-    fn from(err: DeleteError) -> Self {
+impl From<GroupDeleteError> for DeleteGroupError {
+    fn from(err: GroupDeleteError) -> Self {
         match err {
-            DeleteError::NotFound => Self::NotFound,
-            DeleteError::RevisionConflict { base_revision, current_revision } => {
+            GroupDeleteError::NotFound => Self::NotFound,
+            GroupDeleteError::RevisionConflict { base_revision, current_revision } => {
                 Self::RevisionConflict { base_revision, current_revision }
             }
-            DeleteError::Store(err) => Self::Internal(err),
+            GroupDeleteError::Repository(err) => Self::Internal(err),
         }
     }
 }
@@ -261,14 +264,14 @@ mod tests {
     fn service(rx: Receiver<StoreSnapshot>) -> GroupService {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
         let (store_tx, _store_rx) = mpsc::channel(1);
-        GroupService::new(rx, Arc::new(GroupStore::new(database)), Arc::new(FlowRegistry::new(vec![])), store_tx)
+        GroupService::new(rx, Arc::new(GroupRepository::new(database)), Arc::new(FlowRegistry::new(vec![])), store_tx)
     }
 
     /// Bind `store_rx` when the service sends events: dropping it, e.g. by leaving it out with `..`,
     /// makes the store unavailable.
     struct Fixture {
         service: GroupService,
-        group_store: Arc<GroupStore>,
+        group_repository: Arc<GroupRepository>,
         store_rx: mpsc::Receiver<Event>,
     }
 
@@ -278,11 +281,12 @@ mod tests {
 
     fn create_service_with_flows(snapshot: StoreSnapshot, flows: Vec<VersionedFlow>) -> Fixture {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
-        let group_store = Arc::new(GroupStore::new(database));
+        let group_repository = Arc::new(GroupRepository::new(database));
         let (store_tx, store_rx) = mpsc::channel(8);
         let (_tx, rx) = watch::channel(snapshot);
-        let service = GroupService::new(rx, Arc::clone(&group_store), Arc::new(FlowRegistry::new(flows)), store_tx);
-        Fixture { service, group_store, store_rx }
+        let service =
+            GroupService::new(rx, Arc::clone(&group_repository), Arc::new(FlowRegistry::new(flows)), store_tx);
+        Fixture { service, group_repository, store_rx }
     }
 
     /// A service whose `groups` table is gone, so every database call fails
@@ -291,7 +295,7 @@ mod tests {
         let (store_tx, store_rx) = mpsc::channel(8);
         let (_tx, rx) = watch::channel(snapshot);
         let flow_registry = Arc::new(FlowRegistry::new(vec![]));
-        let service = GroupService::new(rx, Arc::new(GroupStore::new(database.clone())), flow_registry, store_tx);
+        let service = GroupService::new(rx, Arc::new(GroupRepository::new(database.clone())), flow_registry, store_tx);
         database
             .call(|conn| conn.execute("DROP TABLE groups", []).map_err(crate::database::DatabaseError::from))
             .await
@@ -418,11 +422,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_group_persists_the_group() {
-        let Fixture { service, group_store, store_rx: _store_rx } = create_service(snapshot_with_devices(&["a"]));
+        let Fixture { service, group_repository, store_rx: _store_rx } = create_service(snapshot_with_devices(&["a"]));
 
         service.create_group("group", "Kitchen", ids(&["a"])).await.unwrap();
 
-        let stored = group_store.list().await.unwrap();
+        let stored = group_repository.list().await.unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!((stored[0].id.as_str(), stored[0].name.as_str()), ("group", "Kitchen"));
         assert_eq!(stored[0].device_ids, set(&["a"]));
@@ -439,12 +443,12 @@ mod tests {
 
     #[tokio::test]
     async fn create_group_rejects_a_group_without_devices() {
-        let Fixture { service, group_store, mut store_rx } = create_service(StoreSnapshot::default());
+        let Fixture { service, group_repository, mut store_rx } = create_service(StoreSnapshot::default());
 
         let result = service.create_group("group", "Empty", vec![]).await;
 
         assert!(matches!(result, Err(CreateGroupError::GroupEmpty)), "got {result:?}");
-        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(group_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -474,12 +478,12 @@ mod tests {
     #[tokio::test]
     async fn create_group_rejects_an_existing_id() {
         let snapshot = snapshot(vec![group("group", "Existing")]);
-        let Fixture { service, group_store, mut store_rx } = create_service(snapshot);
+        let Fixture { service, group_repository, mut store_rx } = create_service(snapshot);
 
         let result = service.create_group("group", "Kitchen", ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateGroupError::IdAlreadyExists)));
-        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(group_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -488,30 +492,31 @@ mod tests {
     #[case::different_case("kitchen")]
     #[tokio::test]
     async fn create_group_rejects_a_name_in_use_by_another_group(#[case] name: &str) {
-        let Fixture { service, group_store, mut store_rx } = create_service(snapshot(vec![group("other", "Kitchen")]));
+        let Fixture { service, group_repository, mut store_rx } =
+            create_service(snapshot(vec![group("other", "Kitchen")]));
 
         let result = service.create_group("group", name, ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateGroupError::NameAlreadyExists)));
-        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(group_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn create_group_rejects_a_name_stored_but_not_yet_in_the_snapshot() {
-        let Fixture { service, group_store, mut store_rx } = create_service(snapshot_with_devices(&["a"]));
-        group_store.insert("other", "Kitchen", &set(&["a"])).await.unwrap();
+        let Fixture { service, group_repository, mut store_rx } = create_service(snapshot_with_devices(&["a"]));
+        group_repository.insert("other", "Kitchen", &set(&["a"])).await.unwrap();
 
         let result = service.create_group("group", "kitchen", ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateGroupError::NameAlreadyExists)));
-        assert_eq!(group_store.list().await.unwrap().len(), 1);
+        assert_eq!(group_repository.list().await.unwrap().len(), 1);
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn create_group_rejects_unknown_devices_and_lists_all_of_them_sorted() {
-        let Fixture { service, group_store, mut store_rx } = create_service(snapshot_with_devices(&["known"]));
+        let Fixture { service, group_repository, mut store_rx } = create_service(snapshot_with_devices(&["known"]));
 
         let result = service.create_group("group", "Kitchen", ids(&["z", "known", "a"])).await;
 
@@ -519,19 +524,19 @@ mod tests {
             panic!("expected UnknownDevices, got {result:?}");
         };
         assert_eq!(err.to_string(), "unknown device ids: 'a, z'");
-        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(group_repository.list().await.unwrap().is_empty(), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn create_group_fails_without_storing_when_the_store_is_gone() {
-        let Fixture { service, group_store, store_rx } = create_service(snapshot_with_devices(&["a"]));
+        let Fixture { service, group_repository, store_rx } = create_service(snapshot_with_devices(&["a"]));
         drop(store_rx);
 
         let result = service.create_group("group", "Kitchen", ids(&["a"])).await;
 
         assert!(matches!(result, Err(CreateGroupError::StoreUnavailable)));
-        assert!(group_store.list().await.unwrap().is_empty(), "nothing must be stored");
+        assert!(group_repository.list().await.unwrap().is_empty(), "nothing must be stored");
     }
 
     #[tokio::test]
@@ -561,7 +566,7 @@ mod tests {
             ..snapshot_with_devices(device_ids)
         };
         let fixture = create_service(snapshot);
-        fixture.group_store.insert("group", "Kitchen", &set(&["a"])).await.unwrap();
+        fixture.group_repository.insert("group", "Kitchen", &set(&["a"])).await.unwrap();
         fixture
     }
 
@@ -579,11 +584,11 @@ mod tests {
 
     #[tokio::test]
     async fn update_group_persists_the_changes() {
-        let Fixture { service, group_store, store_rx: _store_rx } = create_service_with_group(&["a", "b"]).await;
+        let Fixture { service, group_repository, store_rx: _store_rx } = create_service_with_group(&["a", "b"]).await;
 
         service.update_group("group", 0, "Hall", ids(&["b"])).await.unwrap();
 
-        let stored = group_store.list().await.unwrap();
+        let stored = group_repository.list().await.unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Hall", 1));
         assert_eq!(stored[0].device_ids, set(&["b"]));
@@ -624,12 +629,12 @@ mod tests {
 
     #[tokio::test]
     async fn update_group_rejects_a_group_without_devices() {
-        let Fixture { service, group_store, mut store_rx } = create_service_with_group(&["a"]).await;
+        let Fixture { service, group_repository, mut store_rx } = create_service_with_group(&["a"]).await;
 
         let result = service.update_group("group", 0, "Hall", vec![]).await;
 
         assert!(matches!(result, Err(UpdateGroupError::GroupEmpty)), "got {result:?}");
-        let stored = group_store.list().await.unwrap();
+        let stored = group_repository.list().await.unwrap();
         assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Kitchen", 0), "the group must be unchanged");
         assert_eq!(stored[0].device_ids, set(&["a"]));
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
@@ -637,7 +642,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_group_rejects_unknown_devices_and_lists_all_of_them_sorted() {
-        let Fixture { service, group_store, mut store_rx } = create_service_with_group(&["known", "a"]).await;
+        let Fixture { service, group_repository, mut store_rx } = create_service_with_group(&["known", "a"]).await;
 
         let result = service.update_group("group", 0, "Hall", ids(&["z", "known", "b"])).await;
 
@@ -645,19 +650,19 @@ mod tests {
             panic!("expected UnknownDevices, got {result:?}");
         };
         assert_eq!(err.to_string(), "unknown device ids: 'b, z'");
-        let stored = group_store.list().await.unwrap();
+        let stored = group_repository.list().await.unwrap();
         assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Kitchen", 0), "the group must be unchanged");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn update_group_returns_not_found_for_an_unknown_id() {
-        let Fixture { service, group_store, mut store_rx } = create_service_with_group(&["a"]).await;
+        let Fixture { service, group_repository, mut store_rx } = create_service_with_group(&["a"]).await;
 
         let result = service.update_group("unknown", 0, "Hall", ids(&["a"])).await;
 
         assert!(matches!(result, Err(UpdateGroupError::NotFound)), "got {result:?}");
-        assert_eq!(group_store.list().await.unwrap().len(), 1, "update must not create a group");
+        assert_eq!(group_repository.list().await.unwrap().len(), 1, "update must not create a group");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -666,7 +671,7 @@ mod tests {
     #[case::ahead(5)]
     #[tokio::test]
     async fn update_group_returns_a_revision_conflict_for_a_mismatching_base_revision(#[case] base_revision: u64) {
-        let Fixture { service, group_store, mut store_rx } = create_service_with_group(&["a"]).await;
+        let Fixture { service, group_repository, mut store_rx } = create_service_with_group(&["a"]).await;
 
         let result = service.update_group("group", base_revision, "Hall", ids(&["a"])).await;
 
@@ -677,7 +682,7 @@ mod tests {
             ),
             "got {result:?}"
         );
-        assert_eq!(group_store.list().await.unwrap()[0].name, "Kitchen", "the group must be unchanged");
+        assert_eq!(group_repository.list().await.unwrap()[0].name, "Kitchen", "the group must be unchanged");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -686,25 +691,25 @@ mod tests {
     #[case::different_case("oTHER")]
     #[tokio::test]
     async fn update_group_rejects_a_name_in_use_by_another_group(#[case] name: &str) {
-        let Fixture { service, group_store, mut store_rx } = create_service_with_group(&["a"]).await;
-        group_store.insert("other", "Other", &BTreeSet::new()).await.unwrap();
+        let Fixture { service, group_repository, mut store_rx } = create_service_with_group(&["a"]).await;
+        group_repository.insert("other", "Other", &BTreeSet::new()).await.unwrap();
 
         let result = service.update_group("group", 0, name, ids(&["a"])).await;
 
         assert!(matches!(result, Err(UpdateGroupError::NameAlreadyExists)), "got {result:?}");
-        assert_eq!(group_store.list().await.unwrap()[0].name, "Kitchen", "the group must be unchanged");
+        assert_eq!(group_repository.list().await.unwrap()[0].name, "Kitchen", "the group must be unchanged");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn update_group_rejects_a_group_owned_by_an_integration() {
-        let Fixture { service, group_store, mut store_rx } =
+        let Fixture { service, group_repository, mut store_rx } =
             create_service_with_group_and_snapshot_groups(&["a"], vec![group("hue", "Hue room")]).await;
 
         let result = service.update_group("hue", 0, "Renamed", ids(&["a"])).await;
 
         assert!(matches!(result, Err(UpdateGroupError::NotOwned)), "got {result:?}");
-        let stored = group_store.list().await.unwrap();
+        let stored = group_repository.list().await.unwrap();
         assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Kitchen", 0), "nothing must be stored");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
@@ -734,13 +739,13 @@ mod tests {
     #[case::different_case("hUE rOOM")]
     #[tokio::test]
     async fn update_group_rejects_a_name_in_use_by_an_integration_group(#[case] name: &str) {
-        let Fixture { service, group_store, mut store_rx } =
+        let Fixture { service, group_repository, mut store_rx } =
             create_service_with_group_and_snapshot_groups(&["a"], vec![group("hue", "Hue room")]).await;
 
         let result = service.update_group("group", 0, name, ids(&["a"])).await;
 
         assert!(matches!(result, Err(UpdateGroupError::NameAlreadyExists)), "got {result:?}");
-        let stored = group_store.list().await.unwrap();
+        let stored = group_repository.list().await.unwrap();
         assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Kitchen", 0), "the group must be unchanged");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
@@ -769,13 +774,13 @@ mod tests {
 
     #[tokio::test]
     async fn update_group_fails_without_storing_when_the_store_is_gone() {
-        let Fixture { service, group_store, store_rx } = create_service_with_group(&["a"]).await;
+        let Fixture { service, group_repository, store_rx } = create_service_with_group(&["a"]).await;
         drop(store_rx);
 
         let result = service.update_group("group", 0, "Hall", ids(&["a"])).await;
 
         assert!(matches!(result, Err(UpdateGroupError::StoreUnavailable)), "got {result:?}");
-        let stored = group_store.list().await.unwrap();
+        let stored = group_repository.list().await.unwrap();
         assert_eq!((stored[0].name.as_str(), stored[0].revision), ("Kitchen", 0), "nothing must be stored");
     }
 
@@ -786,27 +791,27 @@ mod tests {
     /// A service with a stored Hearth group "group" named "Kitchen" at revision 0, that is also in the snapshot
     async fn create_service_for_delete() -> Fixture {
         let fixture = create_service(snapshot(vec![hearth_group("group", "Kitchen", 0)]));
-        fixture.group_store.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
+        fixture.group_repository.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
         fixture
     }
 
     #[tokio::test]
     async fn delete_group_removes_the_stored_group() {
-        let Fixture { service, group_store, store_rx: _store_rx } = create_service_for_delete().await;
+        let Fixture { service, group_repository, store_rx: _store_rx } = create_service_for_delete().await;
 
         service.delete_group("group", 0).await.unwrap();
 
-        assert!(group_store.list().await.unwrap().is_empty(), "the group must be deleted");
+        assert!(group_repository.list().await.unwrap().is_empty(), "the group must be deleted");
     }
 
     #[tokio::test]
     async fn delete_group_only_removes_the_given_group() {
-        let Fixture { service, group_store, store_rx: _store_rx } = create_service_for_delete().await;
-        group_store.insert("other", "Other", &BTreeSet::new()).await.unwrap();
+        let Fixture { service, group_repository, store_rx: _store_rx } = create_service_for_delete().await;
+        group_repository.insert("other", "Other", &BTreeSet::new()).await.unwrap();
 
         service.delete_group("group", 0).await.unwrap();
 
-        let stored = group_store.list().await.unwrap();
+        let stored = group_repository.list().await.unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].id, "other");
     }
@@ -826,12 +831,12 @@ mod tests {
 
     #[tokio::test]
     async fn delete_group_returns_not_found_for_an_unknown_id() {
-        let Fixture { service, group_store, mut store_rx } = create_service_for_delete().await;
+        let Fixture { service, group_repository, mut store_rx } = create_service_for_delete().await;
 
         let result = service.delete_group("unknown", 0).await;
 
         assert!(matches!(result, Err(DeleteGroupError::NotFound)), "got {result:?}");
-        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(group_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -860,7 +865,7 @@ mod tests {
     #[case::ahead(5)]
     #[tokio::test]
     async fn delete_group_returns_a_revision_conflict_for_a_mismatching_base_revision(#[case] base_revision: u64) {
-        let Fixture { service, group_store, mut store_rx } = create_service_for_delete().await;
+        let Fixture { service, group_repository, mut store_rx } = create_service_for_delete().await;
 
         let result = service.delete_group("group", base_revision).await;
 
@@ -871,14 +876,14 @@ mod tests {
             ),
             "got {result:?}"
         );
-        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(group_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
     #[tokio::test]
     async fn delete_group_returns_a_revision_conflict_when_the_snapshot_is_behind_the_database() {
-        let Fixture { service, group_store, mut store_rx } = create_service_for_delete().await;
-        group_store.update("group", 0, "Kitchen", &BTreeSet::new()).await.unwrap();
+        let Fixture { service, group_repository, mut store_rx } = create_service_for_delete().await;
+        group_repository.update("group", 0, "Kitchen", &BTreeSet::new()).await.unwrap();
 
         let result = service.delete_group("group", 0).await;
 
@@ -886,19 +891,19 @@ mod tests {
             matches!(result, Err(DeleteGroupError::RevisionConflict { base_revision: 0, current_revision: 1 })),
             "got {result:?}"
         );
-        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(group_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
         assert!(store_rx.try_recv().is_err(), "no event must be sent after a failed delete");
     }
 
     #[tokio::test]
     async fn delete_group_fails_without_deleting_when_the_store_is_gone() {
-        let Fixture { service, group_store, store_rx } = create_service_for_delete().await;
+        let Fixture { service, group_repository, store_rx } = create_service_for_delete().await;
         drop(store_rx);
 
         let result = service.delete_group("group", 0).await;
 
         assert!(matches!(result, Err(DeleteGroupError::StoreUnavailable)), "got {result:?}");
-        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(group_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
     }
 
     #[tokio::test]
@@ -919,9 +924,9 @@ mod tests {
             flow_using_groups("a", "Flow A", 0, &["other", "group"]),
             flow_using_groups("c", "Flow C", 1, &["other"]),
         ];
-        let Fixture { service, group_store, mut store_rx } =
+        let Fixture { service, group_repository, mut store_rx } =
             create_service_with_flows(snapshot(vec![hearth_group("group", "Kitchen", 0)]), flows);
-        group_store.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
+        group_repository.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
 
         let result = service.delete_group("group", 0).await;
 
@@ -932,7 +937,7 @@ mod tests {
         let DeleteGroupError::InUse(summaries) = err else { unreachable!() };
         let summaries: Vec<_> = summaries.iter().map(|s| (s.id.as_str(), s.name.as_str(), s.revision)).collect();
         assert_eq!(summaries, [("a", "Flow A", 0), ("b", "Flow B", 2)]);
-        assert_eq!(group_store.list().await.unwrap().len(), 1, "nothing must be deleted");
+        assert_eq!(group_repository.list().await.unwrap().len(), 1, "nothing must be deleted");
         assert!(store_rx.try_recv().is_err(), "no event must be sent");
     }
 
@@ -959,9 +964,9 @@ mod tests {
     #[tokio::test]
     async fn delete_group_returns_a_revision_conflict_before_checking_the_flows() {
         let flows = vec![flow_using_groups("a", "Flow A", 0, &["group"])];
-        let Fixture { service, group_store, .. } =
+        let Fixture { service, group_repository, .. } =
             create_service_with_flows(snapshot(vec![hearth_group("group", "Kitchen", 0)]), flows);
-        group_store.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
+        group_repository.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
 
         let result = service.delete_group("group", 1).await;
 
@@ -974,12 +979,12 @@ mod tests {
     #[tokio::test]
     async fn delete_group_ignores_flows_using_other_groups() {
         let flows = vec![flow_using_groups("a", "Flow A", 0, &["other"])];
-        let Fixture { service, group_store, store_rx: _store_rx } =
+        let Fixture { service, group_repository, store_rx: _store_rx } =
             create_service_with_flows(snapshot(vec![hearth_group("group", "Kitchen", 0)]), flows);
-        group_store.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
+        group_repository.insert("group", "Kitchen", &BTreeSet::new()).await.unwrap();
 
         service.delete_group("group", 0).await.unwrap();
 
-        assert!(group_store.list().await.unwrap().is_empty(), "the group must be deleted");
+        assert!(group_repository.list().await.unwrap().is_empty(), "the group must be deleted");
     }
 }

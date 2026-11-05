@@ -2,7 +2,7 @@ use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
 use crate::api::groups::group_view::GroupView;
 use crate::api::parse_request::parse_request;
-use crate::group_service::CreateGroupError;
+use crate::services::CreateGroupError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -44,7 +44,7 @@ fn create_error_response(err: CreateGroupError) -> Response {
             (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("storeUnavailable"))).into_response()
         }
         CreateGroupError::Internal(_) => {
-            error!("❌ Failed to persist group to store: {err}");
+            error!("❌ Failed to persist group to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -65,7 +65,7 @@ mod tests {
     use crate::api::test_support::{body_json, create_state_with_store_tx};
     use crate::database::{Database, DatabaseError};
     use crate::domain::{Event, Group, Owner};
-    use crate::group_store::GroupStore;
+    use crate::repositories::GroupRepository;
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
     use axum::body::Body;
@@ -121,7 +121,7 @@ mod tests {
     }
 
     async fn stored_group_ids(database: Database) -> Vec<String> {
-        let stored = GroupStore::new(database).list().await.expect("list succeeded");
+        let stored = GroupRepository::new(database).list().await.expect("list succeeded");
         stored.into_iter().map(|group| group.id).collect()
     }
 

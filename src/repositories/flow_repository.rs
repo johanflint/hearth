@@ -4,16 +4,16 @@ use rusqlite::{OptionalExtension, Row, params};
 use thiserror::Error;
 
 #[derive(Debug)]
-pub struct FlowStore {
+pub struct FlowRepository {
     database: Database,
 }
 
-impl FlowStore {
+impl FlowRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
 
-    pub async fn list(&self) -> Result<Vec<StoredFlow>, FlowStoreError> {
+    pub async fn list(&self) -> Result<Vec<StoredFlow>, FlowRepositoryError> {
         self.database
             .call(|conn| {
                 let mut statement =
@@ -24,7 +24,7 @@ impl FlowStore {
             .await
     }
 
-    pub async fn by_id(&self, id: &str) -> Result<Option<StoredFlow>, FlowStoreError> {
+    pub async fn by_id(&self, id: &str) -> Result<Option<StoredFlow>, FlowRepositoryError> {
         let id = id.to_string();
         self.database
             .call(|conn| {
@@ -40,7 +40,7 @@ impl FlowStore {
             .await
     }
 
-    pub async fn insert(&self, id: &str, document: serde_json::Value) -> Result<u64, InsertError> {
+    pub async fn insert(&self, id: &str, document: serde_json::Value) -> Result<u64, FlowInsertError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -55,7 +55,7 @@ impl FlowStore {
                     #[rustfmt::skip]
                     Err(rusqlite::Error::SqliteFailure(err, _)) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY =>
                     {
-                        Err(InsertError::AlreadyExists)
+                        Err(FlowInsertError::AlreadyExists)
                     }
                     Err(err) => Err(err.into()),
                 }
@@ -63,7 +63,12 @@ impl FlowStore {
             .await
     }
 
-    pub async fn update(&self, id: &str, base_revision: u64, document: serde_json::Value) -> Result<u64, UpdateError> {
+    pub async fn update(
+        &self,
+        id: &str,
+        base_revision: u64,
+        document: serde_json::Value,
+    ) -> Result<u64, FlowUpdateError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -87,16 +92,17 @@ impl FlowStore {
                     .query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(UpdateError::NotFound),
-                    Some(current) => {
-                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
+                    None => Err(FlowUpdateError::NotFound),
+                    Some(current) => Err(FlowUpdateError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
                 }
             })
             .await
     }
 
-    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), FlowDeleteError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -111,10 +117,11 @@ impl FlowStore {
                     .query_row("SELECT revision FROM flows WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    Some(current) => {
-                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
-                    None => Err(DeleteError::NotFound),
+                    Some(current) => Err(FlowDeleteError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
+                    None => Err(FlowDeleteError::NotFound),
                 }
             })
             .await
@@ -154,12 +161,12 @@ fn row_to_stored_flow(row: &Row) -> rusqlite::Result<StoredFlow> {
     Ok(StoredFlow { id, revision, document, created_at, updated_at })
 }
 
-fn to_revision(revision: i64) -> Result<u64, FlowStoreError> {
-    u64::try_from(revision).map_err(|_| FlowStoreError::InvalidRevision(revision))
+fn to_revision(revision: i64) -> Result<u64, FlowRepositoryError> {
+    u64::try_from(revision).map_err(|_| FlowRepositoryError::InvalidRevision(revision))
 }
 
 #[derive(Error, Debug)]
-pub enum FlowStoreError {
+pub enum FlowRepositoryError {
     #[error(transparent)]
     Database(#[from] DatabaseError),
     #[error("SQLite error: {0}")]
@@ -169,28 +176,28 @@ pub enum FlowStoreError {
 }
 
 #[derive(Error, Debug)]
-pub enum InsertError {
+pub enum FlowInsertError {
     #[error("flow already exists")]
     AlreadyExists,
     #[error(transparent)]
-    Store(#[from] FlowStoreError),
+    Repository(#[from] FlowRepositoryError),
 }
 
-// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `FlowStoreError` on their own
-impl From<DatabaseError> for InsertError {
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `FlowRepositoryError` on their own
+impl From<DatabaseError> for FlowInsertError {
     fn from(err: DatabaseError) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for InsertError {
+impl From<rusqlite::Error> for FlowInsertError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum UpdateError {
+pub enum FlowUpdateError {
     #[error("flow not found")]
     NotFound,
     #[error(
@@ -198,24 +205,24 @@ pub enum UpdateError {
     )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
     #[error(transparent)]
-    Store(#[from] FlowStoreError),
+    Repository(#[from] FlowRepositoryError),
 }
 
-// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `FlowStoreError` on their own
-impl From<DatabaseError> for UpdateError {
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `FlowRepositoryError` on their own
+impl From<DatabaseError> for FlowUpdateError {
     fn from(err: DatabaseError) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for UpdateError {
+impl From<rusqlite::Error> for FlowUpdateError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum DeleteError {
+pub enum FlowDeleteError {
     #[error("flow not found")]
     NotFound,
     #[error(
@@ -223,19 +230,19 @@ pub enum DeleteError {
     )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
     #[error(transparent)]
-    Store(#[from] FlowStoreError),
+    Repository(#[from] FlowRepositoryError),
 }
 
-// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `FlowStoreError` on their own
-impl From<DatabaseError> for DeleteError {
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `FlowRepositoryError` on their own
+impl From<DatabaseError> for FlowDeleteError {
     fn from(err: DatabaseError) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for DeleteError {
+impl From<rusqlite::Error> for FlowDeleteError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
@@ -250,15 +257,21 @@ mod tests {
         json!({"id":"flow","name":"Test","nodes":[{"id":"startNode","type":"startNode","outgoingNode":"endNode"},{"id":"endNode","type":"endNode"}]})
     }
 
-    fn open_in_memory() -> FlowStore {
+    fn open_in_memory() -> FlowRepository {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
-        FlowStore::new(database)
+        FlowRepository::new(database)
     }
 
-    // Bypasses the store to write rows that `insert` would never produce
-    async fn insert_row(store: &FlowStore, id: &str, revision: i64, document: &str, updated_at: Option<String>) {
+    // Bypasses the repository to write rows that `insert` would never produce
+    async fn insert_row(
+        repository: &FlowRepository,
+        id: &str,
+        revision: i64,
+        document: &str,
+        updated_at: Option<String>,
+    ) {
         let (id, document) = (id.to_string(), document.to_string());
-        store
+        repository
             .database
             .call(move |conn| {
                 let now = Utc::now().to_rfc3339();
@@ -272,25 +285,30 @@ mod tests {
             .expect("insert row");
     }
 
-    // Bypasses the store to change rows in ways the store never would
-    async fn execute(store: &FlowStore, sql: &'static str) {
-        store.database.call(move |conn| conn.execute(sql, []).map_err(DatabaseError::from)).await.expect("execute");
+    // Bypasses the repository to change rows in ways the repository never would
+    async fn execute(repository: &FlowRepository, sql: &'static str) {
+        repository
+            .database
+            .call(move |conn| conn.execute(sql, []).map_err(DatabaseError::from))
+            .await
+            .expect("execute");
     }
 
     #[tokio::test]
     async fn list_returns_empty_for_fresh_database() {
-        let store = open_in_memory();
-        let rows = store.list().await.expect("list succeeded");
+        let repository = open_in_memory();
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 0);
     }
 
     #[tokio::test]
     async fn list_loads_a_valid_row_and_preserves_revision() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         let document = r#"{"id":"1d3a9341-e462-4663-bb3d-5d977053cc0f","name":"Test","nodes":[],"triggers":[]}"#;
-        insert_row(&store, "1d3a9341-e462-4663-bb3d-5d977053cc0f", 42, document, Some(Utc::now().to_rfc3339())).await;
+        insert_row(&repository, "1d3a9341-e462-4663-bb3d-5d977053cc0f", 42, document, Some(Utc::now().to_rfc3339()))
+            .await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "1d3a9341-e462-4663-bb3d-5d977053cc0f");
         assert_eq!(rows[0].revision, 42);
@@ -299,14 +317,14 @@ mod tests {
 
     #[tokio::test]
     async fn list_fails_on_a_document_that_is_not_json() {
-        let store = open_in_memory();
-        insert_row(&store, "badFlow", 1, "not valid json", Some(Utc::now().to_rfc3339())).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "badFlow", 1, "not valid json", Some(Utc::now().to_rfc3339())).await;
 
-        let result = store.list().await;
+        let result = repository.list().await;
 
         // Invalid JSON means the database is corrupt
         assert!(
-            matches!(result, Err(FlowStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(2, _, _)))),
+            matches!(result, Err(FlowRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(2, _, _)))),
             "got {result:?}"
         );
     }
@@ -316,26 +334,26 @@ mod tests {
     #[case::updated_at("UPDATE flows SET updated_at = 'yesterday'", 4)]
     #[tokio::test]
     async fn list_fails_on_an_invalid_timestamp(#[case] sql: &'static str, #[case] column: usize) {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
-        execute(&store, sql).await;
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
+        execute(&repository, sql).await;
 
-        let result = store.list().await;
+        let result = repository.list().await;
 
         assert!(
-            matches!(result, Err(FlowStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
+            matches!(result, Err(FlowRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
             "got {result:?}"
         );
     }
 
     #[tokio::test]
     async fn list_orders_the_flows_by_id() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         for id in ["b", "c", "a"] {
-            store.insert(id, flow_document()).await.expect("insert");
+            repository.insert(id, flow_document()).await.expect("insert");
         }
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         let ids: Vec<_> = rows.iter().map(|row| row.id.as_str()).collect();
         assert_eq!(ids, ["a", "b", "c"]);
@@ -343,35 +361,35 @@ mod tests {
 
     #[tokio::test]
     async fn list_handles_null_updated_at() {
-        let store = open_in_memory();
-        insert_row(&store, "flow", 0, r#"{"id":"flow","name":"Test","nodes":[]}"#, None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "flow", 0, r#"{"id":"flow","name":"Test","nodes":[]}"#, None).await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].updated_at, None);
     }
 
     #[tokio::test]
     async fn list_rejects_invalid_revision_i64() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         let document = r#"{"id":"flow","name":"Test","nodes":[]}"#;
         // A negative revision, which u64::try_from will reject
-        insert_row(&store, "flow", -1, document, Some(Utc::now().to_rfc3339())).await;
+        insert_row(&repository, "flow", -1, document, Some(Utc::now().to_rfc3339())).await;
 
-        let result = store.list().await;
+        let result = repository.list().await;
 
-        let Err(FlowStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(1, _, err))) = &result else {
+        let Err(FlowRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(1, _, err))) = &result else {
             panic!("got {result:?}");
         };
-        assert!(matches!(err.downcast_ref(), Some(FlowStoreError::InvalidRevision(-1))), "got {err:?}");
+        assert!(matches!(err.downcast_ref(), Some(FlowRepositoryError::InvalidRevision(-1))), "got {err:?}");
     }
 
     #[tokio::test]
     async fn by_id_returns_the_stored_flow() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
 
-        let stored_flow = store.by_id("flow").await.expect("by_id succeeded").expect("flow exists");
+        let stored_flow = repository.by_id("flow").await.expect("by_id succeeded").expect("flow exists");
 
         assert_eq!(stored_flow.id, "flow");
         assert_eq!(stored_flow.revision, 0);
@@ -380,35 +398,35 @@ mod tests {
 
     #[tokio::test]
     async fn by_id_fails_on_a_document_that_is_not_json() {
-        let store = open_in_memory();
-        insert_row(&store, "badFlow", 1, "not valid json", Some(Utc::now().to_rfc3339())).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "badFlow", 1, "not valid json", Some(Utc::now().to_rfc3339())).await;
 
-        let result = store.by_id("badFlow").await;
+        let result = repository.by_id("badFlow").await;
 
         assert!(
-            matches!(result, Err(FlowStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(2, _, _)))),
+            matches!(result, Err(FlowRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(2, _, _)))),
             "got {result:?}"
         );
     }
 
     #[tokio::test]
     async fn by_id_returns_none_for_an_unknown_flow() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
 
-        let result = store.by_id("flow").await.expect("by_id succeeded");
+        let result = repository.by_id("flow").await.expect("by_id succeeded");
 
         assert!(result.is_none(), "got {result:?}");
     }
 
     #[tokio::test]
     async fn insert_stores_a_new_flow_at_revision_0() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         let updated_document = json!({"id": "flow", "name": "Updated", "nodes": []});
 
-        let revision = store.insert("flow", updated_document.clone()).await.expect("insert succeeded");
+        let revision = repository.insert("flow", updated_document.clone()).await.expect("insert succeeded");
 
         assert_eq!(revision, 0);
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "flow");
         assert_eq!(rows[0].revision, 0);
@@ -417,137 +435,140 @@ mod tests {
 
     #[tokio::test]
     async fn insert_returns_already_exists_for_a_duplicate_id() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("first insert");
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("first insert");
 
-        let result = store.insert("flow", flow_document()).await;
+        let result = repository.insert("flow", flow_document()).await;
 
-        assert!(matches!(result, Err(InsertError::AlreadyExists)), "got {result:?}");
+        assert!(matches!(result, Err(FlowInsertError::AlreadyExists)), "got {result:?}");
     }
 
     #[tokio::test]
     async fn update_bumps_the_revision_when_the_base_revision_matches() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
 
-        let revision = store.update("flow", 0, flow_document()).await.expect("update succeeded");
+        let revision = repository.update("flow", 0, flow_document()).await.expect("update succeeded");
 
         assert_eq!(revision, 1);
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows[0].revision, 1);
     }
 
     #[tokio::test]
     async fn update_keeps_created_at_and_changes_updated_at() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
-        execute(&store, "UPDATE flows SET created_at = '2000-01-01T00:00:00Z', updated_at = '2000-01-01T00:00:00Z'")
-            .await;
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
+        execute(
+            &repository,
+            "UPDATE flows SET created_at = '2000-01-01T00:00:00Z', updated_at = '2000-01-01T00:00:00Z'",
+        )
+        .await;
         let long_ago = DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
 
-        store.update("flow", 0, flow_document()).await.expect("update succeeded");
+        repository.update("flow", 0, flow_document()).await.expect("update succeeded");
 
-        let stored_flow = store.by_id("flow").await.unwrap().expect("flow exists");
+        let stored_flow = repository.by_id("flow").await.unwrap().expect("flow exists");
         assert_eq!(stored_flow.created_at, long_ago);
         assert!(stored_flow.updated_at.is_some_and(|updated_at| updated_at > long_ago), "got {stored_flow:?}");
     }
 
     #[tokio::test]
     async fn update_returns_revision_conflict_for_a_stale_base_revision() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
-        store.update("flow", 0, flow_document()).await.expect("first update");
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
+        repository.update("flow", 0, flow_document()).await.expect("first update");
 
-        let result = store.update("flow", 0, flow_document()).await;
+        let result = repository.update("flow", 0, flow_document()).await;
 
         assert!(
-            matches!(result, Err(UpdateError::RevisionConflict { base_revision: 0, current_revision: 1 })),
+            matches!(result, Err(FlowUpdateError::RevisionConflict { base_revision: 0, current_revision: 1 })),
             "got {result:?}"
         );
-        assert_eq!(store.list().await.unwrap()[0].revision, 1, "revision must be unchanged");
+        assert_eq!(repository.list().await.unwrap()[0].revision, 1, "revision must be unchanged");
     }
 
     #[tokio::test]
     async fn update_returns_revision_conflict_for_a_future_base_revision() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
 
-        let result = store.update("flow", 7, flow_document()).await;
+        let result = repository.update("flow", 7, flow_document()).await;
 
         assert!(
-            matches!(result, Err(UpdateError::RevisionConflict { base_revision: 7, current_revision: 0 })),
+            matches!(result, Err(FlowUpdateError::RevisionConflict { base_revision: 7, current_revision: 0 })),
             "got {result:?}"
         );
     }
 
     #[tokio::test]
     async fn update_returns_not_found_for_an_unknown_flow() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
 
-        let result = store.update("flow", 0, flow_document()).await;
+        let result = repository.update("flow", 0, flow_document()).await;
 
-        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
-        assert!(store.list().await.unwrap().is_empty(), "update must not insert");
+        assert!(matches!(result, Err(FlowUpdateError::NotFound)), "got {result:?}");
+        assert!(repository.list().await.unwrap().is_empty(), "update must not insert");
     }
 
     #[tokio::test]
     async fn delete_removes_the_flow_when_the_base_revision_matches() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
-        store.update("flow", 0, flow_document()).await.expect("update");
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
+        repository.update("flow", 0, flow_document()).await.expect("update");
 
-        store.delete("flow", 1).await.expect("delete succeeded");
+        repository.delete("flow", 1).await.expect("delete succeeded");
 
-        assert!(store.by_id("flow").await.unwrap().is_none(), "flow must be deleted");
+        assert!(repository.by_id("flow").await.unwrap().is_none(), "flow must be deleted");
     }
 
     #[tokio::test]
     async fn delete_returns_revision_conflict_for_a_stale_base_revision() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
-        store.update("flow", 0, flow_document()).await.expect("update");
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
+        repository.update("flow", 0, flow_document()).await.expect("update");
 
-        let result = store.delete("flow", 0).await;
+        let result = repository.delete("flow", 0).await;
 
         assert!(
-            matches!(result, Err(DeleteError::RevisionConflict { base_revision: 0, current_revision: 1 })),
+            matches!(result, Err(FlowDeleteError::RevisionConflict { base_revision: 0, current_revision: 1 })),
             "got {result:?}"
         );
-        assert!(store.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
+        assert!(repository.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
     }
 
     #[tokio::test]
     async fn delete_returns_revision_conflict_for_a_future_base_revision() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
 
-        let result = store.delete("flow", 7).await;
+        let result = repository.delete("flow", 7).await;
 
         assert!(
-            matches!(result, Err(DeleteError::RevisionConflict { base_revision: 7, current_revision: 0 })),
+            matches!(result, Err(FlowDeleteError::RevisionConflict { base_revision: 7, current_revision: 0 })),
             "got {result:?}"
         );
-        assert!(store.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
+        assert!(repository.by_id("flow").await.unwrap().is_some(), "flow must not be deleted");
     }
 
     #[tokio::test]
     async fn delete_returns_not_found_for_an_unknown_flow() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
 
-        let result = store.delete("flow", 0).await;
+        let result = repository.delete("flow", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
+        assert!(matches!(result, Err(FlowDeleteError::NotFound)), "got {result:?}");
     }
 
     #[tokio::test]
     async fn delete_only_removes_the_given_flow() {
-        let store = open_in_memory();
-        store.insert("flow", flow_document()).await.expect("insert");
-        store.insert("other", flow_document()).await.expect("insert");
+        let repository = open_in_memory();
+        repository.insert("flow", flow_document()).await.expect("insert");
+        repository.insert("other", flow_document()).await.expect("insert");
 
-        store.delete("flow", 0).await.expect("delete succeeded");
+        repository.delete("flow", 0).await.expect("delete succeeded");
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "other");
     }

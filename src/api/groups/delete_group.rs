@@ -1,6 +1,6 @@
 use crate::api::ApiState;
 use crate::api::error::{ErrorResponse, InUseErrorResponse};
-use crate::group_service::DeleteGroupError;
+use crate::services::DeleteGroupError;
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
@@ -51,7 +51,7 @@ fn delete_error_response(err: DeleteGroupError) -> Response {
             (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("storeUnavailable"))).into_response()
         }
         DeleteGroupError::Internal(_) => {
-            error!("❌ Failed to persist group to store: {err}");
+            error!("❌ Failed to persist group to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -66,7 +66,7 @@ mod tests {
     use crate::domain::{Event, Group, Owner};
     use crate::flow_engine::VersionedFlow;
     use crate::flow_registry::{FlowRegistry, FlowSummary};
-    use crate::group_store::{GroupStore, StoredGroup};
+    use crate::repositories::{GroupRepository, StoredGroup};
     use crate::store::StoreSnapshot;
     use crate::test_support::flow_using_groups;
     use axum::body::Body;
@@ -107,9 +107,9 @@ mod tests {
         let (store_tx, store_rx) = mpsc::channel(8);
         let (state, database) = create_state_with_flows(FlowRegistry::new(flows), snapshot, store_tx);
 
-        let group_store = GroupStore::new(database.clone());
+        let group_repository = GroupRepository::new(database.clone());
         for group in groups.iter().filter(|group| group.owner == Owner::Hearth) {
-            group_store.insert(&group.id, &group.name, &group.device_ids).await.expect("insert succeeded");
+            group_repository.insert(&group.id, &group.name, &group.device_ids).await.expect("insert succeeded");
         }
         Fixture { state, database, store_rx }
     }
@@ -125,7 +125,7 @@ mod tests {
     }
 
     async fn stored_groups(database: Database) -> Vec<StoredGroup> {
-        GroupStore::new(database).list().await.expect("list succeeded")
+        GroupRepository::new(database).list().await.expect("list succeeded")
     }
 
     #[tokio::test]

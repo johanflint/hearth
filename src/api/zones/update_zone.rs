@@ -2,7 +2,7 @@ use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
 use crate::api::parse_request::parse_request;
 use crate::api::zones::zone_view::ZoneView;
-use crate::zone_service::UpdateZoneError;
+use crate::services::UpdateZoneError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -67,7 +67,7 @@ fn update_error_response(err: UpdateZoneError) -> Response {
             (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("storeUnavailable"))).into_response()
         }
         UpdateZoneError::Internal(_) => {
-            error!("❌ Failed to persist zone to store: {err}");
+            error!("❌ Failed to persist zone to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -80,9 +80,9 @@ mod tests {
     use crate::api::zones::router;
     use crate::database::{Database, DatabaseError};
     use crate::domain::{Event, Group, Owner, Zone};
+    use crate::repositories::{StoredZone, ZoneRepository};
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
-    use crate::zone_store::{StoredZone, ZoneStore};
     use axum::body::Body;
     use axum::http::Request;
     use serde_json::json;
@@ -152,7 +152,7 @@ mod tests {
         let snapshot = StoreSnapshot { devices: Arc::new(devices), groups: Arc::new(groups), zones: Arc::new(zones) };
         let (store_tx, store_rx) = mpsc::channel(8);
         let (state, database) = create_state_with_store_tx(snapshot, store_tx);
-        ZoneStore::new(database.clone())
+        ZoneRepository::new(database.clone())
             .insert("downstairs", "Downstairs", &set(&["g"]), &set(&["a"]))
             .await
             .expect("insert succeeded");
@@ -176,7 +176,7 @@ mod tests {
     }
 
     async fn stored_zones(database: Database) -> Vec<StoredZone> {
-        ZoneStore::new(database).list().await.expect("list succeeded")
+        ZoneRepository::new(database).list().await.expect("list succeeded")
     }
 
     async fn assert_unchanged(database: Database) {
@@ -291,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn update_zone_returns_409_conflict_for_a_name_in_use_ignoring_case() {
         let Fixture { state, database, mut store_rx } = create_state(&["a"]).await;
-        ZoneStore::new(database.clone()).insert("upstairs", "Upstairs", &set(&["g"]), &set(&[])).await.unwrap();
+        ZoneRepository::new(database.clone()).insert("upstairs", "Upstairs", &set(&["g"]), &set(&[])).await.unwrap();
 
         let response = call_update_zone(
             state,

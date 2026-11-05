@@ -4,16 +4,16 @@ use rusqlite::{OptionalExtension, Row, params};
 use thiserror::Error;
 
 #[derive(Debug)]
-pub struct PresetStore {
+pub struct PresetRepository {
     database: Database,
 }
 
-impl PresetStore {
+impl PresetRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
 
-    pub async fn list(&self) -> Result<Vec<StoredPreset>, PresetStoreError> {
+    pub async fn list(&self) -> Result<Vec<StoredPreset>, PresetRepositoryError> {
         self.database
             .call(|conn| {
                 let mut statement =
@@ -24,7 +24,7 @@ impl PresetStore {
             .await
     }
 
-    pub async fn by_id(&self, id: &str) -> Result<Option<StoredPreset>, PresetStoreError> {
+    pub async fn by_id(&self, id: &str) -> Result<Option<StoredPreset>, PresetRepositoryError> {
         let id = id.to_string();
         self.database
             .call(|conn| {
@@ -40,7 +40,12 @@ impl PresetStore {
             .await
     }
 
-    pub async fn insert(&self, id: &str, name: &str, value: serde_json::Value) -> Result<StoredPreset, InsertError> {
+    pub async fn insert(
+        &self,
+        id: &str,
+        name: &str,
+        value: serde_json::Value,
+    ) -> Result<StoredPreset, PresetInsertError> {
         let id = id.to_string();
         let name = name.to_string();
         self.database
@@ -54,7 +59,9 @@ impl PresetStore {
                         params![id, name, value, now],
                         row_to_stored_preset,
                     )
-                    .map_err(|err| if is_name_conflict(&err) { InsertError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(
+                        |err| if is_name_conflict(&err) { PresetInsertError::NameAlreadyExists } else { err.into() },
+                    )?;
                 Ok(stored)
             })
             .await
@@ -66,7 +73,7 @@ impl PresetStore {
         base_revision: u64,
         name: &str,
         value: serde_json::Value,
-    ) -> Result<StoredPreset, UpdateError> {
+    ) -> Result<StoredPreset, PresetUpdateError> {
         let id = id.to_string();
         let name = name.to_string();
         self.database
@@ -81,7 +88,9 @@ impl PresetStore {
                         row_to_stored_preset,
                     )
                     .optional()
-                    .map_err(|err| if is_name_conflict(&err) { UpdateError::NameAlreadyExists } else { err.into() })?;
+                    .map_err(
+                        |err| if is_name_conflict(&err) { PresetUpdateError::NameAlreadyExists } else { err.into() },
+                    )?;
 
                 if let Some(updated) = updated {
                     return Ok(updated);
@@ -92,16 +101,17 @@ impl PresetStore {
                     .query_row("SELECT revision FROM presets WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    None => Err(UpdateError::NotFound),
-                    Some(current) => {
-                        Err(UpdateError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
+                    None => Err(PresetUpdateError::NotFound),
+                    Some(current) => Err(PresetUpdateError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
                 }
             })
             .await
     }
 
-    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), DeleteError> {
+    pub async fn delete(&self, id: &str, base_revision: u64) -> Result<(), PresetDeleteError> {
         let id = id.to_string();
         self.database
             .call(move |conn| {
@@ -118,10 +128,11 @@ impl PresetStore {
                     .query_row("SELECT revision FROM presets WHERE id = ?1", params![id], |row| row.get(0))
                     .optional()?;
                 match current {
-                    Some(current) => {
-                        Err(DeleteError::RevisionConflict { base_revision, current_revision: to_revision(current)? })
-                    }
-                    None => Err(DeleteError::NotFound),
+                    Some(current) => Err(PresetDeleteError::RevisionConflict {
+                        base_revision,
+                        current_revision: to_revision(current)?,
+                    }),
+                    None => Err(PresetDeleteError::NotFound),
                 }
             })
             .await
@@ -156,8 +167,8 @@ fn is_name_conflict(err: &rusqlite::Error) -> bool {
     matches!(err, rusqlite::Error::SqliteFailure(err, _) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE)
 }
 
-fn to_revision(revision: i64) -> Result<u64, PresetStoreError> {
-    u64::try_from(revision).map_err(|_| PresetStoreError::InvalidRevision(revision))
+fn to_revision(revision: i64) -> Result<u64, PresetRepositoryError> {
+    u64::try_from(revision).map_err(|_| PresetRepositoryError::InvalidRevision(revision))
 }
 
 #[derive(Debug)]
@@ -171,7 +182,7 @@ pub struct StoredPreset {
 }
 
 #[derive(Error, Debug)]
-pub enum PresetStoreError {
+pub enum PresetRepositoryError {
     #[error(transparent)]
     Database(#[from] DatabaseError),
     #[error("SQLite error: {0}")]
@@ -181,28 +192,28 @@ pub enum PresetStoreError {
 }
 
 #[derive(Error, Debug)]
-pub enum InsertError {
+pub enum PresetInsertError {
     #[error("a preset with this name already exists")]
     NameAlreadyExists,
     #[error(transparent)]
-    Store(#[from] PresetStoreError),
+    Repository(#[from] PresetRepositoryError),
 }
 
-// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `PresetStoreError` on their own
-impl From<DatabaseError> for InsertError {
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `PresetRepositoryError` on their own
+impl From<DatabaseError> for PresetInsertError {
     fn from(err: DatabaseError) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for InsertError {
+impl From<rusqlite::Error> for PresetInsertError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum UpdateError {
+pub enum PresetUpdateError {
     #[error("preset not found")]
     NotFound,
     #[error(
@@ -212,24 +223,24 @@ pub enum UpdateError {
     #[error("a preset with this name already exists")]
     NameAlreadyExists,
     #[error(transparent)]
-    Store(#[from] PresetStoreError),
+    Repository(#[from] PresetRepositoryError),
 }
 
-// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `PresetStoreError` on their own
-impl From<DatabaseError> for UpdateError {
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `PresetRepositoryError` on their own
+impl From<DatabaseError> for PresetUpdateError {
     fn from(err: DatabaseError) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for UpdateError {
+impl From<rusqlite::Error> for PresetUpdateError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
 #[derive(Error, Debug)]
-pub enum DeleteError {
+pub enum PresetDeleteError {
     #[error("preset not found")]
     NotFound,
     #[error(
@@ -237,19 +248,19 @@ pub enum DeleteError {
     )]
     RevisionConflict { base_revision: u64, current_revision: u64 },
     #[error(transparent)]
-    Store(#[from] PresetStoreError),
+    Repository(#[from] PresetRepositoryError),
 }
 
-// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Store` via `PresetStoreError` on their own
-impl From<DatabaseError> for DeleteError {
+// `?` applies a single `From`, so `DatabaseError` and `rusqlite::Error` can't reach `Repository` via `PresetRepositoryError` on their own
+impl From<DatabaseError> for PresetDeleteError {
     fn from(err: DatabaseError) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
-impl From<rusqlite::Error> for DeleteError {
+impl From<rusqlite::Error> for PresetDeleteError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.into())
+        Self::Repository(err.into())
     }
 }
 
@@ -261,15 +272,15 @@ mod tests {
     use serde_json::json;
     use std::path::Path;
 
-    fn open_in_memory() -> PresetStore {
+    fn open_in_memory() -> PresetRepository {
         let database = Database::open(Path::new(":memory:")).expect("failed to open in-memory database");
-        PresetStore::new(database)
+        PresetRepository::new(database)
     }
 
-    // Bypasses the store to write rows directly
-    async fn insert_row(store: &PresetStore, id: &str, name: &str, value: &str, updated_at: Option<String>) {
+    // Bypasses the repository to write rows directly
+    async fn insert_row(repository: &PresetRepository, id: &str, name: &str, value: &str, updated_at: Option<String>) {
         let (id, name, value) = (id.to_string(), name.to_string(), value.to_string());
-        store
+        repository
             .database
             .call(move |conn| {
                 let now = Utc::now().to_rfc3339();
@@ -283,25 +294,29 @@ mod tests {
             .expect("insert row");
     }
 
-    // Bypasses the store to change rows in ways the store never would
-    async fn execute(store: &PresetStore, sql: &'static str) {
-        store.database.call(move |conn| conn.execute(sql, []).map_err(DatabaseError::from)).await.expect("execute");
+    // Bypasses the repository to change rows in ways the repository never would
+    async fn execute(repository: &PresetRepository, sql: &'static str) {
+        repository
+            .database
+            .call(move |conn| conn.execute(sql, []).map_err(DatabaseError::from))
+            .await
+            .expect("execute");
     }
 
     #[tokio::test]
     async fn list_returns_empty_for_fresh_database() {
-        let store = open_in_memory();
-        let rows = store.list().await.expect("list succeeded");
+        let repository = open_in_memory();
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 0);
     }
 
     #[tokio::test]
     async fn list_loads_a_valid_row() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         let value = r##"{"type":"color","value":"#ff0000"}"##;
-        insert_row(&store, "preset", "Red", value, Some("2000-01-01T00:00:00Z".to_string())).await;
+        insert_row(&repository, "preset", "Red", value, Some("2000-01-01T00:00:00Z".to_string())).await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "preset");
@@ -313,25 +328,25 @@ mod tests {
 
     #[tokio::test]
     async fn list_loads_the_revision() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET revision = 7").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET revision = 7").await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         assert_eq!(rows[0].revision, 7);
     }
 
     #[tokio::test]
     async fn list_fails_on_a_value_that_is_not_json() {
-        let store = open_in_memory();
-        insert_row(&store, "badPreset", "Bad", "not valid json", Some(Utc::now().to_rfc3339())).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "badPreset", "Bad", "not valid json", Some(Utc::now().to_rfc3339())).await;
 
-        let result = store.list().await;
+        let result = repository.list().await;
 
         // Invalid JSON means the database is corrupt
         assert!(
-            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _)))),
+            matches!(result, Err(PresetRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _)))),
             "got {result:?}"
         );
     }
@@ -341,26 +356,26 @@ mod tests {
     #[case::updated_at("UPDATE presets SET updated_at = 'yesterday'", 5)]
     #[tokio::test]
     async fn list_fails_on_an_invalid_timestamp(#[case] sql: &'static str, #[case] column: usize) {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", Some(Utc::now().to_rfc3339())).await;
-        execute(&store, sql).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", Some(Utc::now().to_rfc3339())).await;
+        execute(&repository, sql).await;
 
-        let result = store.list().await;
+        let result = repository.list().await;
 
         assert!(
-            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
+            matches!(result, Err(PresetRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
             "got {result:?}"
         );
     }
 
     #[tokio::test]
     async fn list_orders_the_presets_by_id() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         for id in ["b", "c", "a"] {
-            insert_row(&store, id, id, "true", None).await;
+            insert_row(&repository, id, id, "true", None).await;
         }
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
 
         let ids: Vec<_> = rows.iter().map(|row| row.id.as_str()).collect();
         assert_eq!(ids, ["a", "b", "c"]);
@@ -368,22 +383,22 @@ mod tests {
 
     #[tokio::test]
     async fn list_handles_null_updated_at() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].updated_at, None);
     }
 
     #[tokio::test]
     async fn by_id_returns_the_requested_preset() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         let value = r##"{"type":"color","value":"#ff0000"}"##;
-        insert_row(&store, "other", "Other", "true", None).await;
-        insert_row(&store, "preset", "Red", value, Some("2000-01-01T00:00:00Z".to_string())).await;
+        insert_row(&repository, "other", "Other", "true", None).await;
+        insert_row(&repository, "preset", "Red", value, Some("2000-01-01T00:00:00Z".to_string())).await;
 
-        let row = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        let row = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
 
         assert_eq!(row.id, "preset");
         assert_eq!(row.name, "Red");
@@ -394,10 +409,10 @@ mod tests {
 
     #[tokio::test]
     async fn by_id_handles_null_updated_at() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
 
-        let row = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        let row = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
 
         assert_eq!(row.updated_at, None);
     }
@@ -407,25 +422,25 @@ mod tests {
     #[case::other_presets(&["other"])]
     #[tokio::test]
     async fn by_id_returns_none_for_an_unknown_id(#[case] existing_ids: &[&str]) {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         for id in existing_ids {
-            insert_row(&store, id, "Preset", "true", None).await;
+            insert_row(&repository, id, "Preset", "true", None).await;
         }
 
-        let row = store.by_id("preset").await.expect("by_id succeeded");
+        let row = repository.by_id("preset").await.expect("by_id succeeded");
 
         assert!(row.is_none(), "got {row:?}");
     }
 
     #[tokio::test]
     async fn by_id_fails_on_a_value_that_is_not_json() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Bad", "not valid json", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Bad", "not valid json", None).await;
 
-        let result = store.by_id("preset").await;
+        let result = repository.by_id("preset").await;
 
         assert!(
-            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _)))),
+            matches!(result, Err(PresetRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(3, _, _)))),
             "got {result:?}"
         );
     }
@@ -435,23 +450,23 @@ mod tests {
     #[case::updated_at("UPDATE presets SET updated_at = 'yesterday'", 5)]
     #[tokio::test]
     async fn by_id_fails_on_an_invalid_timestamp(#[case] sql: &'static str, #[case] column: usize) {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", Some(Utc::now().to_rfc3339())).await;
-        execute(&store, sql).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", Some(Utc::now().to_rfc3339())).await;
+        execute(&repository, sql).await;
 
-        let result = store.by_id("preset").await;
+        let result = repository.by_id("preset").await;
 
         assert!(
-            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
+            matches!(result, Err(PresetRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(index, _, _))) if index == column),
             "got {result:?}"
         );
     }
 
     #[tokio::test]
     async fn insert_returns_the_stored_preset_at_revision_zero() {
-        let store = open_in_memory();
+        let repository = open_in_memory();
 
-        let inserted = store.insert("preset", "Red", json!({ "type": "color", "value": "#ff0000" })).await;
+        let inserted = repository.insert("preset", "Red", json!({ "type": "color", "value": "#ff0000" })).await;
 
         let inserted = inserted.expect("insert succeeded");
         assert_eq!(inserted.id, "preset");
@@ -463,19 +478,19 @@ mod tests {
 
     #[tokio::test]
     async fn insert_persists_the_preset_and_leaves_others_untouched() {
-        let store = open_in_memory();
-        insert_row(&store, "other", "Other", "10", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "other", "Other", "10", None).await;
 
-        store.insert("preset", "Red", json!(true)).await.expect("insert succeeded");
+        repository.insert("preset", "Red", json!(true)).await.expect("insert succeeded");
 
-        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        let stored = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(stored.name, "Red");
         assert_eq!(stored.value, json!(true));
         assert_eq!(stored.revision, 0);
-        let other = store.by_id("other").await.expect("by_id succeeded").expect("preset exists");
+        let other = repository.by_id("other").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(other.name, "Other");
         assert_eq!(other.value, json!(10));
-        assert_eq!(store.list().await.expect("list succeeded").len(), 2);
+        assert_eq!(repository.list().await.expect("list succeeded").len(), 2);
     }
 
     #[rstest]
@@ -483,26 +498,29 @@ mod tests {
     #[case::different_case("rED")]
     #[tokio::test]
     async fn insert_rejects_a_name_that_is_already_in_use(#[case] name: &str) {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
 
-        let result = store.insert("duplicate", name, json!(false)).await;
+        let result = repository.insert("duplicate", name, json!(false)).await;
 
-        assert!(matches!(result, Err(InsertError::NameAlreadyExists)), "got {result:?}");
-        let rows = store.list().await.expect("list succeeded");
+        assert!(matches!(result, Err(PresetInsertError::NameAlreadyExists)), "got {result:?}");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1, "nothing must be stored");
         assert_eq!(rows[0].value, json!(true));
     }
 
     #[tokio::test]
     async fn insert_fails_for_an_id_that_is_already_in_use() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
 
-        let result = store.insert("preset", "Blue", json!(false)).await;
+        let result = repository.insert("preset", "Blue", json!(false)).await;
 
-        assert!(matches!(result, Err(InsertError::Store(PresetStoreError::Sqlite(_)))), "got {result:?}");
-        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        assert!(
+            matches!(result, Err(PresetInsertError::Repository(PresetRepositoryError::Sqlite(_)))),
+            "got {result:?}"
+        );
+        let stored = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(stored.name, "Red");
     }
 
@@ -511,14 +529,14 @@ mod tests {
     #[case::different_case("oTHER")]
     #[tokio::test]
     async fn update_rejects_a_name_used_by_another_preset(#[case] name: &str) {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        insert_row(&store, "other", "Other", "10", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        insert_row(&repository, "other", "Other", "10", None).await;
 
-        let result = store.update("preset", 0, name, json!(false)).await;
+        let result = repository.update("preset", 0, name, json!(false)).await;
 
-        assert!(matches!(result, Err(UpdateError::NameAlreadyExists)), "got {result:?}");
-        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        assert!(matches!(result, Err(PresetUpdateError::NameAlreadyExists)), "got {result:?}");
+        let stored = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(stored.name, "Red", "the preset must be unchanged");
         assert_eq!(stored.value, json!(true));
         assert_eq!(stored.revision, 0);
@@ -529,10 +547,10 @@ mod tests {
     #[case::different_case("RED")]
     #[tokio::test]
     async fn update_allows_a_preset_to_keep_its_own_name(#[case] name: &str) {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
 
-        let updated = store.update("preset", 0, name, json!(false)).await.expect("update succeeded");
+        let updated = repository.update("preset", 0, name, json!(false)).await.expect("update succeeded");
 
         assert_eq!(updated.name, name);
         assert_eq!(updated.revision, 1);
@@ -540,42 +558,42 @@ mod tests {
 
     #[tokio::test]
     async fn update_replaces_the_name_and_value_and_returns_the_stored_preset() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
 
-        let updated = store.update("preset", 0, "Blue", json!({ "type": "color", "value": "#0000ff" })).await;
+        let updated = repository.update("preset", 0, "Blue", json!({ "type": "color", "value": "#0000ff" })).await;
 
         let updated = updated.expect("update succeeded");
         assert_eq!(updated.id, "preset");
         assert_eq!(updated.name, "Blue");
         assert_eq!(updated.value, json!({ "type": "color", "value": "#0000ff" }));
-        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        let stored = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(stored.name, "Blue");
         assert_eq!(stored.value, json!({ "type": "color", "value": "#0000ff" }));
     }
 
     #[tokio::test]
     async fn update_increments_the_revision() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
 
-        let first = store.update("preset", 0, "Red", json!(false)).await.expect("first update succeeded");
-        let second = store.update("preset", 1, "Red", json!(true)).await.expect("second update succeeded");
+        let first = repository.update("preset", 0, "Red", json!(false)).await.expect("first update succeeded");
+        let second = repository.update("preset", 1, "Red", json!(true)).await.expect("second update succeeded");
 
         assert_eq!(first.revision, 1);
         assert_eq!(second.revision, 2);
-        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        let stored = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(stored.revision, 2);
     }
 
     #[tokio::test]
     async fn update_sets_updated_at_and_keeps_created_at() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET created_at = '2000-01-01T00:00:00Z'").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET created_at = '2000-01-01T00:00:00Z'").await;
         let before = Utc::now();
 
-        let updated = store.update("preset", 0, "Red", json!(false)).await.expect("update succeeded");
+        let updated = repository.update("preset", 0, "Red", json!(false)).await.expect("update succeeded");
 
         let long_ago = DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
         assert_eq!(updated.created_at, long_ago);
@@ -584,13 +602,13 @@ mod tests {
 
     #[tokio::test]
     async fn update_leaves_other_presets_untouched() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        insert_row(&store, "other", "Other", "10", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        insert_row(&repository, "other", "Other", "10", None).await;
 
-        store.update("preset", 0, "Blue", json!(false)).await.expect("update succeeded");
+        repository.update("preset", 0, "Blue", json!(false)).await.expect("update succeeded");
 
-        let other = store.by_id("other").await.expect("by_id succeeded").expect("preset exists");
+        let other = repository.by_id("other").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(other.name, "Other");
         assert_eq!(other.value, json!(10));
         assert_eq!(other.revision, 0);
@@ -602,15 +620,18 @@ mod tests {
     #[case::other_presets(&["other"])]
     #[tokio::test]
     async fn update_returns_not_found_for_an_unknown_id(#[case] existing_ids: &[&str]) {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         for id in existing_ids {
-            insert_row(&store, id, "Preset", "true", None).await;
+            insert_row(&repository, id, "Preset", "true", None).await;
         }
 
-        let result = store.update("preset", 0, "Blue", json!(false)).await;
+        let result = repository.update("preset", 0, "Blue", json!(false)).await;
 
-        assert!(matches!(result, Err(UpdateError::NotFound)), "got {result:?}");
-        assert!(store.by_id("preset").await.expect("by_id succeeded").is_none(), "update must not create the preset");
+        assert!(matches!(result, Err(PresetUpdateError::NotFound)), "got {result:?}");
+        assert!(
+            repository.by_id("preset").await.expect("by_id succeeded").is_none(),
+            "update must not create the preset"
+        );
     }
 
     #[rstest]
@@ -621,21 +642,21 @@ mod tests {
         #[case] base_revision: u64,
         #[case] current_revision: u64,
     ) {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET revision = 2").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET revision = 2").await;
 
-        let result = store.update("preset", base_revision, "Blue", json!(false)).await;
+        let result = repository.update("preset", base_revision, "Blue", json!(false)).await;
 
         assert!(
             matches!(
                 result,
-                Err(UpdateError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(PresetUpdateError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
         );
-        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        let stored = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(stored.name, "Red", "a conflicting update must not change the preset");
         assert_eq!(stored.value, json!(true));
         assert_eq!(stored.revision, 2);
@@ -644,16 +665,18 @@ mod tests {
 
     #[tokio::test]
     async fn update_fails_when_the_stored_row_is_corrupt() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET created_at = 'yesterday'").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET created_at = 'yesterday'").await;
 
-        let result = store.update("preset", 0, "Blue", json!(false)).await;
+        let result = repository.update("preset", 0, "Blue", json!(false)).await;
 
         assert!(
             matches!(
                 result,
-                Err(UpdateError::Store(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(4, _, _))))
+                Err(PresetUpdateError::Repository(PresetRepositoryError::Sqlite(
+                    rusqlite::Error::FromSqlConversionFailure(4, _, _)
+                )))
             ),
             "got {result:?}"
         );
@@ -661,35 +684,38 @@ mod tests {
 
     #[tokio::test]
     async fn update_fails_when_the_stored_revision_is_negative() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET revision = -1").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET revision = -1").await;
 
-        let result = store.update("preset", 0, "Blue", json!(false)).await;
+        let result = repository.update("preset", 0, "Blue", json!(false)).await;
 
-        assert!(matches!(result, Err(UpdateError::Store(PresetStoreError::InvalidRevision(-1)))), "got {result:?}");
+        assert!(
+            matches!(result, Err(PresetUpdateError::Repository(PresetRepositoryError::InvalidRevision(-1)))),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
     async fn delete_removes_the_preset_when_the_base_revision_matches() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET revision = 3").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET revision = 3").await;
 
-        store.delete("preset", 3).await.expect("delete succeeded");
+        repository.delete("preset", 3).await.expect("delete succeeded");
 
-        assert!(store.by_id("preset").await.expect("by_id succeeded").is_none(), "preset must be deleted");
+        assert!(repository.by_id("preset").await.expect("by_id succeeded").is_none(), "preset must be deleted");
     }
 
     #[tokio::test]
     async fn delete_only_removes_the_given_preset() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        insert_row(&store, "other", "Other", "10", None).await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        insert_row(&repository, "other", "Other", "10", None).await;
 
-        store.delete("preset", 0).await.expect("delete succeeded");
+        repository.delete("preset", 0).await.expect("delete succeeded");
 
-        let rows = store.list().await.expect("list succeeded");
+        let rows = repository.list().await.expect("list succeeded");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "other");
         assert_eq!(rows[0].name, "Other");
@@ -703,21 +729,21 @@ mod tests {
         #[case] base_revision: u64,
         #[case] current_revision: u64,
     ) {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET revision = 2").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET revision = 2").await;
 
-        let result = store.delete("preset", base_revision).await;
+        let result = repository.delete("preset", base_revision).await;
 
         assert!(
             matches!(
                 result,
-                Err(DeleteError::RevisionConflict { base_revision: b, current_revision: c })
+                Err(PresetDeleteError::RevisionConflict { base_revision: b, current_revision: c })
                     if b == base_revision && c == current_revision
             ),
             "got {result:?}"
         );
-        let stored = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        let stored = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
         assert_eq!(stored.revision, 2, "the preset must not be deleted");
     }
 
@@ -726,59 +752,65 @@ mod tests {
     #[case::other_presets(&["other"])]
     #[tokio::test]
     async fn delete_returns_not_found_for_an_unknown_id(#[case] existing_ids: &[&str]) {
-        let store = open_in_memory();
+        let repository = open_in_memory();
         for id in existing_ids {
-            insert_row(&store, id, id, "true", None).await;
+            insert_row(&repository, id, id, "true", None).await;
         }
 
-        let result = store.delete("preset", 0).await;
+        let result = repository.delete("preset", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::NotFound)), "got {result:?}");
-        assert_eq!(store.list().await.expect("list succeeded").len(), existing_ids.len());
+        assert!(matches!(result, Err(PresetDeleteError::NotFound)), "got {result:?}");
+        assert_eq!(repository.list().await.expect("list succeeded").len(), existing_ids.len());
     }
 
     #[tokio::test]
     async fn delete_fails_when_the_stored_revision_is_negative() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET revision = -1").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET revision = -1").await;
 
-        let result = store.delete("preset", 0).await;
+        let result = repository.delete("preset", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::Store(PresetStoreError::InvalidRevision(-1)))), "got {result:?}");
+        assert!(
+            matches!(result, Err(PresetDeleteError::Repository(PresetRepositoryError::InvalidRevision(-1)))),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
-    async fn delete_fails_when_the_store_fails() {
-        let store = open_in_memory();
-        execute(&store, "DROP TABLE presets").await;
+    async fn delete_fails_when_the_repository_fails() {
+        let repository = open_in_memory();
+        execute(&repository, "DROP TABLE presets").await;
 
-        let result = store.delete("preset", 0).await;
+        let result = repository.delete("preset", 0).await;
 
-        assert!(matches!(result, Err(DeleteError::Store(PresetStoreError::Sqlite(_)))), "got {result:?}");
+        assert!(
+            matches!(result, Err(PresetDeleteError::Repository(PresetRepositoryError::Sqlite(_)))),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
     async fn list_fails_when_the_stored_revision_is_negative() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET revision = -1").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET revision = -1").await;
 
-        let result = store.list().await;
+        let result = repository.list().await;
 
         assert!(
-            matches!(result, Err(PresetStoreError::Sqlite(rusqlite::Error::FromSqlConversionFailure(1, _, _)))),
+            matches!(result, Err(PresetRepositoryError::Sqlite(rusqlite::Error::FromSqlConversionFailure(1, _, _)))),
             "got {result:?}"
         );
     }
 
     #[tokio::test]
     async fn by_id_loads_the_revision() {
-        let store = open_in_memory();
-        insert_row(&store, "preset", "Red", "true", None).await;
-        execute(&store, "UPDATE presets SET revision = 7").await;
+        let repository = open_in_memory();
+        insert_row(&repository, "preset", "Red", "true", None).await;
+        execute(&repository, "UPDATE presets SET revision = 7").await;
 
-        let row = store.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
+        let row = repository.by_id("preset").await.expect("by_id succeeded").expect("preset exists");
 
         assert_eq!(row.revision, 7);
     }

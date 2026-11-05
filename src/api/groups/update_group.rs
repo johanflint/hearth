@@ -2,7 +2,7 @@ use crate::api::ApiState;
 use crate::api::error::ErrorResponse;
 use crate::api::groups::group_view::GroupView;
 use crate::api::parse_request::parse_request;
-use crate::group_service::UpdateGroupError;
+use crate::services::UpdateGroupError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
@@ -62,7 +62,7 @@ fn update_error_response(err: UpdateGroupError) -> Response {
             (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("storeUnavailable"))).into_response()
         }
         UpdateGroupError::Internal(_) => {
-            error!("❌ Failed to persist group to store: {err}");
+            error!("❌ Failed to persist group to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -75,7 +75,7 @@ mod tests {
     use crate::api::test_support::{body_json, create_state_with_store_tx};
     use crate::database::{Database, DatabaseError};
     use crate::domain::{Event, Group, Owner};
-    use crate::group_store::{GroupStore, StoredGroup};
+    use crate::repositories::{GroupRepository, StoredGroup};
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
     use axum::body::Body;
@@ -126,7 +126,7 @@ mod tests {
         let snapshot = StoreSnapshot { devices: Arc::new(devices), groups: Arc::new(groups), ..Default::default() };
         let (store_tx, store_rx) = mpsc::channel(8);
         let (state, database) = create_state_with_store_tx(snapshot, store_tx);
-        GroupStore::new(database.clone())
+        GroupRepository::new(database.clone())
             .insert("kitchen", "Kitchen", &BTreeSet::from(["a".to_string()]))
             .await
             .expect("insert succeeded");
@@ -150,7 +150,7 @@ mod tests {
     }
 
     async fn stored_groups(database: Database) -> Vec<StoredGroup> {
-        GroupStore::new(database).list().await.expect("list succeeded")
+        GroupRepository::new(database).list().await.expect("list succeeded")
     }
 
     async fn assert_unchanged(database: Database) {
@@ -243,7 +243,7 @@ mod tests {
     #[tokio::test]
     async fn update_group_returns_409_conflict_for_a_name_in_use_ignoring_case() {
         let Fixture { state, database, mut store_rx } = create_state(&["a"]).await;
-        GroupStore::new(database.clone()).insert("hall", "Hall", &BTreeSet::new()).await.unwrap();
+        GroupRepository::new(database.clone()).insert("hall", "Hall", &BTreeSet::new()).await.unwrap();
 
         let response =
             call_update_group(state, "kitchen", r#"{"baseRevision":0,"name":"hALL","deviceIds":["a"]}"#).await;

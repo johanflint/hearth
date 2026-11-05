@@ -3,7 +3,7 @@ use crate::api::error::ErrorResponse;
 use crate::api::parse_request::{invalid_json, parse_request};
 use crate::api::presets::preset_response::PresetResponse;
 use crate::domain::Value;
-use crate::preset_service::CreatePresetError;
+use crate::services::CreatePresetError;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -35,7 +35,7 @@ fn create_error_response(err: CreatePresetError) -> Response {
         }
         CreatePresetError::UnsupportedValue(err) => invalid_json(err),
         CreatePresetError::Internal(err) => {
-            error!("❌ Failed to persist preset to store: {err}");
+            error!("❌ Failed to persist preset to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_preset_returns_a_storage_error_when_the_store_fails() {
+    async fn create_preset_returns_a_storage_error_when_the_repository_fails() {
         let (Fixture { state, .. }, database) = create_state_with_database(FlowRegistry::new(vec![]));
         database
             .call(|conn| conn.execute("DROP TABLE presets", []).map_err(DatabaseError::from))

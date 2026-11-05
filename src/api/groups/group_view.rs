@@ -1,6 +1,6 @@
 use crate::api::owner_view::OwnerView;
 use crate::domain::Group;
-use crate::group_store::StoredGroup;
+use crate::repositories::StoredGroup;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::sync::Arc;

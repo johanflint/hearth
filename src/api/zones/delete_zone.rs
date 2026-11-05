@@ -1,6 +1,6 @@
 use crate::api::ApiState;
 use crate::api::error::{ErrorResponse, InUseErrorResponse};
-use crate::zone_service::DeleteZoneError;
+use crate::services::DeleteZoneError;
 use axum::Json;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
@@ -51,7 +51,7 @@ fn delete_error_response(err: DeleteZoneError) -> Response {
             (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse::new_code_only("storeUnavailable"))).into_response()
         }
         DeleteZoneError::Internal(_) => {
-            error!("❌ Failed to persist zone to store: {err}");
+            error!("❌ Failed to persist zone to the repository: {err}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse::new_code_only("storageError"))).into_response()
         }
     }
@@ -66,9 +66,9 @@ mod tests {
     use crate::domain::{Event, Owner, Zone};
     use crate::flow_engine::VersionedFlow;
     use crate::flow_registry::{FlowRegistry, FlowSummary};
+    use crate::repositories::{StoredZone, ZoneRepository};
     use crate::store::StoreSnapshot;
     use crate::test_support::flow_using_zones;
-    use crate::zone_store::{StoredZone, ZoneStore};
     use axum::body::Body;
     use axum::http::Request;
     use rstest::rstest;
@@ -108,9 +108,12 @@ mod tests {
         let (store_tx, store_rx) = mpsc::channel(8);
         let (state, database) = create_state_with_flows(FlowRegistry::new(flows), snapshot, store_tx);
 
-        let zone_store = ZoneStore::new(database.clone());
+        let zone_repository = ZoneRepository::new(database.clone());
         for zone in zones.iter().filter(|zone| zone.owner == Owner::Hearth) {
-            zone_store.insert(&zone.id, &zone.name, &zone.group_ids, &zone.device_ids).await.expect("insert succeeded");
+            zone_repository
+                .insert(&zone.id, &zone.name, &zone.group_ids, &zone.device_ids)
+                .await
+                .expect("insert succeeded");
         }
         Fixture { state, database, store_rx }
     }
@@ -126,7 +129,7 @@ mod tests {
     }
 
     async fn stored_zones(database: Database) -> Vec<StoredZone> {
-        ZoneStore::new(database).list().await.expect("list succeeded")
+        ZoneRepository::new(database).list().await.expect("list succeeded")
     }
 
     #[tokio::test]
