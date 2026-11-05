@@ -6,7 +6,7 @@ rust-version = "1.90.0"
 
 [dependencies]
 rusqlite = { version = "0.40.1", features = ["bundled", "serde_json"] }
-reqwest = { version = "0.13", features = ["stream", "json"] }
+reqwest = { version = "0.13", features = ["stream", "json", "query"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 tokio-util = "0.7.19"
 tokio-retry = "0.3.0"

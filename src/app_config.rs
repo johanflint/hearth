@@ -8,6 +8,7 @@ pub struct AppConfig {
     core: Core,
     db: Db,
     hue: Hue,
+    shelly: Shelly,
     location: GeoLocation,
 }
 
@@ -35,6 +36,10 @@ impl AppConfig {
 
     pub fn hue(&self) -> &Hue {
         &self.hue
+    }
+
+    pub fn shelly(&self) -> &Shelly {
+        &self.shelly
     }
 
     pub fn geo_location(&self) -> &GeoLocation {
@@ -120,6 +125,22 @@ impl Hue {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Shelly {
+    client_connection_timeout_ms: u64,
+    client_request_timeout_ms: u64,
+}
+
+impl Shelly {
+    pub fn client_connection_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.client_connection_timeout_ms)
+    }
+
+    pub fn client_request_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.client_request_timeout_ms)
+    }
+}
+
 #[cfg(test)]
 pub struct AppConfigBuilder {
     config: AppConfig,
@@ -146,6 +167,7 @@ impl AppConfigBuilder {
                     send_timeout_ms: 100,
                     application_key: "key".to_string(),
                 },
+                shelly: Shelly { client_connection_timeout_ms: 100, client_request_timeout_ms: 100 },
                 location: GeoLocation { latitude: 51.8615899, longitude: 4.3580323, altitude: 0.0 },
             },
         }
