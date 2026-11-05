@@ -1,16 +1,25 @@
 use crate::app_config::AppConfig;
 use crate::hue::HueIntegration;
 use crate::integration::{Integration, IntegrationError};
+use crate::mdns_browser::DiscoveredServices;
+use crate::shelly::ShellyIntegration;
 use crate::store::StoreSnapshot;
 use std::sync::Arc;
 use tokio::sync::watch::Receiver as WatchReceiver;
-use tracing::info;
+use tracing::{info, warn};
 
 pub fn integrations(
     config: Arc<AppConfig>,
     store_rx: WatchReceiver<StoreSnapshot>,
+    mdns_rx: Option<WatchReceiver<DiscoveredServices>>,
 ) -> Result<Vec<Arc<dyn Integration>>, IntegrationError> {
-    Ok(vec![Arc::new(HueIntegration::new(config, store_rx)?)])
+    let mut integrations: Vec<Arc<dyn Integration>> = vec![Arc::new(HueIntegration::new(config.clone(), store_rx)?)];
+
+    match mdns_rx {
+        Some(mdns_rx) => integrations.push(Arc::new(ShellyIntegration::new(config, mdns_rx)?)),
+        None => warn!("⚠️ Shelly integration skipped: mDNS is unavailable"),
+    }
+    Ok(integrations)
 }
 
 pub fn enabled_only(integrations: Vec<Arc<dyn Integration>>) -> Vec<Arc<dyn Integration>> {

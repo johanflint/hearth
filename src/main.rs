@@ -48,6 +48,7 @@ mod property_changed_reducer;
 mod repositories;
 mod server;
 mod services;
+mod shelly;
 mod sse;
 mod store;
 mod store_listener;
@@ -69,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
 
-    let _mdns_browser = match MdnsBrowser::spawn(&["_shelly._tcp.local."]) {
+    let mdns_browser = match MdnsBrowser::spawn(&["_shelly._tcp.local."]) {
         Ok(browser) => {
             info!("✅  Started mdns browser");
             Some(browser)
@@ -148,7 +149,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     info!("✅  Initialized store");
 
-    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone)?);
+    let mdns_rx = mdns_browser.as_ref().map(MdnsBrowser::notifier);
+    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone, mdns_rx)?);
     for integration in &integrations {
         controller_registry::register(integration.controller());
     }
