@@ -28,6 +28,7 @@ chrono = { version = "0.4", features = ["serde"] }
 ordered-float = "5.1.0"
 humantime-serde = "1.1.1"
 sunrise = "3.0"
+mdns-sd = "0.21.7"
 
 # Webserver
 axum = "0.8"
@@ -39,6 +40,7 @@ serde_path_to_error = "0.1.20"
 
 [dev-dependencies]
 cargo-llvm-cov = "0.9"
+flume = "0.12"
 http-body-util = "0.1"
 mockito = "1.7"
 pretty_assertions = "1.4"

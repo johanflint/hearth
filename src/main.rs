@@ -7,6 +7,7 @@ use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::integration::Discovery;
 use crate::integration_list::{enabled_only, integrations};
+use crate::mdns_browser::MdnsBrowser;
 use crate::metrics_layer::MetricsLayer;
 use crate::preset_registry::PresetRegistry;
 use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
@@ -18,7 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::{signal, task};
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -38,6 +39,7 @@ mod geo_location_deserializer;
 mod hue;
 mod integration;
 mod integration_list;
+mod mdns_browser;
 mod metrics;
 mod metrics_layer;
 mod preset_loader;
@@ -66,6 +68,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
+
+    let _mdns_browser = match MdnsBrowser::spawn(&["_shelly._tcp.local."]) {
+        Ok(browser) => {
+            info!("✅  Started mdns browser");
+            Some(browser)
+        }
+        Err(err) => {
+            warn!("⚠️ mDNS unavailable: {err}");
+            None
+        }
+    };
 
     let database = Database::open(Path::new(config.db().file_name()))?;
     info!("✅  Started database");
