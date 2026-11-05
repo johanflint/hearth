@@ -7,6 +7,7 @@ use std::time::Duration;
 pub struct AppConfig {
     core: Core,
     db: Db,
+    mqtt: Mqtt,
     hue: Hue,
     shelly: Shelly,
     location: GeoLocation,
@@ -32,6 +33,10 @@ impl AppConfig {
 
     pub fn db(&self) -> &Db {
         &self.db
+    }
+
+    pub fn mqtt(&self) -> &Mqtt {
+        &self.mqtt
     }
 
     pub fn hue(&self) -> &Hue {
@@ -81,6 +86,37 @@ pub struct Db {
 impl Db {
     pub fn file_name(&self) -> &str {
         &self.file_name
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Mqtt {
+    enabled: bool,
+    host: String,
+    port: usize,
+    username: String,
+    password: String,
+}
+
+impl Mqtt {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn port(&self) -> usize {
+        self.port
+    }
+
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    pub fn password(&self) -> &str {
+        &self.password
     }
 }
 
@@ -158,6 +194,13 @@ impl AppConfigBuilder {
                     client_request_timeout_ms: 100,
                 },
                 db: Db { file_name: "hearth.db".to_string() },
+                mqtt: Mqtt {
+                    enabled: true,
+                    host: "127.0.0.1".to_string(),
+                    port: 1883,
+                    username: "hearth".to_string(),
+                    password: "p4ssY".to_string(),
+                },
                 hue: Hue {
                     enabled: true,
                     url: "https://hue.url/".to_string(),

@@ -33,6 +33,10 @@ mdns-sd = "0.21.7"
 # Webserver
 axum = "0.8"
 
+# MQTT
+rumqttc = "0.25.1"
+bytes = "1.12.1"
+
 # Action macros
 action_macros = { path = "action_macros" }
 ctor = "1.0"

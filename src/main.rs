@@ -9,6 +9,7 @@ use crate::integration::Discovery;
 use crate::integration_list::{enabled_only, integrations};
 use crate::mdns_browser::MdnsBrowser;
 use crate::metrics_layer::MetricsLayer;
+use crate::mqtt::MqttService;
 use crate::preset_registry::PresetRegistry;
 use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
 use crate::services::{FlowService, GroupService, PresetService, ZoneService};
@@ -42,6 +43,7 @@ mod integration_list;
 mod mdns_browser;
 mod metrics;
 mod metrics_layer;
+mod mqtt;
 mod preset_loader;
 mod preset_registry;
 mod property_changed_reducer;
@@ -79,6 +81,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             warn!("⚠️ mDNS unavailable: {err}");
             None
         }
+    };
+
+    let _mqtt_service = if config.mqtt().enabled() {
+        Some(MqttService::spawn(&config))
+    } else {
+        info!("⏭️  Skipping MQTT connection, disabled in config");
+        None
     };
 
     let database = Database::open(Path::new(config.db().file_name()))?;
