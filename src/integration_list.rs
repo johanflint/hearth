@@ -2,6 +2,7 @@ use crate::app_config::AppConfig;
 use crate::hue::HueIntegration;
 use crate::integration::{Integration, IntegrationError};
 use crate::mdns_browser::DiscoveredServices;
+use crate::mqtt::MqttService;
 use crate::shelly::ShellyIntegration;
 use crate::store::StoreSnapshot;
 use std::sync::Arc;
@@ -12,11 +13,13 @@ pub fn integrations(
     config: Arc<AppConfig>,
     store_rx: WatchReceiver<StoreSnapshot>,
     mdns_rx: Option<WatchReceiver<DiscoveredServices>>,
+    mqtt_service: Option<MqttService>,
 ) -> Result<Vec<Arc<dyn Integration>>, IntegrationError> {
-    let mut integrations: Vec<Arc<dyn Integration>> = vec![Arc::new(HueIntegration::new(config.clone(), store_rx)?)];
+    let mut integrations: Vec<Arc<dyn Integration>> =
+        vec![Arc::new(HueIntegration::new(config.clone(), store_rx.clone())?)];
 
     match mdns_rx {
-        Some(mdns_rx) => integrations.push(Arc::new(ShellyIntegration::new(config, mdns_rx)?)),
+        Some(mdns_rx) => integrations.push(Arc::new(ShellyIntegration::new(config, mdns_rx, mqtt_service, store_rx)?)),
         None => warn!("⚠️ Shelly integration skipped: mDNS is unavailable"),
     }
     Ok(integrations)

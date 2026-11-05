@@ -32,7 +32,7 @@ impl TryFrom<RawComponent> for Component {
 }
 
 // Switch
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize)]
 pub struct SwitchStatus {
     pub id: u32,
     pub output: bool,

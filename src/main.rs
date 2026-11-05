@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     };
 
-    let _mqtt_service = if config.mqtt().enabled() {
+    let mqtt_service = if config.mqtt().enabled() {
         Some(MqttService::spawn(&config))
     } else {
         info!("⏭️  Skipping MQTT connection, disabled in config");
@@ -159,7 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("✅  Initialized store");
 
     let mdns_rx = mdns_browser.as_ref().map(MdnsBrowser::notifier);
-    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone, mdns_rx)?);
+    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone, mdns_rx, mqtt_service)?);
     for integration in &integrations {
         controller_registry::register(integration.controller());
     }

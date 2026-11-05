@@ -2,8 +2,11 @@ use crate::app_config::AppConfig;
 use crate::domain::{Command, Controller, Event};
 use crate::integration::{Discovery, Integration, IntegrationError, IntegrationStatus};
 use crate::mdns_browser::DiscoveredServices;
+use crate::mqtt::MqttService;
 use crate::shelly::client::new_client;
+use crate::shelly::mqtt_listener::mqtt_listen;
 use crate::shelly::prober;
+use crate::store::StoreSnapshot;
 use async_trait::async_trait;
 use reqwest::Client;
 use std::sync::Arc;
@@ -14,12 +17,19 @@ use tokio::sync::watch::Receiver as WatchReceiver;
 pub struct ShellyIntegration {
     client: Client,
     mdns_rx: WatchReceiver<DiscoveredServices>,
+    mqtt_service: Option<MqttService>,
+    store_rx: WatchReceiver<StoreSnapshot>,
 }
 
 impl ShellyIntegration {
-    pub fn new(config: Arc<AppConfig>, mdns_rx: WatchReceiver<DiscoveredServices>) -> Result<Self, IntegrationError> {
+    pub fn new(
+        config: Arc<AppConfig>,
+        mdns_rx: WatchReceiver<DiscoveredServices>,
+        mqtt_service: Option<MqttService>,
+        store_rx: WatchReceiver<StoreSnapshot>,
+    ) -> Result<Self, IntegrationError> {
         let client = new_client(&config)?;
-        Ok(ShellyIntegration { client, mdns_rx })
+        Ok(ShellyIntegration { client, mdns_rx, mqtt_service, store_rx })
     }
 }
 
@@ -38,7 +48,10 @@ impl Integration for ShellyIntegration {
     }
 
     async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError> {
-        prober::probe_announced_devices(&self.client, self.mdns_rx.clone(), tx)?;
+        prober::probe_announced_devices(&self.client, self.mdns_rx.clone(), tx.clone())?;
+        if let Some(service) = &self.mqtt_service {
+            mqtt_listen(service, self.store_rx.clone(), tx)?;
+        }
         Ok(())
     }
 
