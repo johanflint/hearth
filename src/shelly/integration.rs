@@ -18,7 +18,7 @@ pub struct ShellyIntegration {
     client: Client,
     config: Arc<AppConfig>,
     mdns_rx: WatchReceiver<DiscoveredServices>,
-    mqtt_service: Option<MqttService>,
+    mqtt_service: MqttService,
     store_rx: WatchReceiver<StoreSnapshot>,
 }
 
@@ -26,7 +26,7 @@ impl ShellyIntegration {
     pub fn new(
         config: Arc<AppConfig>,
         mdns_rx: WatchReceiver<DiscoveredServices>,
-        mqtt_service: Option<MqttService>,
+        mqtt_service: MqttService,
         store_rx: WatchReceiver<StoreSnapshot>,
     ) -> Result<Self, IntegrationError> {
         let client = new_client(&config)?;
@@ -50,9 +50,7 @@ impl Integration for ShellyIntegration {
 
     async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError> {
         prober::probe_announced_devices(&self.client, self.mdns_rx.clone(), tx.clone())?;
-        if let Some(service) = &self.mqtt_service {
-            mqtt_listen(service, self.store_rx.clone(), tx)?;
-        }
+        mqtt_listen(&self.mqtt_service, self.store_rx.clone(), tx)?;
         Ok(())
     }
 

@@ -18,9 +18,18 @@ pub fn integrations(
     let mut integrations: Vec<Arc<dyn Integration>> =
         vec![Arc::new(HueIntegration::new(config.clone(), store_rx.clone())?)];
 
-    match mdns_rx {
-        Some(mdns_rx) => integrations.push(Arc::new(ShellyIntegration::new(config, mdns_rx, mqtt_service, store_rx)?)),
-        None => warn!("⚠️ Shelly integration skipped: mDNS is unavailable"),
+    match (mdns_rx, mqtt_service) {
+        (Some(mdns_rx), Some(mqtt_service)) => {
+            integrations.push(Arc::new(ShellyIntegration::new(config, mdns_rx, mqtt_service, store_rx)?))
+        }
+        (mdns_rx, mqtt_service) if config.shelly().enabled() => {
+            let missing: Vec<&str> = [(mdns_rx.is_none(), "mDNS"), (mqtt_service.is_none(), "MQTT")]
+                .into_iter()
+                .filter_map(|(is_missing, name)| is_missing.then_some(name))
+                .collect();
+            warn!("⚠️ Shelly integration skipped, unavailable: {}", missing.join(", "));
+        }
+        _ => {} // Shelly is disabled, nothing to log
     }
     Ok(integrations)
 }
@@ -50,6 +59,17 @@ mod tests {
         let integrations = enabled_only(vec![hue_integration(true)]);
 
         assert_eq!(integrations.len(), 1);
+    }
+
+    #[test]
+    fn integrations_skips_shelly_when_mdns_and_mqtt_are_unavailable() {
+        let config = Arc::new(AppConfigBuilder::new().build());
+        let (_store_tx, store_rx) = watch::channel(StoreSnapshot::default());
+
+        let integrations = integrations(config, store_rx, None, None).unwrap();
+
+        let names: Vec<&str> = integrations.iter().map(|integration| integration.name()).collect();
+        assert_eq!(names, vec!["Hue"]);
     }
 
     #[test]
