@@ -1,12 +1,13 @@
 use crate::domain::property::{BooleanProperty, Property, PropertyType};
 use crate::domain::{Device, DeviceType};
-use crate::shelly::domain::{Component, ComponentsResult, DeviceInfo, SwitchStatus};
+use crate::shelly::domain::{Component, SwitchStatus};
+use crate::shelly::prober::ProbedDevice;
 use std::collections::HashMap;
 
-pub fn map_shelly(device_info: DeviceInfo, component_result: ComponentsResult, address: String) -> Option<Device> {
+pub fn map_shelly(probed_device: &ProbedDevice) -> Option<Device> {
     let mut properties = HashMap::with_capacity(1);
 
-    for component in component_result.components {
+    for component in &probed_device.components {
         match component {
             Component::Switch { status: SwitchStatus { id, output } } => {
                 let switch_property: Box<dyn Property> = Box::new(BooleanProperty::new(
@@ -14,7 +15,7 @@ pub fn map_shelly(device_info: DeviceInfo, component_result: ComponentsResult, a
                     PropertyType::On,
                     false,
                     Some(format!("switch:{}", id)),
-                    output,
+                    *output,
                 ));
 
                 properties.insert(switch_property.name().to_owned(), switch_property);
@@ -28,16 +29,16 @@ pub fn map_shelly(device_info: DeviceInfo, component_result: ComponentsResult, a
     }
 
     Some(Device {
-        id: device_info.id,
+        id: probed_device.info.id.clone(),
         r#type: DeviceType::Switch,
         manufacturer: "Shelly Europe Ltd.".to_string(),
-        model_id: device_info.model,
-        product_name: device_info.app,
-        name: device_info.name,
+        model_id: probed_device.info.model.clone(),
+        product_name: probed_device.info.app.clone(),
+        name: probed_device.info.name.clone(),
         claimable: true,
         properties,
         external_id: None,
-        address: Some(address),
+        address: Some(probed_device.address.to_string()),
         controller_id: None,
     })
 }
@@ -46,32 +47,14 @@ pub fn map_shelly(device_info: DeviceInfo, component_result: ComponentsResult, a
 mod tests {
     use super::*;
     use crate::domain::property::PropertyType;
+    use crate::shelly::test_support::{PLUS_1_ID, ble_component, probed_device, probed_plus_1, switch_component};
     use pretty_assertions::assert_eq;
-
-    fn plus_1_device_info() -> DeviceInfo {
-        serde_json::from_str(include_str!("../../tests/resources/shelly_device_info_plus1_response.json")).unwrap()
-    }
-
-    fn components(components: &[String]) -> ComponentsResult {
-        serde_json::from_str(&format!(r#"{{"components":[{}]}}"#, components.join(","))).unwrap()
-    }
-
-    fn switch_component(id: u32, output: bool) -> String {
-        format!(r#"{{"key":"switch:{id}","status":{{"id":{id},"output":{output}}},"config":{{}}}}"#)
-    }
-
-    fn ble_component() -> String {
-        r#"{"key":"ble","status":{},"config":{"enable":false}}"#.to_string()
-    }
 
     #[test]
     fn maps_a_plus_1_to_a_switch_device() {
-        let components: ComponentsResult =
-            serde_json::from_str(include_str!("../../tests/resources/shelly_components_plus1_response.json")).unwrap();
+        let device = map_shelly(&probed_plus_1()).unwrap();
 
-        let device = map_shelly(plus_1_device_info(), components, "192.168.1.35:80".to_string()).unwrap();
-
-        assert_eq!(device.id, "shellyplus1-aabbccddeeff");
+        assert_eq!(device.id, PLUS_1_ID);
         assert_eq!(device.r#type, DeviceType::Switch);
         assert_eq!(device.manufacturer, "Shelly Europe Ltd.");
         assert_eq!(device.model_id, "SNSW-001X16EU");
@@ -83,12 +66,7 @@ mod tests {
 
     #[test]
     fn maps_a_switch_to_a_boolean_property_with_the_component_key_as_external_id() {
-        let device = map_shelly(
-            plus_1_device_info(),
-            components(&[ble_component(), switch_component(0, true)]),
-            "192.168.1.35:80".to_string(),
-        )
-        .unwrap();
+        let device = map_shelly(&probed_device(PLUS_1_ID, &[ble_component(), switch_component(0, true)])).unwrap();
 
         let property = device.get_property::<BooleanProperty>("switch0").unwrap();
         assert!(property.value());
@@ -99,12 +77,8 @@ mod tests {
 
     #[test]
     fn maps_every_switch_to_its_own_property() {
-        let device = map_shelly(
-            plus_1_device_info(),
-            components(&[switch_component(0, true), switch_component(1, false)]),
-            "192.168.1.35:80".to_string(),
-        )
-        .unwrap();
+        let device =
+            map_shelly(&probed_device(PLUS_1_ID, &[switch_component(0, true), switch_component(1, false)])).unwrap();
 
         assert_eq!(device.properties.len(), 2);
         assert!(device.get_property::<BooleanProperty>("switch0").unwrap().value());
@@ -114,7 +88,7 @@ mod tests {
 
     #[test]
     fn returns_none_for_a_device_without_switches() {
-        let device = map_shelly(plus_1_device_info(), components(&[ble_component()]), "192.168.1.35:80".to_string());
+        let device = map_shelly(&probed_device(PLUS_1_ID, &[ble_component()]));
 
         assert_eq!(device, None);
     }

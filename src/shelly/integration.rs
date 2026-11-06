@@ -5,7 +5,7 @@ use crate::mdns_browser::{DiscoveredServices, MdnsBrowser};
 use crate::mqtt::MqttService;
 use crate::shelly::client::new_client;
 use crate::shelly::mqtt_listener::mqtt_listen;
-use crate::shelly::prober;
+use crate::shelly::{prober, registrar};
 use crate::store::StoreSnapshot;
 use async_trait::async_trait;
 use reqwest::Client;
@@ -52,7 +52,8 @@ impl Integration for ShellyIntegration {
     }
 
     async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError> {
-        prober::probe_announced_devices(&self.client, self.mdns_rx.clone(), tx.clone())?;
+        let probed_rx = prober::probe_announced_devices(&self.client, self.mdns_rx.clone());
+        registrar::register_probed_devices(probed_rx, tx.clone());
         mqtt_listen(&self.mqtt_service, self.store_rx.clone(), tx)?;
         Ok(())
     }
