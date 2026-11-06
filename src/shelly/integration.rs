@@ -16,6 +16,7 @@ use tokio::sync::watch::Receiver as WatchReceiver;
 #[derive(Debug)]
 pub struct ShellyIntegration {
     client: Client,
+    config: Arc<AppConfig>,
     mdns_rx: WatchReceiver<DiscoveredServices>,
     mqtt_service: Option<MqttService>,
     store_rx: WatchReceiver<StoreSnapshot>,
@@ -29,7 +30,7 @@ impl ShellyIntegration {
         store_rx: WatchReceiver<StoreSnapshot>,
     ) -> Result<Self, IntegrationError> {
         let client = new_client(&config)?;
-        Ok(ShellyIntegration { client, mdns_rx, mqtt_service, store_rx })
+        Ok(ShellyIntegration { client, config, mdns_rx, mqtt_service, store_rx })
     }
 }
 
@@ -40,7 +41,7 @@ impl Integration for ShellyIntegration {
     }
 
     fn enabled(&self) -> bool {
-        true
+        self.config.shelly().enabled()
     }
 
     async fn discover(&self) -> Result<Discovery, IntegrationError> {

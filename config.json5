@@ -28,6 +28,7 @@
     application_key: "Hue application key"
   },
   "shelly": {
+    "enabled": false,
     "client_connection_timeout_ms": 2000,
     "client_request_timeout_ms": 10000
   },

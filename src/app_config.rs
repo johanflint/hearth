@@ -163,11 +163,16 @@ impl Hue {
 
 #[derive(Debug, Deserialize)]
 pub struct Shelly {
+    enabled: bool,
     client_connection_timeout_ms: u64,
     client_request_timeout_ms: u64,
 }
 
 impl Shelly {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub fn client_connection_timeout_ms(&self) -> Duration {
         Duration::from_millis(self.client_connection_timeout_ms)
     }
@@ -210,7 +215,7 @@ impl AppConfigBuilder {
                     send_timeout_ms: 100,
                     application_key: "key".to_string(),
                 },
-                shelly: Shelly { client_connection_timeout_ms: 100, client_request_timeout_ms: 100 },
+                shelly: Shelly { enabled: true, client_connection_timeout_ms: 100, client_request_timeout_ms: 100 },
                 location: GeoLocation { latitude: 51.8615899, longitude: 4.3580323, altitude: 0.0 },
             },
         }
