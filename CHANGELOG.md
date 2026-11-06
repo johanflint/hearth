@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.0 (2026-11-06)
+
+### Features
+
+- Support Shelly devices ([#85](https://github.com/johanflint/hearth/pull/85))
+
 ## v0.3.0 (2026-11-05)
 
 ### Features
