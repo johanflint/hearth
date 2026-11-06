@@ -9,27 +9,22 @@ use tracing::{debug, info, warn};
 
 pub struct MdnsBrowser {
     daemon: ServiceDaemon,
-    rx: WatchReceiver<DiscoveredServices>,
 }
 
 impl MdnsBrowser {
-    pub fn spawn(service_types: &[&str]) -> Result<MdnsBrowser, MdnsBrowserError> {
+    pub fn spawn() -> Result<MdnsBrowser, MdnsBrowserError> {
         let daemon = ServiceDaemon::new().map_err(MdnsBrowserError::DaemonCreationFailed)?;
-        let (tx, rx) = channel(DiscoveredServices::default());
-        let tx = Arc::new(tx);
-
-        for service_type in service_types {
-            let receiver = daemon
-                .browse(service_type)
-                .map_err(|source| MdnsBrowserError::BrowseFailed { service_type: service_type.to_string(), source })?;
-            task::spawn(browse(receiver, Arc::clone(&tx)));
-        }
-
-        Ok(MdnsBrowser { daemon, rx })
+        Ok(MdnsBrowser { daemon })
     }
 
-    pub fn notifier(&self) -> WatchReceiver<DiscoveredServices> {
-        self.rx.clone()
+    pub fn browse(&self, service_type: &str) -> Result<WatchReceiver<DiscoveredServices>, MdnsBrowserError> {
+        let receiver = self
+            .daemon
+            .browse(service_type)
+            .map_err(|source| MdnsBrowserError::BrowseFailed { service_type: service_type.to_string(), source })?;
+        let (tx, rx) = channel(DiscoveredServices::default());
+        task::spawn(browse(receiver, tx));
+        Ok(rx)
     }
 }
 
@@ -41,7 +36,7 @@ impl Drop for MdnsBrowser {
     }
 }
 
-async fn browse(receiver: mdns_sd::Receiver<ServiceEvent>, tx: Arc<Sender<DiscoveredServices>>) {
+async fn browse(receiver: mdns_sd::Receiver<ServiceEvent>, tx: Sender<DiscoveredServices>) {
     while let Ok(event) = receiver.recv_async().await {
         // Send modify also stores the value when there are no listeners, send doesn't
         tx.send_modify(|services| handle_event(event, Arc::make_mut(services)));
@@ -54,7 +49,7 @@ fn handle_event(event: ServiceEvent, services: &mut HashMap<ServiceKey, Arc<Disc
     match event {
         ServiceEvent::ServiceResolved(resolved) => {
             info!("🔎 Discovered {} on {}", resolved.ty_domain, resolved.host);
-            let key = ServiceKey { service_type: resolved.ty_domain.clone(), hostname: resolved.host.clone() };
+            let key = ServiceKey { hostname: resolved.host.clone() };
             services.insert(key, Arc::new(DiscoveredService::from(*resolved)));
         }
         // Devices with weak signal leave and return, so ignore removals
@@ -72,7 +67,6 @@ pub enum MdnsBrowserError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ServiceKey {
-    pub service_type: String,
     pub hostname: String,
 }
 
@@ -82,6 +76,7 @@ pub type DiscoveredServices = Arc<HashMap<ServiceKey, Arc<DiscoveredService>>>;
 pub struct DiscoveredService {
     pub hostname: String,
     pub addresses: BTreeSet<SocketAddr>,
+    #[allow(dead_code)]
     pub txt: HashMap<String, String>,
 }
 
@@ -127,11 +122,11 @@ mod tests {
     }
 
     fn key(host: &str) -> ServiceKey {
-        ServiceKey { service_type: SHELLY.to_string(), hostname: host.to_string() }
+        ServiceKey { hostname: host.to_string() }
     }
 
     #[test]
-    fn handle_event_inserts_resolved_service_by_type_and_host() {
+    fn handle_event_inserts_resolved_service_by_host() {
         let mut services = HashMap::new();
 
         handle_event(resolved_event(resolved("shelly-1.local.", "192.168.1.10", 80, &[("gen", "2")])), &mut services);
@@ -155,31 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn handle_event_keeps_same_host_of_different_types_separate() {
-        let mut services = HashMap::new();
-        let other_type = ServiceInfo::new(
-            "_http._tcp.local.",
-            "instance",
-            "shelly-1.local.",
-            "192.168.1.10",
-            80,
-            &[] as &[(&str, &str)],
-        )
-        .unwrap()
-        .as_resolved_service();
-
-        handle_event(resolved_event(resolved("shelly-1.local.", "192.168.1.10", 80, &[])), &mut services);
-        handle_event(resolved_event(other_type), &mut services);
-
-        assert_eq!(services.len(), 2);
-        assert!(services.contains_key(&ServiceKey {
-            service_type: "_http._tcp.local.".to_string(),
-            hostname: "shelly-1.local.".to_string()
-        }));
-    }
-
-    #[test]
-    fn handle_event_replaces_service_with_same_type_and_host() {
+    fn handle_event_replaces_service_with_same_host() {
         let mut services = HashMap::new();
 
         handle_event(resolved_event(resolved("shelly-1.local.", "192.168.1.10", 80, &[])), &mut services);
@@ -287,7 +258,7 @@ mod tests {
     async fn browse_publishes_resolved_services_to_listeners() {
         let (event_tx, event_rx) = flume::unbounded();
         let (tx, mut rx) = channel(DiscoveredServices::default());
-        let task = task::spawn(browse(event_rx, Arc::new(tx)));
+        let task = task::spawn(browse(event_rx, tx));
 
         event_tx.send(resolved_event(resolved("shelly-1.local.", "192.168.1.10", 80, &[]))).unwrap();
         rx.changed().await.unwrap();
@@ -303,42 +274,46 @@ mod tests {
         let (event_tx, event_rx) = flume::unbounded();
         let (tx, rx) = channel(DiscoveredServices::default());
         drop(rx);
-        let tx = Arc::new(tx);
-        let task = task::spawn(browse(event_rx, Arc::clone(&tx)));
+        let observer = tx.clone();
+        let task = task::spawn(browse(event_rx, tx));
 
         event_tx.send(resolved_event(resolved("shelly-1.local.", "192.168.1.10", 80, &[]))).unwrap();
         drop(event_tx);
         task.await.unwrap();
 
-        assert!(tx.borrow().contains_key(&key("shelly-1.local.")));
-    }
-
-    #[tokio::test]
-    async fn browse_merges_events_of_multiple_browsers_into_one_snapshot() {
-        let (first_tx, first_rx) = flume::unbounded();
-        let (second_tx, second_rx) = flume::unbounded();
-        let (tx, rx) = channel(DiscoveredServices::default());
-        let tx = Arc::new(tx);
-        let first = task::spawn(browse(first_rx, Arc::clone(&tx)));
-        let second = task::spawn(browse(second_rx, Arc::clone(&tx)));
-
-        first_tx.send(resolved_event(resolved("shelly-1.local.", "192.168.1.10", 80, &[]))).unwrap();
-        second_tx.send(resolved_event(resolved("shelly-2.local.", "192.168.1.11", 80, &[]))).unwrap();
-        drop((first_tx, second_tx));
-        first.await.unwrap();
-        second.await.unwrap();
-
-        assert_eq!(rx.borrow().len(), 2);
+        assert!(observer.borrow().contains_key(&key("shelly-1.local.")));
     }
 
     #[tokio::test]
     async fn browse_ends_when_the_event_channel_is_closed() {
         let (event_tx, event_rx) = flume::unbounded();
         let (tx, _rx) = channel(DiscoveredServices::default());
-        let task = task::spawn(browse(event_rx, Arc::new(tx)));
+        let task = task::spawn(browse(event_rx, tx));
 
         drop(event_tx);
 
         task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_starts_each_browse_with_an_empty_snapshot() {
+        let browser = MdnsBrowser::spawn().unwrap();
+
+        let first = browser.browse(SHELLY).unwrap();
+        let second = browser.browse("_hue._tcp.local.").unwrap();
+
+        assert!(first.borrow().is_empty());
+        assert!(second.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn browser_fails_for_an_invalid_service_type() {
+        let browser = MdnsBrowser::spawn().unwrap();
+
+        let result = browser.browse("_shelly._tcp");
+
+        assert!(
+            matches!(result, Err(MdnsBrowserError::BrowseFailed { service_type, .. }) if service_type == "_shelly._tcp")
+        );
     }
 }

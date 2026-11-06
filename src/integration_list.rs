@@ -1,7 +1,7 @@
 use crate::app_config::AppConfig;
 use crate::hue::HueIntegration;
 use crate::integration::{Integration, IntegrationError};
-use crate::mdns_browser::DiscoveredServices;
+use crate::mdns_browser::MdnsBrowser;
 use crate::mqtt::MqttService;
 use crate::shelly::ShellyIntegration;
 use crate::store::StoreSnapshot;
@@ -12,18 +12,18 @@ use tracing::{info, warn};
 pub fn integrations(
     config: Arc<AppConfig>,
     store_rx: WatchReceiver<StoreSnapshot>,
-    mdns_rx: Option<WatchReceiver<DiscoveredServices>>,
+    mdns_browser: Option<&MdnsBrowser>,
     mqtt_service: Option<MqttService>,
 ) -> Result<Vec<Arc<dyn Integration>>, IntegrationError> {
     let mut integrations: Vec<Arc<dyn Integration>> =
         vec![Arc::new(HueIntegration::new(config.clone(), store_rx.clone())?)];
 
-    match (mdns_rx, mqtt_service) {
-        (Some(mdns_rx), Some(mqtt_service)) => {
-            integrations.push(Arc::new(ShellyIntegration::new(config, mdns_rx, mqtt_service, store_rx)?))
+    match (mdns_browser, mqtt_service) {
+        (Some(mdns_browser), Some(mqtt_service)) => {
+            integrations.push(Arc::new(ShellyIntegration::new(config, mdns_browser, mqtt_service, store_rx)?))
         }
-        (mdns_rx, mqtt_service) if config.shelly().enabled() => {
-            let missing: Vec<&str> = [(mdns_rx.is_none(), "mDNS"), (mqtt_service.is_none(), "MQTT")]
+        (mdns_browser, mqtt_service) if config.shelly().enabled() => {
+            let missing: Vec<&str> = [(mdns_browser.is_none(), "mDNS"), (mqtt_service.is_none(), "MQTT")]
                 .into_iter()
                 .filter_map(|(is_missing, name)| is_missing.then_some(name))
                 .collect();

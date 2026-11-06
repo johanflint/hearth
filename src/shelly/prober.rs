@@ -180,10 +180,6 @@ mod tests {
         }
     }
 
-    fn service_key(hostname: &str) -> ServiceKey {
-        ServiceKey { service_type: "_shelly._tcp.local.".to_string(), hostname: hostname.to_string() }
-    }
-
     async fn mock_device_info(server: &mut ServerGuard, status: usize, body: &str) -> Mock {
         server.mock("GET", "/rpc/Shelly.GetDeviceInfo").with_status(status).with_body(body).create_async().await
     }
@@ -201,13 +197,13 @@ mod tests {
     fn take_new_returns_each_service_only_once() {
         let first = Arc::new(service("a.local.", &[]));
         let second = Arc::new(service("b.local.", &[]));
-        let mut services = HashMap::from([(service_key("a.local."), first)]);
+        let mut services = HashMap::from([(ServiceKey { hostname: "a.local.".to_string() }, first)]);
         let mut seen = HashSet::new();
 
         assert_eq!(take_new(&Arc::new(services.clone()), &mut seen).len(), 1);
         assert!(take_new(&Arc::new(services.clone()), &mut seen).is_empty());
 
-        services.insert(service_key("b.local."), second);
+        services.insert(ServiceKey { hostname: "b.local.".to_string() }, second);
         let new = take_new(&Arc::new(services), &mut seen);
         assert_eq!(new.len(), 1);
         assert_eq!(new[0].hostname, "b.local.");

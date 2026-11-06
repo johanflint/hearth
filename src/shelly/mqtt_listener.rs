@@ -33,7 +33,6 @@ pub fn mqtt_listen(
                         debug!("⚠️ Ignoring message for unknown device '{device_id}'");
                         continue;
                     }
-                    // Check if device exists in snapshot
                     match &message {
                         ShellyMessage::Availability(status) => {
                             debug!("Availability for device '{device_id}' changed to '{status}'");

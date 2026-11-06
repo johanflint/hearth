@@ -72,10 +72,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
 
-    let mdns_browser = match MdnsBrowser::spawn(&["_shelly._tcp.local."]) {
-        Ok(browser) => {
-            info!("✅  Started mdns browser");
-            Some(browser)
+    let mdns_browser = match MdnsBrowser::spawn() {
+        Ok(mdns_browser) => {
+            info!("✅  Spawned mdns browser");
+            Some(mdns_browser)
         }
         Err(err) => {
             warn!("⚠️ mDNS unavailable: {err}");
@@ -158,8 +158,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     info!("✅  Initialized store");
 
-    let mdns_rx = mdns_browser.as_ref().map(MdnsBrowser::notifier);
-    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone, mdns_rx, mqtt_service)?);
+    let mdns_browser = mdns_browser.as_ref();
+    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone, mdns_browser, mqtt_service)?);
     for integration in &integrations {
         controller_registry::register(integration.controller());
     }
