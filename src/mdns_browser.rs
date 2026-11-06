@@ -48,9 +48,12 @@ async fn browse(receiver: mdns_sd::Receiver<ServiceEvent>, tx: Sender<Discovered
 fn handle_event(event: ServiceEvent, services: &mut HashMap<ServiceKey, Arc<DiscoveredService>>) {
     match event {
         ServiceEvent::ServiceResolved(resolved) => {
-            info!("🔎 Discovered {} on {}", resolved.ty_domain, resolved.host);
+            let service_type = resolved.ty_domain.clone();
             let key = ServiceKey { hostname: resolved.host.clone() };
-            services.insert(key, Arc::new(DiscoveredService::from(*resolved)));
+            match services.insert(key.clone(), Arc::new(DiscoveredService::from(*resolved))) {
+                None => info!("🔎 Discovered {service_type} on {}", key.hostname),
+                Some(_) => debug!("🔎 Re-resolved {service_type} on {}", key.hostname),
+            }
         }
         // Devices with weak signal leave and return, so ignore removals
         other => debug!("mDNS event: {other:?}"),
