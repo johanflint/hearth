@@ -7,7 +7,9 @@ use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::integration::Discovery;
 use crate::integration_list::{enabled_only, integrations};
+use crate::mdns_browser::MdnsBrowser;
 use crate::metrics_layer::MetricsLayer;
+use crate::mqtt::MqttService;
 use crate::preset_registry::PresetRegistry;
 use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
 use crate::services::{FlowService, GroupService, PresetService, ZoneService};
@@ -18,7 +20,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::{signal, task};
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -38,14 +40,17 @@ mod geo_location_deserializer;
 mod hue;
 mod integration;
 mod integration_list;
+mod mdns_browser;
 mod metrics;
 mod metrics_layer;
+mod mqtt;
 mod preset_loader;
 mod preset_registry;
 mod property_changed_reducer;
 mod repositories;
 mod server;
 mod services;
+mod shelly;
 mod sse;
 mod store;
 mod store_listener;
@@ -66,6 +71,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let config = Arc::new(AppConfig::load());
     info!("✅  Loaded configuration");
+
+    let mdns_browser = match MdnsBrowser::spawn() {
+        Ok(mdns_browser) => {
+            info!("✅  Spawned mdns browser");
+            Some(mdns_browser)
+        }
+        Err(err) => {
+            warn!("⚠️ mDNS unavailable: {err}");
+            None
+        }
+    };
+
+    let mqtt_service = if config.mqtt().enabled() {
+        Some(MqttService::spawn(&config))
+    } else {
+        info!("⏭️  Skipping MQTT connection, disabled in config");
+        None
+    };
 
     let database = Database::open(Path::new(config.db().file_name()))?;
     info!("✅  Started database");
@@ -135,7 +158,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     info!("✅  Initialized store");
 
-    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone)?);
+    let mdns_browser = mdns_browser.as_ref();
+    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone, mdns_browser, mqtt_service)?);
     for integration in &integrations {
         controller_registry::register(integration.controller());
     }

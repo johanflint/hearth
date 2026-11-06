@@ -7,7 +7,9 @@ use std::time::Duration;
 pub struct AppConfig {
     core: Core,
     db: Db,
+    mqtt: Mqtt,
     hue: Hue,
+    shelly: Shelly,
     location: GeoLocation,
 }
 
@@ -33,8 +35,16 @@ impl AppConfig {
         &self.db
     }
 
+    pub fn mqtt(&self) -> &Mqtt {
+        &self.mqtt
+    }
+
     pub fn hue(&self) -> &Hue {
         &self.hue
+    }
+
+    pub fn shelly(&self) -> &Shelly {
+        &self.shelly
     }
 
     pub fn geo_location(&self) -> &GeoLocation {
@@ -80,6 +90,37 @@ impl Db {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct Mqtt {
+    enabled: bool,
+    host: String,
+    port: usize,
+    username: String,
+    password: String,
+}
+
+impl Mqtt {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn port(&self) -> usize {
+        self.port
+    }
+
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    pub fn password(&self) -> &str {
+        &self.password
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Hue {
     enabled: bool,
     url: String,
@@ -120,6 +161,27 @@ impl Hue {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Shelly {
+    enabled: bool,
+    client_connection_timeout_ms: u64,
+    client_request_timeout_ms: u64,
+}
+
+impl Shelly {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn client_connection_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.client_connection_timeout_ms)
+    }
+
+    pub fn client_request_timeout_ms(&self) -> Duration {
+        Duration::from_millis(self.client_request_timeout_ms)
+    }
+}
+
 #[cfg(test)]
 pub struct AppConfigBuilder {
     config: AppConfig,
@@ -137,6 +199,13 @@ impl AppConfigBuilder {
                     client_request_timeout_ms: 100,
                 },
                 db: Db { file_name: "hearth.db".to_string() },
+                mqtt: Mqtt {
+                    enabled: true,
+                    host: "127.0.0.1".to_string(),
+                    port: 1883,
+                    username: "hearth".to_string(),
+                    password: "p4ssY".to_string(),
+                },
                 hue: Hue {
                     enabled: true,
                     url: "https://hue.url/".to_string(),
@@ -146,6 +215,7 @@ impl AppConfigBuilder {
                     send_timeout_ms: 100,
                     application_key: "key".to_string(),
                 },
+                shelly: Shelly { enabled: true, client_connection_timeout_ms: 100, client_request_timeout_ms: 100 },
                 location: GeoLocation { latitude: 51.8615899, longitude: 4.3580323, altitude: 0.0 },
             },
         }

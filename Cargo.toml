@@ -6,7 +6,7 @@ rust-version = "1.90.0"
 
 [dependencies]
 rusqlite = { version = "0.40.1", features = ["bundled", "serde_json"] }
-reqwest = { version = "0.13", features = ["stream", "json"] }
+reqwest = { version = "0.13", features = ["stream", "json", "query"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 tokio-util = "0.7.19"
 tokio-retry = "0.3.0"
@@ -28,9 +28,14 @@ chrono = { version = "0.4", features = ["serde"] }
 ordered-float = "5.1.0"
 humantime-serde = "1.1.1"
 sunrise = "3.0"
+mdns-sd = "0.21.7"
 
 # Webserver
 axum = "0.8"
+
+# MQTT
+rumqttc = "0.25.1"
+bytes = "1.12.1"
 
 # Action macros
 action_macros = { path = "action_macros" }
@@ -39,6 +44,7 @@ serde_path_to_error = "0.1.20"
 
 [dev-dependencies]
 cargo-llvm-cov = "0.9"
+flume = "0.12"
 http-body-util = "0.1"
 mockito = "1.7"
 pretty_assertions = "1.4"
