@@ -46,7 +46,7 @@ pub struct SwitchStatus {
 }
 
 // Mqtt, API: https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Mqtt
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct MqttConfig {
     pub enable: bool,
     pub server: Option<String>,
@@ -59,7 +59,7 @@ pub struct MqttConfig {
     pub enable_control: bool,
 }
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct MqttStatus {
     pub connected: bool,
 }
