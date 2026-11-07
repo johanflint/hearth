@@ -94,6 +94,8 @@ pub struct Mqtt {
     enabled: bool,
     host: String,
     port: usize,
+    advertised_host: String,
+    advertised_port: usize,
     username: String,
     password: String,
 }
@@ -109,6 +111,14 @@ impl Mqtt {
 
     pub fn port(&self) -> usize {
         self.port
+    }
+
+    pub fn advertised_host(&self) -> &str {
+        &self.advertised_host
+    }
+
+    pub fn advertised_port(&self) -> usize {
+        self.advertised_port
     }
 
     pub fn username(&self) -> &str {
@@ -203,6 +213,8 @@ impl AppConfigBuilder {
                     enabled: true,
                     host: "127.0.0.1".to_string(),
                     port: 1883,
+                    advertised_host: "192.168.1.100".to_string(),
+                    advertised_port: 1883,
                     username: "hearth".to_string(),
                     password: "p4ssY".to_string(),
                 },

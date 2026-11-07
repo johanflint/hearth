@@ -20,7 +20,7 @@ pub fn map_shelly(probed_device: &ProbedDevice) -> Option<Device> {
 
                 properties.insert(switch_property.name().to_owned(), switch_property);
             }
-            Component::Unsupported => {}
+            Component::Mqtt { .. } | Component::Unsupported => {}
         }
     }
 

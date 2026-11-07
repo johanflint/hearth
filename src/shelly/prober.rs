@@ -1,9 +1,8 @@
-use crate::mdns_browser::{DiscoveredService, DiscoveredServices, ServiceKey};
+use crate::mdns_browser::{DiscoveredService, DiscoveredServices};
 use crate::shelly::domain::{Component, ComponentsResult, DeviceInfo};
+use crate::shelly::fetch::{FetchError, fetch};
 use crate::shelly::take_new::take_new;
-use axum::http::StatusCode;
 use reqwest::Client;
-use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -105,51 +104,20 @@ async fn probe_address(client: &Client, address: &SocketAddr) -> Result<ProbedDe
     Ok(ProbedDevice { address: *address, info: device_info, components: components_response.components })
 }
 
-async fn fetch<T>(
-    client: &Client,
-    address: &SocketAddr,
-    method: &'static str,
-    params: &[(&str, &str)],
-) -> Result<T, ProbeError>
-where
-    T: DeserializeOwned,
-{
-    let response = client
-        .get(format!("http://{}/rpc/{}", address, method))
-        .query(params)
-        .send()
-        .await?
-        .error_for_status()
-        .map_err(to_probe_error)?;
-
-    Ok(response.json::<T>().await?)
-}
-
-fn to_probe_error(e: reqwest::Error) -> ProbeError {
-    if let (Some(status), Some(url)) = (e.status(), e.url()) {
-        ProbeError::UnexpectedResponse(status, url.to_string())
-    } else {
-        ProbeError::ClientError(e)
-    }
-}
-
 #[derive(Error, Debug)]
 pub enum ProbeError {
-    #[error("client error: {0}")]
-    ClientError(#[from] reqwest::Error),
+    #[error(transparent)]
+    Fetch(#[from] FetchError),
     #[error("no address")]
     NoAddress,
-    #[error("unexpected status code {0} when calling {1}")]
-    UnexpectedResponse(StatusCode, String),
 }
 
 impl ProbeError {
     // Whether the error is permanent or whether retrying helps
     fn is_permanent(&self) -> bool {
         match self {
-            ProbeError::UnexpectedResponse(status, _) => status.is_client_error(),
+            ProbeError::Fetch(err) => err.is_permanent(),
             ProbeError::NoAddress => true,
-            ProbeError::ClientError(_) => false,
         }
     }
 }
@@ -157,8 +125,10 @@ impl ProbeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mdns_browser::ServiceKey;
     use crate::shelly::test_support::{PLUS_1_COMPONENTS, PLUS_1_DEVICE_INFO, PLUS_1_ID, probed_device};
     use mockito::{Matcher, Mock, Server, ServerGuard};
+    use reqwest::StatusCode;
     use rstest::rstest;
     use std::collections::BTreeSet;
     use tokio::sync::watch;
@@ -201,9 +171,14 @@ mod tests {
     }
 
     #[rstest]
-    #[case::unauthorized(ProbeError::UnexpectedResponse(StatusCode::UNAUTHORIZED, "url".to_string()), true)]
-    #[case::not_found(ProbeError::UnexpectedResponse(StatusCode::NOT_FOUND, "url".to_string()), true)]
-    #[case::server_error(ProbeError::UnexpectedResponse(StatusCode::INTERNAL_SERVER_ERROR, "url".to_string()), false)]
+    #[case::permanent_fetch_error(
+        ProbeError::Fetch(FetchError::UnexpectedResponse(StatusCode::UNAUTHORIZED, "url".to_string())),
+        true
+    )]
+    #[case::transient_fetch_error(
+        ProbeError::Fetch(FetchError::UnexpectedResponse(StatusCode::INTERNAL_SERVER_ERROR, "url".to_string())),
+        false
+    )]
     #[case::no_address(ProbeError::NoAddress, true)]
     fn is_permanent(#[case] error: ProbeError, #[case] expected: bool) {
         assert_eq!(error.is_permanent(), expected);
@@ -247,7 +222,10 @@ mod tests {
 
         let error = probe_address(&Client::new(), &server.socket_address()).await.unwrap_err();
 
-        assert!(matches!(error, ProbeError::UnexpectedResponse(StatusCode::NOT_FOUND, _)), "got {error:?}");
+        assert!(
+            matches!(error, ProbeError::Fetch(FetchError::UnexpectedResponse(StatusCode::NOT_FOUND, _))),
+            "got {error:?}"
+        );
     }
 
     #[tokio::test]
@@ -258,7 +236,10 @@ mod tests {
 
         let error = probe_address(&Client::new(), &server.socket_address()).await.unwrap_err();
 
-        assert!(matches!(error, ProbeError::UnexpectedResponse(StatusCode::UNAUTHORIZED, _)), "got {error:?}");
+        assert!(
+            matches!(error, ProbeError::Fetch(FetchError::UnexpectedResponse(StatusCode::UNAUTHORIZED, _))),
+            "got {error:?}"
+        );
     }
 
     // Whether a device is supported is up to the consumers, the prober only probes
