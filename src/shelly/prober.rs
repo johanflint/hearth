@@ -1,9 +1,8 @@
-use crate::mdns_browser::{DiscoveredService, DiscoveredServices};
+use crate::mdns_browser::{DiscoveredService, DiscoveredServices, ServiceKey};
 use crate::shelly::domain::{Component, ComponentsResult, DeviceInfo};
 use crate::shelly::fetch::{FetchError, fetch};
-use crate::shelly::take_new::take_new;
 use reqwest::Client;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,6 +11,7 @@ use tokio::sync::watch;
 use tokio::sync::watch::Receiver as WatchReceiver;
 use tokio::sync::watch::Sender;
 use tokio::task;
+use tokio::task::AbortHandle;
 use tracing::{debug, warn};
 
 #[derive(Debug)]
@@ -36,21 +36,41 @@ pub fn probe_announced_devices(
 }
 
 async fn listen(tx: Sender<ProbedDeviceMap>, client: &Client, mut mdns_rx: WatchReceiver<DiscoveredServices>) {
-    let mut seen = HashSet::new();
+    let mut seen: HashMap<ServiceKey, BTreeSet<SocketAddr>> = HashMap::new();
+    let mut probes: HashMap<ServiceKey, AbortHandle> = HashMap::new();
     loop {
-        let new = take_new(&mdns_rx.borrow_and_update(), &mut seen);
-        for service in new {
+        let new = take_new_or_moved(&mdns_rx.borrow_and_update(), &mut seen);
+        for (key, service) in new {
             let client = client.clone();
             let tx = tx.clone();
-            task::spawn(async move {
+            let probe = task::spawn(async move {
                 probe_with_retry(&client, &service, tx).await;
             });
+            if let Some(previous) = probes.insert(key, probe.abort_handle()) {
+                // Stop a previous prober that still has the old address
+                previous.abort();
+            }
         }
 
         if mdns_rx.changed().await.is_err() {
             break; // all browse tasks ended, e.g. the daemon was shut down
         }
     }
+}
+
+// New services, and known services that announce other addresses (e.g. after a new DHCP lease).
+// Compares addresses because every re-resolve creates a new Arc with the same content.
+fn take_new_or_moved(
+    services: &HashMap<ServiceKey, Arc<DiscoveredService>>,
+    seen: &mut HashMap<ServiceKey, BTreeSet<SocketAddr>>,
+) -> Vec<(ServiceKey, Arc<DiscoveredService>)> {
+    services
+        .iter()
+        .filter(|(key, service)| {
+            seen.insert((*key).clone(), service.addresses.clone()).as_ref() != Some(&service.addresses)
+        })
+        .map(|(key, service)| (key.clone(), Arc::clone(service)))
+        .collect()
 }
 
 async fn probe_with_retry(client: &Client, service: &DiscoveredService, tx: Sender<ProbedDeviceMap>) {
@@ -60,14 +80,14 @@ async fn probe_with_retry(client: &Client, service: &DiscoveredService, tx: Send
             Ok(probed_device) => {
                 let id = probed_device.info.id.clone();
                 let added = tx.send_if_modified(|devices| {
-                    if devices.contains_key(&id) {
+                    if devices.get(&id).is_some_and(|known| known.address == probed_device.address) {
                         return false;
                     }
                     Arc::make_mut(devices).insert(id.clone(), Arc::new(probed_device));
                     true
                 });
                 if !added {
-                    debug!("Skipping '{}', device '{id}' is already known", service.hostname);
+                    debug!("Skipping '{}', device '{id}' is already known at that address", service.hostname);
                 }
                 return;
             }
@@ -125,7 +145,6 @@ impl ProbeError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mdns_browser::ServiceKey;
     use crate::shelly::test_support::{PLUS_1_COMPONENTS, PLUS_1_DEVICE_INFO, PLUS_1_ID, probed_device};
     use mockito::{Matcher, Mock, Server, ServerGuard};
     use reqwest::StatusCode;
@@ -154,20 +173,43 @@ mod tests {
             .await
     }
 
+    fn key(hostname: &str) -> ServiceKey {
+        ServiceKey { hostname: hostname.to_string() }
+    }
+
+    fn services_at(hostname: &str, address: &str) -> HashMap<ServiceKey, Arc<DiscoveredService>> {
+        HashMap::from([(key(hostname), Arc::new(service(hostname, &[address.parse().unwrap()])))])
+    }
+
     #[test]
-    fn take_new_returns_each_service_only_once() {
-        let first = Arc::new(service("a.local.", &[]));
-        let second = Arc::new(service("b.local.", &[]));
-        let mut services = HashMap::from([(ServiceKey { hostname: "a.local.".to_string() }, first)]);
-        let mut seen = HashSet::new();
+    fn take_new_or_moved_returns_a_new_service() {
+        let mut seen = HashMap::new();
 
-        assert_eq!(take_new(&Arc::new(services.clone()), &mut seen).len(), 1);
-        assert!(take_new(&Arc::new(services.clone()), &mut seen).is_empty());
+        let new = take_new_or_moved(&services_at("a.local.", "192.168.1.10:80"), &mut seen);
 
-        services.insert(ServiceKey { hostname: "b.local.".to_string() }, second);
-        let new = take_new(&Arc::new(services), &mut seen);
         assert_eq!(new.len(), 1);
-        assert_eq!(new[0].hostname, "b.local.");
+        assert_eq!(new[0].0, key("a.local."));
+    }
+
+    #[test]
+    fn take_new_or_moved_skips_a_service_at_the_same_addresses() {
+        let mut seen = HashMap::new();
+        take_new_or_moved(&services_at("a.local.", "192.168.1.10:80"), &mut seen);
+
+        let new = take_new_or_moved(&services_at("a.local.", "192.168.1.10:80"), &mut seen);
+
+        assert!(new.is_empty());
+    }
+
+    #[test]
+    fn take_new_or_moved_returns_a_service_at_other_addresses() {
+        let mut seen = HashMap::new();
+        take_new_or_moved(&services_at("a.local.", "192.168.1.10:80"), &mut seen);
+
+        let moved = take_new_or_moved(&services_at("a.local.", "192.168.1.20:80"), &mut seen);
+
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].1.addresses, BTreeSet::from(["192.168.1.20:80".parse().unwrap()]));
     }
 
     #[rstest]
@@ -293,18 +335,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn probe_with_retry_keeps_an_already_known_device() {
+    async fn probe_with_retry_keeps_a_device_known_at_the_same_address() {
+        let mut server = Server::new_async().await;
+        mock_device_info(&mut server, 200, PLUS_1_DEVICE_INFO).await;
+        mock_components(&mut server).await;
+        let known = Arc::new(ProbedDevice { address: server.socket_address(), ..probed_device(PLUS_1_ID, &[]) });
+        let (tx, rx) = watch::channel(Arc::new(HashMap::from([(PLUS_1_ID.to_string(), Arc::clone(&known))])));
+
+        // Keep the sender alive, has_changed fails once it's dropped
+        probe_with_retry(&Client::new(), &service("b.local.", &[server.socket_address()]), tx.clone()).await;
+
+        assert!(!rx.has_changed().unwrap(), "receivers should not be notified");
+        let probed = rx.borrow();
+        assert_eq!(probed.len(), 1);
+        assert!(Arc::ptr_eq(&probed[PLUS_1_ID], &known), "the known device should not be replaced");
+    }
+
+    #[tokio::test]
+    async fn probe_with_retry_replaces_a_device_known_at_another_address() {
         let mut server = Server::new_async().await;
         mock_device_info(&mut server, 200, PLUS_1_DEVICE_INFO).await;
         mock_components(&mut server).await;
         let known = Arc::new(probed_device(PLUS_1_ID, &[]));
-        let (tx, rx) = watch::channel(Arc::new(HashMap::from([(PLUS_1_ID.to_string(), Arc::clone(&known))])));
+        let (tx, rx) = watch::channel(Arc::new(HashMap::from([(PLUS_1_ID.to_string(), known)])));
 
-        probe_with_retry(&Client::new(), &service("b.local.", &[server.socket_address()]), tx).await;
+        probe_with_retry(&Client::new(), &service("a.local.", &[server.socket_address()]), tx).await;
 
         let probed = rx.borrow();
         assert_eq!(probed.len(), 1);
-        assert!(Arc::ptr_eq(&probed[PLUS_1_ID], &known), "the known device should not be replaced");
+        assert_eq!(probed[PLUS_1_ID].address, server.socket_address());
     }
 
     #[tokio::test]
