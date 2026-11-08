@@ -1,5 +1,5 @@
 use crate::app_config::{AppConfig, Mqtt as MqttAppConfig};
-use crate::shelly::domain::{Component, ComponentsResult, MqttConfig, MqttStatus};
+use crate::shelly::domain::{Component, ComponentsResult, DeviceInfo, MqttConfig, MqttStatus};
 use crate::shelly::fetch::{FetchError, call, fetch};
 use crate::shelly::prober::{ProbedDevice, ProbedDeviceMap};
 use crate::shelly::take_new::take_new;
@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use thiserror::Error;
 use tokio::sync::watch::Receiver as WatchReceiver;
 use tokio::task;
 use tracing::{debug, info, warn};
@@ -28,10 +29,11 @@ pub fn provision_announced_devices(
         loop {
             let probed_devices = take_new(&probed_rx.borrow_and_update(), &mut seen);
             for device in probed_devices {
+                let probed_rx = probed_rx.clone();
                 let client = client.clone();
                 let config = Arc::clone(&config);
                 task::spawn(async move {
-                    provision_with_retry(&device, &config, &client).await;
+                    provision_with_retry(device, &config, &client, &probed_rx).await;
                 });
             }
 
@@ -42,7 +44,12 @@ pub fn provision_announced_devices(
     });
 }
 
-async fn provision_with_retry(device: &ProbedDevice, config: &AppConfig, client: &Client) {
+async fn provision_with_retry(
+    mut device: Arc<ProbedDevice>,
+    config: &AppConfig,
+    client: &Client,
+    probed_rx: &WatchReceiver<ProbedDeviceMap>,
+) {
     let Some(mut state) = mqtt_state(&device.components) else {
         debug!(device_id = device.info.id, "MQTT is not supported for this device");
         return;
@@ -50,7 +57,7 @@ async fn provision_with_retry(device: &ProbedDevice, config: &AppConfig, client:
 
     let mut delay = INITIAL_DELAY;
     loop {
-        match provision(device, &state, config, client).await {
+        match provision(&device, &state, config, client).await {
             Ok(Provisioning::Connected) => return,
             Ok(Provisioning::Pending) => {}
             Err(err) => {
@@ -61,19 +68,54 @@ async fn provision_with_retry(device: &ProbedDevice, config: &AppConfig, client:
             }
         }
 
-        tokio::time::sleep(delay).await;
-        delay = (delay * 2).min(MAX_DELAY);
+        (device, state) = refresh_until_verified(&device, &mut delay, client, probed_rx).await;
+    }
+}
 
-        match fetch_mqtt_state(client, &device.address).await {
-            Ok(Some(fresh_state)) => state = fresh_state,
-            Ok(None) => debug!(device_id = device.info.id, "MQTT component is gone, keeping the last known state"),
-            Err(err) => debug!(device_id = device.info.id, "Fetching MQTT state failed: {err}"),
+// Waits until the device reports its MQTT state at its current address. A failed or unverified refresh never leads
+// to provisioning, because a stale address may belong to another device.
+async fn refresh_until_verified(
+    device: &Arc<ProbedDevice>,
+    delay: &mut Duration,
+    client: &Client,
+    probed_rx: &WatchReceiver<ProbedDeviceMap>,
+) -> (Arc<ProbedDevice>, MqttState) {
+    loop {
+        tokio::time::sleep(*delay).await;
+        *delay = (*delay * 2).min(MAX_DELAY);
+
+        // The prober may have found a new address in the meantime
+        let current = probed_rx.borrow().get(&device.info.id).cloned().unwrap_or_else(|| Arc::clone(device));
+        match fetch_mqtt_state(client, &current.address, &current.info.id).await {
+            Ok(Some(state)) => return (current, state),
+            Ok(None) => debug!(device_id = device.info.id, "MQTT component is gone, skipping provisioning"),
+            Err(err) => warn!(
+                device_id = device.info.id,
+                "⚠️ Refreshing '{}' failed, skipping provisioning: {err}", device.info.id
+            ),
         }
     }
 }
 
-async fn fetch_mqtt_state(client: &Client, address: &SocketAddr) -> Result<Option<MqttState>, FetchError> {
-    let config = fetch::<ComponentsResult>(
+#[derive(Error, Debug)]
+enum RefreshError {
+    #[error(transparent)]
+    Fetch(#[from] FetchError),
+    #[error("{address} is device '{found}', expected '{expected}'")]
+    OtherDevice { address: SocketAddr, expected: String, found: String },
+}
+
+async fn fetch_mqtt_state(
+    client: &Client,
+    address: &SocketAddr,
+    expected_id: &str,
+) -> Result<Option<MqttState>, RefreshError> {
+    let info = fetch::<DeviceInfo>(client, address, "Shelly.GetDeviceInfo", &[]).await?;
+    if info.id != expected_id {
+        return Err(RefreshError::OtherDevice { address: *address, expected: expected_id.to_string(), found: info.id });
+    }
+
+    let components = fetch::<ComponentsResult>(
         client,
         address,
         "Shelly.GetComponents",
@@ -81,7 +123,7 @@ async fn fetch_mqtt_state(client: &Client, address: &SocketAddr) -> Result<Optio
     )
     .await?;
 
-    Ok(mqtt_state(&config.components))
+    Ok(mqtt_state(&components.components))
 }
 
 #[derive(Debug)]
@@ -204,13 +246,15 @@ impl MqttSettings {
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
-    use crate::shelly::test_support::{PLUS_1_ID, ble_component, mqtt_component, probed_device};
+    use crate::shelly::test_support::{PLUS_1_DEVICE_INFO, PLUS_1_ID, ble_component, mqtt_component, probed_device};
     use mockito::{Matcher, Mock, Server, ServerGuard};
     use pretty_assertions::assert_eq;
     use reqwest::StatusCode;
     use rstest::rstest;
     use serde_json::{Value, json};
+    use std::collections::HashMap;
     use std::net::SocketAddr;
+    use tokio::sync::watch;
     use tokio::time::Instant;
 
     // The advertised host and port of AppConfigBuilder, which differ from the broker's own address
@@ -273,6 +317,16 @@ mod tests {
                 Matcher::UrlEncoded("include".to_string(), r#"["config","status"]"#.to_string()),
             ]))
             .with_body(format!(r#"{{"components":[{}]}}"#, mqtt_component(connected, config)))
+    }
+
+    // Returns the mock unregistered, so the caller can set expectations before `create_async`
+    fn device_info_mock(server: &mut ServerGuard) -> Mock {
+        server.mock("GET", "/rpc/Shelly.GetDeviceInfo").with_body(PLUS_1_DEVICE_INFO)
+    }
+
+    async fn provision_with_retry_for(device: ProbedDevice) {
+        let (_tx, probed_rx) = watch::channel(ProbedDeviceMap::default());
+        provision_with_retry(Arc::new(device), &app_config(), &Client::new(), &probed_rx).await;
     }
 
     fn desired_settings() -> MqttSettings {
@@ -476,17 +530,20 @@ mod tests {
     #[tokio::test]
     async fn fetch_mqtt_state_returns_the_current_config_and_status() {
         let mut server = Server::new_async().await;
+        let info = device_info_mock(&mut server).create_async().await;
         let mock = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
 
-        let fetched = fetch_mqtt_state(&Client::new(), &server.socket_address()).await.unwrap();
+        let fetched = fetch_mqtt_state(&Client::new(), &server.socket_address(), PLUS_1_ID).await.unwrap();
 
         assert_eq!(fetched, Some(state(true, provisioned_config())));
+        info.assert_async().await;
         mock.assert_async().await;
     }
 
     #[tokio::test]
     async fn fetch_mqtt_state_returns_none_without_an_mqtt_component() {
         let mut server = Server::new_async().await;
+        device_info_mock(&mut server).create_async().await;
         server
             .mock("GET", "/rpc/Shelly.GetComponents")
             .match_query(Matcher::Any)
@@ -494,20 +551,57 @@ mod tests {
             .create_async()
             .await;
 
-        let fetched = fetch_mqtt_state(&Client::new(), &server.socket_address()).await.unwrap();
+        let fetched = fetch_mqtt_state(&Client::new(), &server.socket_address(), PLUS_1_ID).await.unwrap();
 
         assert_eq!(fetched, None);
     }
 
     #[tokio::test]
-    async fn fetch_mqtt_state_fails_on_an_unexpected_status() {
+    async fn fetch_mqtt_state_fails_for_another_device() {
         let mut server = Server::new_async().await;
-        server.mock("GET", "/rpc/Shelly.GetComponents").match_query(Matcher::Any).with_status(500).create_async().await;
+        device_info_mock(&mut server).create_async().await;
+        let components =
+            server.mock("GET", "/rpc/Shelly.GetComponents").match_query(Matcher::Any).expect(0).create_async().await;
 
-        let result = fetch_mqtt_state(&Client::new(), &server.socket_address()).await;
+        let result = fetch_mqtt_state(&Client::new(), &server.socket_address(), "shellyplus1-112233445566").await;
 
         assert!(
-            matches!(result, Err(FetchError::UnexpectedResponse(StatusCode::INTERNAL_SERVER_ERROR, _))),
+            matches!(result, Err(RefreshError::OtherDevice { ref expected, ref found, .. })
+                if expected == "shellyplus1-112233445566" && found == PLUS_1_ID),
+            "got {result:?}"
+        );
+        components.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn fetch_mqtt_state_fails_when_the_device_info_cannot_be_fetched() {
+        let mut server = Server::new_async().await;
+        server.mock("GET", "/rpc/Shelly.GetDeviceInfo").with_status(500).create_async().await;
+
+        let result = fetch_mqtt_state(&Client::new(), &server.socket_address(), PLUS_1_ID).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(RefreshError::Fetch(FetchError::UnexpectedResponse(StatusCode::INTERNAL_SERVER_ERROR, _)))
+            ),
+            "got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_mqtt_state_fails_on_an_unexpected_status() {
+        let mut server = Server::new_async().await;
+        device_info_mock(&mut server).create_async().await;
+        server.mock("GET", "/rpc/Shelly.GetComponents").match_query(Matcher::Any).with_status(500).create_async().await;
+
+        let result = fetch_mqtt_state(&Client::new(), &server.socket_address(), PLUS_1_ID).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(RefreshError::Fetch(FetchError::UnexpectedResponse(StatusCode::INTERNAL_SERVER_ERROR, _)))
+            ),
             "got {result:?}"
         );
     }
@@ -519,7 +613,7 @@ mod tests {
         let any_post = server.mock("POST", Matcher::Any).expect(0).create_async().await;
         let device = device(server.socket_address(), &[ble_component()]);
 
-        provision_with_retry(&device, &app_config(), &Client::new()).await;
+        provision_with_retry_for(device).await;
 
         any_get.assert_async().await;
         any_post.assert_async().await;
@@ -533,7 +627,7 @@ mod tests {
         let device = device(server.socket_address(), &[mqtt_component(true, provisioned_config())]);
         let start = Instant::now();
 
-        provision_with_retry(&device, &app_config(), &Client::new()).await;
+        provision_with_retry_for(device).await;
 
         assert_eq!(start.elapsed(), Duration::ZERO);
         any_get.assert_async().await;
@@ -545,11 +639,12 @@ mod tests {
         let mut server = Server::new_async().await;
         let set_config = set_config_mock(&mut server, true).create_async().await;
         let reboot = server.mock("POST", "/rpc/Shelly.Reboot").with_body("null").create_async().await;
+        device_info_mock(&mut server).create_async().await;
         let refresh = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
         let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
         let start = Instant::now();
 
-        provision_with_retry(&device, &app_config(), &Client::new()).await;
+        provision_with_retry_for(device).await;
 
         assert_eq!(start.elapsed(), INITIAL_DELAY);
         set_config.assert_async().await;
@@ -561,12 +656,13 @@ mod tests {
     async fn provision_with_retry_provisions_again_while_the_settings_differ() {
         let mut server = Server::new_async().await;
         let set_config = set_config_mock(&mut server, false).expect(2).create_async().await;
+        device_info_mock(&mut server).create_async().await;
         let still_unprovisioned =
             mqtt_state_mock(&mut server, false, unprovisioned_config()).expect(1).create_async().await;
         let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
         let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
 
-        provision_with_retry(&device, &app_config(), &Client::new()).await;
+        provision_with_retry_for(device).await;
 
         set_config.assert_async().await;
         still_unprovisioned.assert_async().await;
@@ -577,11 +673,12 @@ mod tests {
     async fn provision_with_retry_waits_for_a_provisioned_device_to_connect() {
         let mut server = Server::new_async().await;
         let set_config = server.mock("POST", "/rpc/MQTT.SetConfig").expect(0).create_async().await;
+        device_info_mock(&mut server).create_async().await;
         let disconnected = mqtt_state_mock(&mut server, false, provisioned_config()).expect(1).create_async().await;
         let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
         let device = device(server.socket_address(), &[mqtt_component(false, provisioned_config())]);
 
-        provision_with_retry(&device, &app_config(), &Client::new()).await;
+        provision_with_retry_for(device).await;
 
         set_config.assert_async().await;
         disconnected.assert_async().await;
@@ -593,12 +690,13 @@ mod tests {
         let mut server = Server::new_async().await;
         let failure = server.mock("POST", "/rpc/MQTT.SetConfig").with_status(500).expect(1).create_async().await;
         let success = set_config_mock(&mut server, false).create_async().await;
+        device_info_mock(&mut server).create_async().await;
         let still_unprovisioned =
             mqtt_state_mock(&mut server, false, unprovisioned_config()).expect(1).create_async().await;
         let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
         let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
 
-        provision_with_retry(&device, &app_config(), &Client::new()).await;
+        provision_with_retry_for(device).await;
 
         failure.assert_async().await;
         success.assert_async().await;
@@ -606,11 +704,12 @@ mod tests {
         connected.assert_async().await;
     }
 
-    // A failed refresh keeps the last known state, so the device is provisioned again
+    // Provisioning on a stale state could overwrite the settings of the wrong device
     #[tokio::test(start_paused = true)]
-    async fn provision_with_retry_keeps_the_last_state_when_the_refresh_fails() {
+    async fn provision_with_retry_skips_provisioning_when_the_refresh_fails() {
         let mut server = Server::new_async().await;
-        let set_config = set_config_mock(&mut server, false).expect(2).create_async().await;
+        let set_config = set_config_mock(&mut server, false).expect(1).create_async().await;
+        device_info_mock(&mut server).create_async().await;
         let failed_refresh = server
             .mock("GET", "/rpc/Shelly.GetComponents")
             .match_query(Matcher::Any)
@@ -620,24 +719,67 @@ mod tests {
             .await;
         let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
         let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
+        let start = Instant::now();
 
-        provision_with_retry(&device, &app_config(), &Client::new()).await;
+        provision_with_retry_for(device).await;
 
+        assert_eq!(start.elapsed(), Duration::from_secs(30 + 60));
         set_config.assert_async().await;
         failed_refresh.assert_async().await;
         connected.assert_async().await;
     }
 
     #[tokio::test(start_paused = true)]
+    async fn provision_with_retry_skips_provisioning_when_the_address_belongs_to_another_device() {
+        let mut server = Server::new_async().await;
+        let set_config = set_config_mock(&mut server, false).expect(1).create_async().await;
+        let other_device = server
+            .mock("GET", "/rpc/Shelly.GetDeviceInfo")
+            .with_body(PLUS_1_DEVICE_INFO.replace(PLUS_1_ID, "shellyplus1-112233445566"))
+            .expect(1)
+            .create_async()
+            .await;
+        device_info_mock(&mut server).create_async().await;
+        let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
+        let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
+
+        provision_with_retry_for(device).await;
+
+        set_config.assert_async().await;
+        other_device.assert_async().await;
+        connected.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn provision_with_retry_follows_the_device_to_its_new_address() {
+        let mut old_server = Server::new_async().await;
+        let set_config = set_config_mock(&mut old_server, false).expect(1).create_async().await;
+        let old_refresh = old_server.mock("GET", Matcher::Any).expect(0).create_async().await;
+        let mut new_server = Server::new_async().await;
+        device_info_mock(&mut new_server).create_async().await;
+        let new_refresh = mqtt_state_mock(&mut new_server, true, provisioned_config()).create_async().await;
+        let device = Arc::new(device(old_server.socket_address(), &[mqtt_component(false, unprovisioned_config())]));
+        let moved = Arc::new(self::device(new_server.socket_address(), &[]));
+        let (_tx, probed_rx) = watch::channel(Arc::new(HashMap::from([(PLUS_1_ID.to_string(), moved)])));
+
+        provision_with_retry(device, &app_config(), &Client::new(), &probed_rx).await;
+
+        set_config.assert_async().await;
+        old_refresh.assert_async().await;
+        new_refresh.assert_async().await;
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn provision_with_retry_doubles_the_delay_up_to_the_maximum() {
         let mut server = Server::new_async().await;
         set_config_mock(&mut server, false).create_async().await;
+        device_info_mock(&mut server).create_async().await;
         let disconnected = mqtt_state_mock(&mut server, false, provisioned_config()).expect(6).create_async().await;
         let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
         let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
         let start = Instant::now();
 
-        provision_with_retry(&device, &app_config(), &Client::new()).await;
+        provision_with_retry_for(device).await;
 
         // 30s, 1m, 2m, 4m, 8m, then capped at 15m for the last two rounds
         let expected = Duration::from_secs(30 + 60 + 2 * 60 + 4 * 60 + 8 * 60) + 2 * MAX_DELAY;
