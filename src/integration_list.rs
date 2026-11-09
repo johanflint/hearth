@@ -19,17 +19,17 @@ pub fn integrations(
         vec![Arc::new(HueIntegration::new(config.clone(), store_rx.clone())?)];
 
     match (mdns_browser, mqtt_service) {
+        _ if !config.shelly().enabled() => {}
         (Some(mdns_browser), Some(mqtt_service)) => {
             integrations.push(Arc::new(ShellyIntegration::new(config, mdns_browser, mqtt_service, store_rx)?))
         }
-        (mdns_browser, mqtt_service) if config.shelly().enabled() => {
+        (mdns_browser, mqtt_service) => {
             let missing: Vec<&str> = [(mdns_browser.is_none(), "mDNS"), (mqtt_service.is_none(), "MQTT")]
                 .into_iter()
                 .filter_map(|(is_missing, name)| is_missing.then_some(name))
                 .collect();
             warn!("⚠️ Shelly integration skipped, unavailable: {}", missing.join(", "));
         }
-        _ => {} // Shelly is disabled, nothing to log
     }
     Ok(integrations)
 }
