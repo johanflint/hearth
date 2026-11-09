@@ -1,11 +1,12 @@
-use crate::domain::property::{BooleanProperty, Property, PropertyType};
-use crate::domain::{Device, DeviceType};
+use crate::domain::property::{BooleanProperty, EnumProperty, Property, PropertyType};
+use crate::domain::{Connectivity, Device, DeviceType};
 use crate::shelly::domain::{Component, SwitchStatus};
 use crate::shelly::prober::ProbedDevice;
 use std::collections::HashMap;
+use strum::IntoEnumIterator;
 
 pub fn map_shelly(probed_device: &ProbedDevice) -> Option<Device> {
-    let mut properties = HashMap::with_capacity(1);
+    let mut properties = HashMap::with_capacity(2);
 
     for component in &probed_device.components {
         match component {
@@ -27,6 +28,20 @@ pub fn map_shelly(probed_device: &ProbedDevice) -> Option<Device> {
     if properties.is_empty() {
         return None;
     }
+
+    let allowed_values: Vec<String> = Connectivity::iter().map(|c| c.to_string()).collect();
+    let connectivity_property = Box::new(
+        EnumProperty::new(
+            "connectivity".to_string(),
+            PropertyType::Connectivity,
+            true,
+            None,
+            Some(Connectivity::Connected.to_string()),
+            allowed_values,
+        )
+        .expect("connectivity status is always one of the declared allowed values"),
+    );
+    properties.insert(connectivity_property.name().to_owned(), connectivity_property);
 
     Some(Device {
         id: probed_device.info.id.clone(),
@@ -61,7 +76,17 @@ mod tests {
         assert_eq!(device.product_name, "Plus1");
         assert_eq!(device.name, "Hallway");
         assert_eq!(device.address.as_deref(), Some("192.168.1.35:80"));
-        assert_eq!(device.properties.len(), 1);
+        assert_eq!(device.properties.len(), 2);
+    }
+
+    #[test]
+    fn maps_a_device_to_a_connected_readonly_connectivity_property() {
+        let device = map_shelly(&probed_plus_1()).unwrap();
+
+        let property = device.get_property::<EnumProperty>("connectivity").unwrap();
+        assert_eq!(property.value(), Some("connected"));
+        assert_eq!(property.property_type(), PropertyType::Connectivity);
+        assert!(property.readonly());
     }
 
     #[test]
@@ -80,7 +105,7 @@ mod tests {
         let device =
             map_shelly(&probed_device(PLUS_1_ID, &[switch_component(0, true), switch_component(1, false)])).unwrap();
 
-        assert_eq!(device.properties.len(), 2);
+        assert_eq!(device.properties.len(), 3);
         assert!(device.get_property::<BooleanProperty>("switch0").unwrap().value());
         assert!(!device.get_property::<BooleanProperty>("switch1").unwrap().value());
         assert_eq!(device.get_property::<BooleanProperty>("switch1").unwrap().external_id(), Some("switch:1"));

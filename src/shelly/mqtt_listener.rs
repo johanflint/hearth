@@ -1,5 +1,5 @@
 use crate::domain::property::PropertyLocator;
-use crate::domain::{Event, InitiatedBy};
+use crate::domain::{Connectivity, Event, InitiatedBy};
 use crate::integration::IntegrationError;
 use crate::mqtt::{MqttMessage, MqttService};
 use crate::shelly::domain::SwitchStatus;
@@ -33,23 +33,29 @@ pub fn mqtt_listen(
                         debug!("⚠️ Ignoring message for unknown device '{device_id}'");
                         continue;
                     }
-                    match &message {
+                    let event = match &message {
                         ShellyMessage::Availability(status) => {
-                            debug!("Availability for device '{device_id}' changed to '{status}'");
+                            let value = if *status { Connectivity::Connected } else { Connectivity::Disconnected };
+                            Event::EnumPropertyChanged {
+                                device_id: device_id.to_string(),
+                                property_id: PropertyLocator::Name("connectivity".to_string()),
+                                value: Some(value.to_string()),
+                                initiated_by: InitiatedBy::External,
+                            }
                         }
                         ShellyMessage::Switch(status) => {
                             let property_id = PropertyLocator::ExternalId(format!("switch:{}", status.id));
-                            let event = Event::BooleanPropertyChanged {
+                            Event::BooleanPropertyChanged {
                                 device_id: device_id.to_string(),
                                 property_id,
                                 value: status.output,
                                 initiated_by: InitiatedBy::External,
-                            };
-                            if tx.send(event).await.is_err() {
-                                warn!("⚠️ Event channel closed, stopping MQTT listener");
-                                break;
                             }
                         }
+                    };
+                    if tx.send(event).await.is_err() {
+                        warn!("⚠️ Event channel closed, stopping MQTT listener");
+                        break;
                     }
                 }
                 Ok(None) => {}
