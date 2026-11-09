@@ -1,4 +1,5 @@
 mod client;
+mod controller;
 mod domain;
 mod fetch;
 mod integration;

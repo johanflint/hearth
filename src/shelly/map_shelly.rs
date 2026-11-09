@@ -1,5 +1,6 @@
 use crate::domain::property::{BooleanProperty, EnumProperty, Property, PropertyType};
 use crate::domain::{Connectivity, Device, DeviceType};
+use crate::shelly::controller::CONTROLLER_ID;
 use crate::shelly::domain::{Component, SwitchStatus};
 use crate::shelly::prober::ProbedDevice;
 use std::collections::HashMap;
@@ -54,7 +55,7 @@ pub fn map_shelly(probed_device: &ProbedDevice) -> Option<Device> {
         properties,
         external_id: None,
         address: Some(probed_device.address.to_string()),
-        controller_id: None,
+        controller_id: Some(CONTROLLER_ID),
     })
 }
 

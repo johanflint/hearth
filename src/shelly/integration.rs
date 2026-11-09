@@ -1,11 +1,13 @@
 use crate::app_config::AppConfig;
 use crate::domain::{Command, Controller, Event};
 use crate::integration::{Discovery, Integration, IntegrationError, IntegrationStatus};
-use crate::mdns_browser::{DiscoveredServices, MdnsBrowser};
+use crate::mdns_browser::MdnsBrowser;
 use crate::mqtt::MqttService;
 use crate::mqtt_security::MqttSecurity;
 use crate::shelly::client::new_client;
+use crate::shelly::controller::ShellyController;
 use crate::shelly::mqtt_listener::mqtt_listen;
+use crate::shelly::prober::ProbedDeviceMap;
 use crate::shelly::{prober, provisioner, registrar};
 use crate::store::StoreSnapshot;
 use async_trait::async_trait;
@@ -22,7 +24,7 @@ const SERVICE_TYPE: &str = "_shelly._tcp.local.";
 pub struct ShellyIntegration {
     client: Client,
     config: Arc<AppConfig>,
-    mdns_rx: WatchReceiver<DiscoveredServices>,
+    probed_rx: WatchReceiver<ProbedDeviceMap>,
     mqtt_service: MqttService,
     mqtt_security: Arc<MqttSecurity>,
     store_rx: WatchReceiver<StoreSnapshot>,
@@ -37,8 +39,9 @@ impl ShellyIntegration {
     ) -> Result<Self, IntegrationError> {
         let client = new_client(&config)?;
         let mdns_rx = mdns_browser.browse(SERVICE_TYPE)?;
+        let probed_rx = prober::probe_announced_devices(&client, mdns_rx);
         let mqtt_security = Arc::new(MqttSecurity::new(mqtt_service.clone())?);
-        Ok(ShellyIntegration { client, config, mdns_rx, mqtt_service, mqtt_security, store_rx })
+        Ok(ShellyIntegration { client, config, probed_rx, mqtt_service, mqtt_security, store_rx })
     }
 }
 
@@ -57,8 +60,7 @@ impl Integration for ShellyIntegration {
     }
 
     async fn observe(&self, tx: Sender<Event>) -> Result<(), IntegrationError> {
-        let probed_rx = prober::probe_announced_devices(&self.client, self.mdns_rx.clone());
-        registrar::register_probed_devices(probed_rx.clone(), tx.clone());
+        registrar::register_probed_devices(self.probed_rx.clone(), tx.clone());
         if is_loopback_address(self.config.mqtt().advertised_host()) {
             warn!(
                 "⚠️ The advertised MQTT host is '{}', devices can't reach the broker there, use the LAN address",
@@ -69,7 +71,7 @@ impl Integration for ShellyIntegration {
                 &self.client,
                 Arc::clone(&self.config),
                 Arc::clone(&self.mqtt_security),
-                probed_rx,
+                self.probed_rx.clone(),
             );
         }
         mqtt_listen(&self.mqtt_service, self.store_rx.clone(), tx)?;
@@ -77,7 +79,7 @@ impl Integration for ShellyIntegration {
     }
 
     fn controller(&self) -> Arc<dyn Controller> {
-        Arc::new(StubController)
+        Arc::new(ShellyController::new(self.client.clone(), self.probed_rx.clone()))
     }
 
     fn status(&self) -> IntegrationStatus {
@@ -87,18 +89,6 @@ impl Integration for ShellyIntegration {
 
 fn is_loopback_address(host: &str) -> bool {
     host == "localhost" || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
-}
-
-#[derive(Debug)]
-struct StubController;
-
-#[async_trait]
-impl Controller for StubController {
-    fn id(&self) -> &'static str {
-        "stub"
-    }
-
-    async fn execute(&self, _command: Command) {}
 }
 
 #[cfg(test)]
