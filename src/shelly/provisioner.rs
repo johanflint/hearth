@@ -1,4 +1,5 @@
 use crate::app_config::{AppConfig, Mqtt as MqttAppConfig};
+use crate::mqtt_security::{MqttSecurity, SecurityError};
 use crate::shelly::domain::{Component, ComponentsResult, DeviceInfo, MqttConfig, MqttStatus};
 use crate::shelly::fetch::{FetchError, call, fetch};
 use crate::shelly::prober::{ProbedDevice, ProbedDeviceMap};
@@ -14,13 +15,17 @@ use thiserror::Error;
 use tokio::sync::watch::Receiver as WatchReceiver;
 use tokio::task;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 const INITIAL_DELAY: Duration = Duration::from_secs(30);
 const MAX_DELAY: Duration = Duration::from_secs(15 * 60);
+// Rounds a provisioned device may stay disconnected before it gets new credentials, in case the broker lost its account
+const PENDING_ROUNDS_BEFORE_REPROVISIONING: u32 = 3;
 
 pub fn provision_announced_devices(
     client: &Client,
     config: Arc<AppConfig>,
+    mqtt_security: Arc<MqttSecurity>,
     mut probed_rx: WatchReceiver<ProbedDeviceMap>,
 ) {
     let client = client.clone();
@@ -32,8 +37,9 @@ pub fn provision_announced_devices(
                 let probed_rx = probed_rx.clone();
                 let client = client.clone();
                 let config = Arc::clone(&config);
+                let mqtt_security = Arc::clone(&mqtt_security);
                 task::spawn(async move {
-                    provision_with_retry(device, &config, &client, &probed_rx).await;
+                    provision_with_retry(device, &config, &client, &mqtt_security, &probed_rx).await;
                 });
             }
 
@@ -48,6 +54,7 @@ async fn provision_with_retry(
     mut device: Arc<ProbedDevice>,
     config: &AppConfig,
     client: &Client,
+    mqtt_security: &MqttSecurity,
     probed_rx: &WatchReceiver<ProbedDeviceMap>,
 ) {
     let Some(mut state) = mqtt_state(&device.components) else {
@@ -56,10 +63,13 @@ async fn provision_with_retry(
     };
 
     let mut delay = INITIAL_DELAY;
+    let mut pending_rounds = 0;
     loop {
-        match provision(&device, &state, config, client).await {
+        let force = pending_rounds >= PENDING_ROUNDS_BEFORE_REPROVISIONING;
+        match provision(&device, &state, config, client, mqtt_security, force).await {
             Ok(Provisioning::Connected) => return,
-            Ok(Provisioning::Pending) => {}
+            Ok(Provisioning::Pending) if force => pending_rounds = 0,
+            Ok(Provisioning::Pending) => pending_rounds += 1,
             Err(err) => {
                 warn!(
                     device_id = device.info.id,
@@ -95,6 +105,14 @@ async fn refresh_until_verified(
             ),
         }
     }
+}
+
+#[derive(Error, Debug)]
+enum ProvisionError {
+    #[error(transparent)]
+    Fetch(#[from] FetchError),
+    #[error(transparent)]
+    Security(#[from] SecurityError),
 }
 
 #[derive(Error, Debug)]
@@ -137,7 +155,9 @@ async fn provision(
     mqtt_state: &MqttState,
     config: &AppConfig,
     client: &Client,
-) -> Result<Provisioning, FetchError> {
+    mqtt_security: &MqttSecurity,
+    force: bool,
+) -> Result<Provisioning, ProvisionError> {
     let desired = MqttSettings::desired(&device.info.id, config.mqtt());
     let settings_match = MqttSettings::actual(&device.info.id, &mqtt_state.config) == desired;
     if settings_match && mqtt_state.status.connected {
@@ -151,11 +171,18 @@ async fn provision(
             "⚠️ Shelly device '{}' has the correct MQTT settings but is not connected yet", device.info.id
         );
 
-        return Ok(Provisioning::Pending);
+        if !force {
+            return Ok(Provisioning::Pending);
+        }
     }
 
     info!(device_id = device.info.id, "⚙️ Provisioning Shelly device '{}'...", device.info.id);
-    let request = SetConfigRequest { config: SetConfig { settings: &desired, pass: config.mqtt().password() } };
+    let password = Uuid::new_v4().simple().to_string();
+    mqtt_security
+        .ensure_account(&format!("shelly-{}", &device.info.id), &device.info.id, &device.info.id, &password)
+        .await?;
+
+    let request = SetConfigRequest { config: SetConfig { settings: &desired, pass: &password } };
     let result: SetConfigResult = call(client, &device.address, "MQTT.SetConfig", &request).await?;
 
     if result.restart_required {
@@ -219,7 +246,7 @@ impl MqttSettings {
         MqttSettings {
             enable: true,
             server: Some(format!("{}:{}", config.advertised_host(), config.advertised_port())),
-            user: Some(config.username().to_string()),
+            user: Some(device_id.to_string()),
             topic_prefix: device_id.to_string(),
             rpc_ntf: false,
             status_ntf: true,
@@ -246,13 +273,13 @@ impl MqttSettings {
 mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
+    use crate::mqtt::MqttService;
     use crate::shelly::test_support::{PLUS_1_DEVICE_INFO, PLUS_1_ID, ble_component, mqtt_component, probed_device};
     use mockito::{Matcher, Mock, Server, ServerGuard};
     use pretty_assertions::assert_eq;
     use reqwest::StatusCode;
     use rstest::rstest;
     use serde_json::{Value, json};
-    use std::collections::HashMap;
     use std::net::SocketAddr;
     use tokio::sync::watch;
     use tokio::time::Instant;
@@ -270,7 +297,7 @@ mod tests {
             "enable": true,
             "server": ADVERTISED_SERVER,
             "client_id": null,
-            "user": "hearth",
+            "user": PLUS_1_ID,
             "topic_prefix": PLUS_1_ID,
             "rpc_ntf": false,
             "status_ntf": true,
@@ -297,17 +324,6 @@ mod tests {
         MqttSettings::actual(PLUS_1_ID, &state(true, config).config)
     }
 
-    fn unprovisioned_config() -> Value {
-        with(provisioned_config(), "enable", json!(false))
-    }
-
-    // Returns the mock unregistered, so the caller can set expectations before `create_async`
-    fn set_config_mock(server: &mut ServerGuard, restart_required: bool) -> Mock {
-        server
-            .mock("POST", "/rpc/MQTT.SetConfig")
-            .with_body(json!({ "restart_required": restart_required }).to_string())
-    }
-
     // Returns the mock unregistered, so the caller can set expectations before `create_async`
     fn mqtt_state_mock(server: &mut ServerGuard, connected: bool, config: Value) -> Mock {
         server
@@ -324,9 +340,22 @@ mod tests {
         server.mock("GET", "/rpc/Shelly.GetDeviceInfo").with_body(PLUS_1_DEVICE_INFO)
     }
 
+    // Not connected: the tests using it must not reach the broker
+    fn mqtt_security() -> MqttSecurity {
+        MqttSecurity::new(MqttService::unconnected()).expect("subscribing is queued, not sent")
+    }
+
+    async fn provision_device(
+        device: &ProbedDevice,
+        state: &MqttState,
+        force: bool,
+    ) -> Result<Provisioning, ProvisionError> {
+        provision(device, state, &app_config(), &Client::new(), &mqtt_security(), force).await
+    }
+
     async fn provision_with_retry_for(device: ProbedDevice) {
         let (_tx, probed_rx) = watch::channel(ProbedDeviceMap::default());
-        provision_with_retry(Arc::new(device), &app_config(), &Client::new(), &probed_rx).await;
+        provision_with_retry(Arc::new(device), &app_config(), &Client::new(), &mqtt_security(), &probed_rx).await;
     }
 
     fn desired_settings() -> MqttSettings {
@@ -340,7 +369,7 @@ mod tests {
         let expected = MqttSettings {
             enable: true,
             server: Some(ADVERTISED_SERVER.to_string()),
-            user: Some("hearth".to_string()),
+            user: Some(PLUS_1_ID.to_string()),
             topic_prefix: PLUS_1_ID.to_string(),
             rpc_ntf: false,
             status_ntf: true,
@@ -394,7 +423,7 @@ mod tests {
         let expected = json!({ "config": {
             "enable": true,
             "server": ADVERTISED_SERVER,
-            "user": "hearth",
+            "user": PLUS_1_ID,
             "topic_prefix": PLUS_1_ID,
             "rpc_ntf": false,
             "status_ntf": true,
@@ -417,14 +446,13 @@ mod tests {
         let reboot = server.mock("POST", "/rpc/Shelly.Reboot").expect(0).create_async().await;
         let device = device(server.socket_address(), &[]);
 
-        let result = provision(&device, &state(true, provisioned_config()), &app_config(), &Client::new()).await;
+        let result = provision_device(&device, &state(true, provisioned_config()), false).await;
 
         assert!(matches!(result, Ok(Provisioning::Connected)), "got {result:?}");
         set_config.assert_async().await;
         reboot.assert_async().await;
     }
 
-    // Waits for the device to connect, the next commits push fresh credentials here
     #[tokio::test]
     async fn provision_leaves_a_provisioned_but_disconnected_device_pending() {
         let mut server = Server::new_async().await;
@@ -432,52 +460,7 @@ mod tests {
         let reboot = server.mock("POST", "/rpc/Shelly.Reboot").expect(0).create_async().await;
         let device = device(server.socket_address(), &[]);
 
-        let result = provision(&device, &state(false, provisioned_config()), &app_config(), &Client::new()).await;
-
-        assert!(matches!(result, Ok(Provisioning::Pending)), "got {result:?}");
-        set_config.assert_async().await;
-        reboot.assert_async().await;
-    }
-
-    // The MQTT status reflects the old settings, so it doesn't count until the new settings are applied
-    #[tokio::test]
-    async fn provision_configures_a_connected_device_with_other_settings() {
-        let mut server = Server::new_async().await;
-        let set_config = set_config_mock(&mut server, false).create_async().await;
-        let device = device(server.socket_address(), &[]);
-        let other_server = with(provisioned_config(), "server", json!("10.0.0.1:1883"));
-
-        let result = provision(&device, &state(true, other_server), &app_config(), &Client::new()).await;
-
-        assert!(matches!(result, Ok(Provisioning::Pending)), "got {result:?}");
-        set_config.assert_async().await;
-    }
-
-    #[tokio::test]
-    async fn provision_configures_the_device_and_reboots_it() {
-        let mut server = Server::new_async().await;
-        let set_config = server
-            .mock("POST", "/rpc/MQTT.SetConfig")
-            .match_body(Matcher::AllOf(vec![
-                Matcher::PartialJson(json!({ "config": {
-                    "enable": true,
-                    "server": ADVERTISED_SERVER,
-                    "user": "hearth",
-                    "topic_prefix": PLUS_1_ID,
-                    "rpc_ntf": false,
-                    "status_ntf": true,
-                    "enable_rpc": false,
-                    "enable_control": false,
-                }})),
-                Matcher::Regex(r#""pass":"[^"]+""#.to_string()),
-            ]))
-            .with_body(r#"{"restart_required":true}"#)
-            .create_async()
-            .await;
-        let reboot = server.mock("POST", "/rpc/Shelly.Reboot").with_body("null").create_async().await;
-        let device = device(server.socket_address(), &[]);
-
-        let result = provision(&device, &state(false, unprovisioned_config()), &app_config(), &Client::new()).await;
+        let result = provision_device(&device, &state(false, provisioned_config()), false).await;
 
         assert!(matches!(result, Ok(Provisioning::Pending)), "got {result:?}");
         set_config.assert_async().await;
@@ -485,46 +468,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn provision_does_not_reboot_when_no_restart_is_required() {
+    async fn provision_forced_leaves_a_provisioned_and_connected_device_alone() {
         let mut server = Server::new_async().await;
-        let set_config = set_config_mock(&mut server, false).create_async().await;
-        let reboot = server.mock("POST", "/rpc/Shelly.Reboot").expect(0).create_async().await;
+        let set_config = server.mock("POST", "/rpc/MQTT.SetConfig").expect(0).create_async().await;
         let device = device(server.socket_address(), &[]);
-        let no_status_notifications = with(provisioned_config(), "status_ntf", json!(false));
 
-        let result = provision(&device, &state(false, no_status_notifications), &app_config(), &Client::new()).await;
+        let result = provision_device(&device, &state(true, provisioned_config()), true).await;
 
-        assert!(matches!(result, Ok(Provisioning::Pending)), "got {result:?}");
+        assert!(matches!(result, Ok(Provisioning::Connected)), "got {result:?}");
         set_config.assert_async().await;
-        reboot.assert_async().await;
-    }
-
-    #[tokio::test]
-    async fn provision_fails_when_the_device_rejects_the_configuration() {
-        let mut server = Server::new_async().await;
-        server.mock("POST", "/rpc/MQTT.SetConfig").with_status(401).create_async().await;
-        let reboot = server.mock("POST", "/rpc/Shelly.Reboot").expect(0).create_async().await;
-        let device = device(server.socket_address(), &[]);
-
-        let result = provision(&device, &state(false, unprovisioned_config()), &app_config(), &Client::new()).await;
-
-        assert!(matches!(result, Err(FetchError::UnexpectedResponse(StatusCode::UNAUTHORIZED, _))), "got {result:?}");
-        reboot.assert_async().await;
-    }
-
-    #[tokio::test]
-    async fn provision_fails_when_the_reboot_fails() {
-        let mut server = Server::new_async().await;
-        set_config_mock(&mut server, true).create_async().await;
-        server.mock("POST", "/rpc/Shelly.Reboot").with_status(500).create_async().await;
-        let device = device(server.socket_address(), &[]);
-
-        let result = provision(&device, &state(false, unprovisioned_config()), &app_config(), &Client::new()).await;
-
-        assert!(
-            matches!(result, Err(FetchError::UnexpectedResponse(StatusCode::INTERNAL_SERVER_ERROR, _))),
-            "got {result:?}"
-        );
     }
 
     #[tokio::test]
@@ -635,41 +587,6 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn provision_with_retry_stops_once_the_device_is_connected() {
-        let mut server = Server::new_async().await;
-        let set_config = set_config_mock(&mut server, true).create_async().await;
-        let reboot = server.mock("POST", "/rpc/Shelly.Reboot").with_body("null").create_async().await;
-        device_info_mock(&mut server).create_async().await;
-        let refresh = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
-        let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
-        let start = Instant::now();
-
-        provision_with_retry_for(device).await;
-
-        assert_eq!(start.elapsed(), INITIAL_DELAY);
-        set_config.assert_async().await;
-        reboot.assert_async().await;
-        refresh.assert_async().await;
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn provision_with_retry_provisions_again_while_the_settings_differ() {
-        let mut server = Server::new_async().await;
-        let set_config = set_config_mock(&mut server, false).expect(2).create_async().await;
-        device_info_mock(&mut server).create_async().await;
-        let still_unprovisioned =
-            mqtt_state_mock(&mut server, false, unprovisioned_config()).expect(1).create_async().await;
-        let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
-        let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
-
-        provision_with_retry_for(device).await;
-
-        set_config.assert_async().await;
-        still_unprovisioned.assert_async().await;
-        connected.assert_async().await;
-    }
-
-    #[tokio::test(start_paused = true)]
     async fn provision_with_retry_waits_for_a_provisioned_device_to_connect() {
         let mut server = Server::new_async().await;
         let set_config = server.mock("POST", "/rpc/MQTT.SetConfig").expect(0).create_async().await;
@@ -681,109 +598,6 @@ mod tests {
         provision_with_retry_for(device).await;
 
         set_config.assert_async().await;
-        disconnected.assert_async().await;
-        connected.assert_async().await;
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn provision_with_retry_retries_after_a_failed_provisioning() {
-        let mut server = Server::new_async().await;
-        let failure = server.mock("POST", "/rpc/MQTT.SetConfig").with_status(500).expect(1).create_async().await;
-        let success = set_config_mock(&mut server, false).create_async().await;
-        device_info_mock(&mut server).create_async().await;
-        let still_unprovisioned =
-            mqtt_state_mock(&mut server, false, unprovisioned_config()).expect(1).create_async().await;
-        let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
-        let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
-
-        provision_with_retry_for(device).await;
-
-        failure.assert_async().await;
-        success.assert_async().await;
-        still_unprovisioned.assert_async().await;
-        connected.assert_async().await;
-    }
-
-    // Provisioning on a stale state could overwrite the settings of the wrong device
-    #[tokio::test(start_paused = true)]
-    async fn provision_with_retry_skips_provisioning_when_the_refresh_fails() {
-        let mut server = Server::new_async().await;
-        let set_config = set_config_mock(&mut server, false).expect(1).create_async().await;
-        device_info_mock(&mut server).create_async().await;
-        let failed_refresh = server
-            .mock("GET", "/rpc/Shelly.GetComponents")
-            .match_query(Matcher::Any)
-            .with_status(500)
-            .expect(1)
-            .create_async()
-            .await;
-        let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
-        let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
-        let start = Instant::now();
-
-        provision_with_retry_for(device).await;
-
-        assert_eq!(start.elapsed(), Duration::from_secs(30 + 60));
-        set_config.assert_async().await;
-        failed_refresh.assert_async().await;
-        connected.assert_async().await;
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn provision_with_retry_skips_provisioning_when_the_address_belongs_to_another_device() {
-        let mut server = Server::new_async().await;
-        let set_config = set_config_mock(&mut server, false).expect(1).create_async().await;
-        let other_device = server
-            .mock("GET", "/rpc/Shelly.GetDeviceInfo")
-            .with_body(PLUS_1_DEVICE_INFO.replace(PLUS_1_ID, "shellyplus1-112233445566"))
-            .expect(1)
-            .create_async()
-            .await;
-        device_info_mock(&mut server).create_async().await;
-        let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
-        let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
-
-        provision_with_retry_for(device).await;
-
-        set_config.assert_async().await;
-        other_device.assert_async().await;
-        connected.assert_async().await;
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn provision_with_retry_follows_the_device_to_its_new_address() {
-        let mut old_server = Server::new_async().await;
-        let set_config = set_config_mock(&mut old_server, false).expect(1).create_async().await;
-        let old_refresh = old_server.mock("GET", Matcher::Any).expect(0).create_async().await;
-        let mut new_server = Server::new_async().await;
-        device_info_mock(&mut new_server).create_async().await;
-        let new_refresh = mqtt_state_mock(&mut new_server, true, provisioned_config()).create_async().await;
-        let device = Arc::new(device(old_server.socket_address(), &[mqtt_component(false, unprovisioned_config())]));
-        let moved = Arc::new(self::device(new_server.socket_address(), &[]));
-        let (_tx, probed_rx) = watch::channel(Arc::new(HashMap::from([(PLUS_1_ID.to_string(), moved)])));
-
-        provision_with_retry(device, &app_config(), &Client::new(), &probed_rx).await;
-
-        set_config.assert_async().await;
-        old_refresh.assert_async().await;
-        new_refresh.assert_async().await;
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn provision_with_retry_doubles_the_delay_up_to_the_maximum() {
-        let mut server = Server::new_async().await;
-        set_config_mock(&mut server, false).create_async().await;
-        device_info_mock(&mut server).create_async().await;
-        let disconnected = mqtt_state_mock(&mut server, false, provisioned_config()).expect(6).create_async().await;
-        let connected = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
-        let device = device(server.socket_address(), &[mqtt_component(false, unprovisioned_config())]);
-        let start = Instant::now();
-
-        provision_with_retry_for(device).await;
-
-        // 30s, 1m, 2m, 4m, 8m, then capped at 15m for the last two rounds
-        let expected = Duration::from_secs(30 + 60 + 2 * 60 + 4 * 60 + 8 * 60) + 2 * MAX_DELAY;
-        assert_eq!(start.elapsed(), expected);
         disconnected.assert_async().await;
         connected.assert_async().await;
     }

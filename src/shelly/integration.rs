@@ -3,6 +3,7 @@ use crate::domain::{Command, Controller, Event};
 use crate::integration::{Discovery, Integration, IntegrationError, IntegrationStatus};
 use crate::mdns_browser::{DiscoveredServices, MdnsBrowser};
 use crate::mqtt::MqttService;
+use crate::mqtt_security::MqttSecurity;
 use crate::shelly::client::new_client;
 use crate::shelly::mqtt_listener::mqtt_listen;
 use crate::shelly::{prober, provisioner, registrar};
@@ -23,6 +24,7 @@ pub struct ShellyIntegration {
     config: Arc<AppConfig>,
     mdns_rx: WatchReceiver<DiscoveredServices>,
     mqtt_service: MqttService,
+    mqtt_security: Arc<MqttSecurity>,
     store_rx: WatchReceiver<StoreSnapshot>,
 }
 
@@ -35,7 +37,8 @@ impl ShellyIntegration {
     ) -> Result<Self, IntegrationError> {
         let client = new_client(&config)?;
         let mdns_rx = mdns_browser.browse(SERVICE_TYPE)?;
-        Ok(ShellyIntegration { client, config, mdns_rx, mqtt_service, store_rx })
+        let mqtt_security = Arc::new(MqttSecurity::new(mqtt_service.clone())?);
+        Ok(ShellyIntegration { client, config, mdns_rx, mqtt_service, mqtt_security, store_rx })
     }
 }
 
@@ -62,7 +65,12 @@ impl Integration for ShellyIntegration {
                 self.config.mqtt().advertised_host()
             );
         } else {
-            provisioner::provision_announced_devices(&self.client, Arc::clone(&self.config), probed_rx);
+            provisioner::provision_announced_devices(
+                &self.client,
+                Arc::clone(&self.config),
+                Arc::clone(&self.mqtt_security),
+                probed_rx,
+            );
         }
         mqtt_listen(&self.mqtt_service, self.store_rx.clone(), tx)?;
         Ok(())

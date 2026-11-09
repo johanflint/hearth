@@ -44,6 +44,7 @@ mod mdns_browser;
 mod metrics;
 mod metrics_layer;
 mod mqtt;
+mod mqtt_security;
 mod preset_loader;
 mod preset_registry;
 mod property_changed_reducer;

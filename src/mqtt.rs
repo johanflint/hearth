@@ -4,8 +4,8 @@ use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, Publish, QoS};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::{mpsc, watch};
 use tokio::task;
 use tracing::warn;
 
@@ -15,7 +15,7 @@ pub struct MqttMessage {
     pub payload: Bytes,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MqttService {
     client: AsyncClient,
     registry: Arc<Mutex<Registry>>,
@@ -35,18 +35,37 @@ impl MqttService {
         MqttService { client, registry }
     }
 
+    // Never connects, the event loop is dropped: publishing fails at once
+    #[cfg(test)]
+    pub fn unconnected() -> Self {
+        let (client, _event_loop) = AsyncClient::new(MqttOptions::new("test", "localhost", 1883), 64);
+        MqttService { client, registry: Arc::new(Mutex::new(Registry::default())) }
+    }
+
     pub fn subscribe(&self, filters: &[&str]) -> Result<mpsc::Receiver<MqttMessage>, MqttSubscribeError> {
         let (tx, rx) = mpsc::channel(64);
         let filters: Vec<String> = filters.iter().map(|s| s.to_string()).collect();
 
         let mut registry = lock(&self.registry);
-        if registry.connected {
+        if *registry.connected.borrow() {
             for filter in &filters {
                 self.client.try_subscribe(filter, QoS::AtLeastOnce)?;
             }
         }
         registry.subscriptions.push(Subscription { filters, tx });
         Ok(rx)
+    }
+
+    // Waits until connected: subscriptions are queued on connect, so a publish after it is sent behind them.
+    // Calls should apply a timeout, this waits for as long as the broker is unreachable
+    pub async fn publish(&self, topic: &str, payload: Vec<u8>) -> Result<(), MqttPublishError> {
+        self.wait_connected().await;
+        self.client.publish(topic, QoS::AtLeastOnce, false, payload).await.map_err(MqttPublishError::from)
+    }
+
+    async fn wait_connected(&self) {
+        let mut connected = lock(&self.registry).connected.subscribe();
+        let _ = connected.wait_for(|connected| *connected).await;
     }
 }
 
@@ -55,18 +74,18 @@ async fn poll(client: AsyncClient, mut event_loop: EventLoop, registry: Arc<Mute
         match event_loop.poll().await {
             // Clean session: the broker forgets subscriptions, so subscribe after every (re)connect
             Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                let mut registry = lock(&registry);
-                registry.connected = true;
+                let registry = lock(&registry);
                 for filter in registry.subscriptions.iter().flat_map(|s| &s.filters) {
                     if let Err(err) = client.try_subscribe(filter, QoS::AtLeastOnce) {
                         warn!("⚠️ Failed to subscribe to '{filter}': {err}");
                     }
                 }
+                registry.connected.send_replace(true);
             }
             Ok(Event::Incoming(Packet::Publish(publish))) => dispatch(&registry, publish),
             Ok(_) => {}
             Err(err) => {
-                lock(&registry).connected = false;
+                lock(&registry).connected.send_replace(false);
                 warn!("⚠️ MQTT connection error: {err}");
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
@@ -78,7 +97,7 @@ fn dispatch(registry: &Mutex<Registry>, publish: Publish) {
     let registry = lock(registry);
 
     for subscription in
-        registry.subscriptions.iter().filter(|s| s.filters.iter().any(|f| rumqttc::matches(&publish.topic, f)))
+        registry.subscriptions.iter().filter(|s| s.filters.iter().any(|f| topic_matches(&publish.topic, f)))
     {
         let message = MqttMessage { topic: publish.topic.clone(), payload: publish.payload.clone() };
         match subscription.tx.try_send(message) {
@@ -88,6 +107,16 @@ fn dispatch(registry: &Mutex<Registry>, publish: Publish) {
                 subscription.filters, publish.topic
             ),
         }
+    }
+}
+
+// rumqttc::matches never matches a topic starting with `$`, so `$CONTROL/...` needs its own handling.
+// A filter only matches such a topic when it starts with `$` too, so wildcards stay out of the `$` topics
+fn topic_matches(topic: &str, filter: &str) -> bool {
+    match (topic.strip_prefix('$'), filter.strip_prefix('$')) {
+        (Some(topic), Some(filter)) => rumqttc::matches(topic, filter),
+        (None, None) => rumqttc::matches(topic, filter),
+        _ => false,
     }
 }
 
@@ -101,14 +130,27 @@ struct Subscription {
     tx: mpsc::Sender<MqttMessage>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 struct Registry {
     subscriptions: Vec<Subscription>,
-    connected: bool,
+    connected: watch::Sender<bool>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        let (connected, _) = watch::channel(false);
+        Registry { subscriptions: vec![], connected }
+    }
 }
 
 #[derive(Debug, Error)]
 pub enum MqttSubscribeError {
+    #[error(transparent)]
+    ClientError(#[from] rumqttc::ClientError),
+}
+
+#[derive(Debug, Error)]
+pub enum MqttPublishError {
     #[error(transparent)]
     ClientError(#[from] rumqttc::ClientError),
 }
@@ -129,7 +171,7 @@ mod tests {
     }
 
     fn registry(subscriptions: Vec<Subscription>) -> Mutex<Registry> {
-        Mutex::new(Registry { subscriptions, connected: false })
+        Mutex::new(Registry { subscriptions, ..Default::default() })
     }
 
     // The event loop is returned so the request channel stays open
@@ -148,6 +190,26 @@ mod tests {
         let message = rx.try_recv().unwrap();
         assert_eq!(message.topic, "shelly-1/online");
         assert_eq!(message.payload, Bytes::from_static(b"true"));
+    }
+
+    #[test]
+    fn dispatch_delivers_a_dollar_topic_to_a_subscription_for_that_topic() {
+        let (sub, mut rx) = subscription(&["$CONTROL/dynamic-security/v1/response"], 8);
+        let registry = registry(vec![sub]);
+
+        dispatch(&registry, publish("$CONTROL/dynamic-security/v1/response", "{}"));
+
+        assert_eq!(rx.try_recv().unwrap().topic, "$CONTROL/dynamic-security/v1/response");
+    }
+
+    #[test]
+    fn dispatch_does_not_deliver_a_dollar_topic_to_a_wildcard_subscription() {
+        let (sub, mut rx) = subscription(&["#", "+/dynamic-security/v1/response"], 8);
+        let registry = registry(vec![sub]);
+
+        dispatch(&registry, publish("$CONTROL/dynamic-security/v1/response", "{}"));
+
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     }
 
     #[test]
@@ -233,11 +295,26 @@ mod tests {
     #[test]
     fn subscribe_fails_without_registering_when_connected_and_the_request_queue_is_full() {
         let (service, _event_loop) = service(1);
-        lock(&service.registry).connected = true;
+        lock(&service.registry).connected.send_replace(true);
 
         let result = service.subscribe(&["a", "b"]);
 
         assert!(matches!(result, Err(MqttSubscribeError::ClientError(_))));
         assert!(lock(&service.registry).subscriptions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn wait_connected_returns_once_the_connection_is_up() {
+        let (service, _event_loop) = service(8);
+        let waiting = tokio::spawn({
+            let service = service.clone();
+            async move { service.wait_connected().await }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!waiting.is_finished());
+
+        lock(&service.registry).connected.send_replace(true);
+        tokio::time::timeout(Duration::from_secs(1), waiting).await.expect("woken by the connection").unwrap();
     }
 }
