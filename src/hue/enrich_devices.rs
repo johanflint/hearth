@@ -22,7 +22,7 @@ pub fn enrich_devices(
 }
 
 fn enrich_connectivity(device: &mut Device, connectivity_map: &HashMap<String, Connectivity>) {
-    let status = connectivity_map.get(&device.id).unwrap_or_else(|| &Connectivity::Unknown);
+    let status = connectivity_map.get(&device.id).unwrap_or(&Connectivity::Unknown);
     let allowed_values: Vec<String> = Connectivity::iter().map(|c| c.to_string()).collect();
 
     let connectivity_property = Box::new(
