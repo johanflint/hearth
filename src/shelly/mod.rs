@@ -5,6 +5,7 @@ mod fetch;
 mod integration;
 mod map_shelly;
 mod mqtt_listener;
+mod pending_writes;
 mod prober;
 mod provisioner;
 mod registrar;

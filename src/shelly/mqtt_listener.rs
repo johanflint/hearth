@@ -3,7 +3,10 @@ use crate::domain::{Connectivity, Event, InitiatedBy};
 use crate::integration::IntegrationError;
 use crate::mqtt::{MqttMessage, MqttService};
 use crate::shelly::domain::SwitchStatus;
+use crate::shelly::pending_writes::PendingWrites;
 use crate::store::StoreSnapshot;
+use std::sync::Arc;
+use std::time::Instant;
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::watch::Receiver as WatchReceiver;
@@ -20,6 +23,7 @@ enum ShellyMessage {
 
 pub fn mqtt_listen(
     mqtt_service: &MqttService,
+    pending_writes: Arc<PendingWrites>,
     store_rx: WatchReceiver<StoreSnapshot>,
     tx: Sender<Event>,
 ) -> Result<(), IntegrationError> {
@@ -45,11 +49,13 @@ pub fn mqtt_listen(
                         }
                         ShellyMessage::Switch(status) => {
                             let property_id = PropertyLocator::ExternalId(format!("switch:{}", status.id));
+                            let initiated_by = switch_initiated_by(&pending_writes, device_id, status);
+
                             Event::BooleanPropertyChanged {
                                 device_id: device_id.to_string(),
                                 property_id,
                                 value: status.output,
-                                initiated_by: InitiatedBy::External,
+                                initiated_by,
                             }
                         }
                     };
@@ -64,6 +70,14 @@ pub fn mqtt_listen(
         }
     });
     Ok(())
+}
+
+fn switch_initiated_by(pending_writes: &PendingWrites, device_id: &str, status: &SwitchStatus) -> InitiatedBy {
+    if pending_writes.confirm(device_id, status.id, status.output, Instant::now()) {
+        InitiatedBy::Hearth
+    } else {
+        InitiatedBy::External
+    }
 }
 
 fn parse(message: &MqttMessage) -> Result<Option<(&str, ShellyMessage)>, ParseError> {
@@ -121,6 +135,54 @@ mod tests {
         let result = parse(&message);
 
         assert!(matches!(result, Err(ParseError::Availability(_))));
+    }
+
+    #[test]
+    fn switch_initiated_by_recognizes_an_echo_of_a_hearth_write() {
+        let pending_writes = PendingWrites::default();
+        pending_writes.record("shelly-1", 0, true, Instant::now());
+
+        let initiated_by = switch_initiated_by(&pending_writes, "shelly-1", &SwitchStatus { id: 0, output: true });
+
+        assert_eq!(initiated_by, InitiatedBy::Hearth);
+    }
+
+    #[test]
+    fn switch_initiated_by_treats_an_unrecorded_change_as_external() {
+        let initiated_by =
+            switch_initiated_by(&PendingWrites::default(), "shelly-1", &SwitchStatus { id: 0, output: true });
+
+        assert_eq!(initiated_by, InitiatedBy::External);
+    }
+
+    #[test]
+    fn switch_initiated_by_treats_the_opposite_value_as_external() {
+        let pending_writes = PendingWrites::default();
+        pending_writes.record("shelly-1", 0, true, Instant::now());
+
+        let initiated_by = switch_initiated_by(&pending_writes, "shelly-1", &SwitchStatus { id: 0, output: false });
+
+        assert_eq!(initiated_by, InitiatedBy::External);
+    }
+
+    #[test]
+    fn switch_initiated_by_treats_a_change_to_another_switch_as_external() {
+        let pending_writes = PendingWrites::default();
+        pending_writes.record("shelly-1", 0, true, Instant::now());
+
+        let initiated_by = switch_initiated_by(&pending_writes, "shelly-1", &SwitchStatus { id: 1, output: true });
+
+        assert_eq!(initiated_by, InitiatedBy::External);
+    }
+
+    #[test]
+    fn switch_initiated_by_treats_a_second_identical_change_as_external() {
+        let pending_writes = PendingWrites::default();
+        pending_writes.record("shelly-1", 0, true, Instant::now());
+        let status = SwitchStatus { id: 0, output: true };
+        switch_initiated_by(&pending_writes, "shelly-1", &status);
+
+        assert_eq!(switch_initiated_by(&pending_writes, "shelly-1", &status), InitiatedBy::External);
     }
 
     #[test]

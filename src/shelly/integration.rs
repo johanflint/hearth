@@ -7,6 +7,7 @@ use crate::mqtt_security::MqttSecurity;
 use crate::shelly::client::new_client;
 use crate::shelly::controller::ShellyController;
 use crate::shelly::mqtt_listener::mqtt_listen;
+use crate::shelly::pending_writes::PendingWrites;
 use crate::shelly::prober::ProbedDeviceMap;
 use crate::shelly::{prober, provisioner, registrar};
 use crate::store::StoreSnapshot;
@@ -28,6 +29,7 @@ pub struct ShellyIntegration {
     mqtt_service: MqttService,
     mqtt_security: Arc<MqttSecurity>,
     store_rx: WatchReceiver<StoreSnapshot>,
+    pending_writes: Arc<PendingWrites>,
 }
 
 impl ShellyIntegration {
@@ -41,7 +43,8 @@ impl ShellyIntegration {
         let mdns_rx = mdns_browser.browse(SERVICE_TYPE)?;
         let probed_rx = prober::probe_announced_devices(&client, mdns_rx);
         let mqtt_security = Arc::new(MqttSecurity::new(mqtt_service.clone())?);
-        Ok(ShellyIntegration { client, config, probed_rx, mqtt_service, mqtt_security, store_rx })
+        let pending_writes = Arc::new(PendingWrites::default());
+        Ok(ShellyIntegration { client, config, probed_rx, mqtt_service, mqtt_security, store_rx, pending_writes })
     }
 }
 
@@ -74,12 +77,12 @@ impl Integration for ShellyIntegration {
                 self.probed_rx.clone(),
             );
         }
-        mqtt_listen(&self.mqtt_service, self.store_rx.clone(), tx)?;
+        mqtt_listen(&self.mqtt_service, self.pending_writes.clone(), self.store_rx.clone(), tx)?;
         Ok(())
     }
 
     fn controller(&self) -> Arc<dyn Controller> {
-        Arc::new(ShellyController::new(self.client.clone(), self.probed_rx.clone()))
+        Arc::new(ShellyController::new(self.client.clone(), self.probed_rx.clone(), self.pending_writes.clone()))
     }
 
     fn status(&self) -> IntegrationStatus {
