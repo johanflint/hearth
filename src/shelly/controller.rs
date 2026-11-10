@@ -8,6 +8,7 @@ use metrics::counter;
 use reqwest::Client;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::watch::Receiver as WatchReceiver;
 use tracing::{info, instrument, warn};
@@ -55,33 +56,36 @@ impl ShellyController {
             return;
         };
 
-        let Some(on_property) = device.get_property_of_type::<BooleanProperty>(PropertyType::On) else {
-            warn!(device_id = device.id, "⚠️ Switch has no on property");
-            return;
-        };
+        for (name, command) in property.iter() {
+            let Value::Boolean(on) = command.value else {
+                continue;
+            };
 
-        let Some(switch_id) =
-            on_property.external_id().and_then(|id| id.strip_prefix("switch:")).and_then(|id| id.parse::<u16>().ok())
-        else {
-            warn!(device_id = device.id, "⚠️ Switch on property has no component id");
-            return;
-        };
+            let Some(switch_id) = device
+                .get_property::<BooleanProperty>(name)
+                .filter(|p| p.property_type() == PropertyType::On)
+                .and_then(|p| p.external_id())
+                .and_then(|id| id.strip_prefix("switch:"))
+                .and_then(|id| id.parse::<u16>().ok())
+            else {
+                warn!(
+                    device_id = device.id,
+                    "⚠️ Property '{name}' on switch '{}' is not a switchable component", device.id
+                );
+                continue;
+            };
 
-        let Some(on) = property.get(on_property.name()).and_then(|pc| match pc.value {
-            Value::Boolean(value) => Some(value),
-            _ => None,
-        }) else {
-            warn!(device_id = device.id, "⚠️ Switch on property is missing from the command");
-            return;
-        };
+            self.send_request(&device, probed_device.address, switch_id, on).await;
+        }
+    }
 
+    async fn send_request(&self, device: &Device, address: SocketAddr, switch_id: u16, on: bool) {
         let on_text = if on { "on" } else { "off" };
         info!(device_id = device.id, "🟢 Turn {} switch '{}'", on_text, device.name);
 
-        let current_address = probed_device.address;
         let request_result = self
             .client
-            .post(format!("http://{current_address}/rpc/Switch.Set"))
+            .post(format!("http://{address}/rpc/Switch.Set"))
             .json(&SwitchSetRequest { id: switch_id, on })
             .send()
             .await;
@@ -240,6 +244,49 @@ mod tests {
         mock.assert_async().await;
     }
 
+    #[tokio::test]
+    async fn execute_controls_every_switch_in_the_command() {
+        let mut server = mockito::Server::new_async().await;
+        let switch0 = switch_set_mock(&mut server, Matcher::Json(json!({"id": 0, "on": true})), 1).await;
+        let switch1 = switch_set_mock(&mut server, Matcher::Json(json!({"id": 1, "on": false})), 1).await;
+        let controller = controller_with_switches(&server, &[0, 1]);
+        let command = control_switches(
+            switches_device(&[0, 1]),
+            &[("switch0", Value::Boolean(true)), ("switch1", Value::Boolean(false))],
+        );
+
+        controller.execute(command).await;
+
+        switch0.assert_async().await;
+        switch1.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn execute_only_controls_the_switches_in_the_command() {
+        let mut server = mockito::Server::new_async().await;
+        let switch0 = switch_set_mock(&mut server, Matcher::Json(json!({"id": 0, "on": true})), 0).await;
+        let switch1 = switch_set_mock(&mut server, Matcher::Json(json!({"id": 1, "on": true})), 1).await;
+        let controller = controller_with_switches(&server, &[0, 1]);
+        let command = control_switches(switches_device(&[0, 1]), &[("switch1", Value::Boolean(true))]);
+
+        controller.execute(command).await;
+
+        switch0.assert_async().await;
+        switch1.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn execute_controls_a_switch_that_is_not_the_first_component() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = switch_set_mock(&mut server, Matcher::Json(json!({"id": 3, "on": true})), 1).await;
+        let controller = controller_with_switches(&server, &[1, 3]);
+        let command = control_switches(switches_device(&[1, 3]), &[("switch3", Value::Boolean(true))]);
+
+        controller.execute(command).await;
+
+        mock.assert_async().await;
+    }
+
     async fn switch_set_mock(server: &mut ServerGuard, body: Matcher, expected_requests: usize) -> Mock {
         server
             .mock("POST", "/rpc/Switch.Set")
@@ -252,18 +299,35 @@ mod tests {
 
     /// A controller that knows the device at the mock server
     fn controller(server: &ServerGuard, switch_id: u32) -> ShellyController {
-        let mut probed = probed_device(PLUS_1_ID, &[switch_component(switch_id, false)]);
+        controller_with_switches(server, &[switch_id])
+    }
+
+    fn controller_with_switches(server: &ServerGuard, switch_ids: &[u32]) -> ShellyController {
+        let components: Vec<String> = switch_ids.iter().map(|id| switch_component(*id, false)).collect();
+        let mut probed = probed_device(PLUS_1_ID, &components);
         probed.address = server.host_with_port().parse().unwrap();
         let probed_devices = Arc::new(HashMap::from([(PLUS_1_ID.to_string(), Arc::new(probed))]));
         ShellyController::new(Client::new(), watch::channel(probed_devices).1)
     }
 
     fn switch_device(switch_id: u32) -> Arc<Device> {
-        Arc::new(map_shelly(&probed_device(PLUS_1_ID, &[switch_component(switch_id, false)])).unwrap())
+        switches_device(&[switch_id])
+    }
+
+    fn switches_device(switch_ids: &[u32]) -> Arc<Device> {
+        let components: Vec<String> = switch_ids.iter().map(|id| switch_component(*id, false)).collect();
+        Arc::new(map_shelly(&probed_device(PLUS_1_ID, &components)).unwrap())
     }
 
     fn control_device(device: Arc<Device>, property: &str, value: Value) -> Command {
-        let property = HashMap::from([(property.to_string(), ResolvedPropertyCommand { value, transition: None })]);
+        control_switches(device, &[(property, value)])
+    }
+
+    fn control_switches(device: Arc<Device>, properties: &[(&str, Value)]) -> Command {
+        let property = properties
+            .iter()
+            .map(|(name, value)| (name.to_string(), ResolvedPropertyCommand { value: value.clone(), transition: None }))
+            .collect();
         Command::ControlDevice { device, property: Arc::new(property) }
     }
 }
