@@ -11,6 +11,7 @@ pub struct ComponentsResult {
 pub enum Component {
     Switch { status: SwitchStatus },
     Mqtt { config: MqttConfig, status: MqttStatus },
+    PresenceZone { status: PresenceZoneStatus },
     Unsupported, // ble, cloud, input, sys, wifi, ...
 }
 
@@ -33,6 +34,7 @@ impl TryFrom<RawComponent> for Component {
                 config: serde_json::from_value(raw.config)?,
                 status: serde_json::from_value(raw.status)?,
             }),
+            "presencezone" => Ok(Self::PresenceZone { status: serde_json::from_value(raw.status)? }),
             _ => Ok(Self::Unsupported),
         }
     }
@@ -43,6 +45,14 @@ impl TryFrom<RawComponent> for Component {
 pub struct SwitchStatus {
     pub id: u32,
     pub output: bool,
+}
+
+// Presence zone, API: https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/PresenceZone
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct PresenceZoneStatus {
+    pub id: u32,
+    pub value: bool, // Whether the zone is occupied
+    pub num_objects: u32,
 }
 
 // Mqtt, API: https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Mqtt
@@ -113,6 +123,42 @@ mod tests {
             enable_control: true,
         };
         assert_eq!(mqtt, Some((&expected_config, &MqttStatus { connected: false })));
+    }
+
+    #[test]
+    fn deserializes_the_presence_zones_of_a_presence_sensor() {
+        let json = r#"{"components":[
+            {"key":"presence","status":{"sensor_ver":"1.0"},"config":{}},
+            {"key":"presencezone:200","status":{"id":200,"value":true,"num_objects":1},"config":{}},
+            {"key":"presencezone:201","status":{"id":201,"value":false,"num_objects":0},"config":{}}]}"#;
+
+        let result = serde_json::from_str::<ComponentsResult>(json).unwrap();
+
+        let zones: Vec<_> = result
+            .components
+            .iter()
+            .filter_map(|c| match c {
+                Component::PresenceZone { status } => Some(status),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            zones,
+            [
+                &PresenceZoneStatus { id: 200, value: true, num_objects: 1 },
+                &PresenceZoneStatus { id: 201, value: false, num_objects: 0 }
+            ]
+        );
+        assert!(matches!(result.components[0], Component::Unsupported), "the presence component is not a zone");
+    }
+
+    #[test]
+    fn fails_when_a_presence_zone_is_malformed() {
+        let json = r#"{"components":[{"key":"presencezone:200","status":{"id":200,"num_objects":1}}]}"#;
+
+        let error = serde_json::from_str::<ComponentsResult>(json).unwrap_err();
+
+        assert!(error.to_string().contains("value"), "unexpected error: {error}");
     }
 
     #[test]

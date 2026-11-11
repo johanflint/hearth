@@ -5,7 +5,7 @@ use serde::Deserialize;
 #[allow(dead_code)]
 pub struct DeviceInfo {
     pub id: String,
-    pub name: String, // Undocumented, but present
+    pub name: Option<String>,
     pub mac: String,
     pub model: String,
     #[serde(rename = "gen")]

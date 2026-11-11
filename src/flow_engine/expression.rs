@@ -420,6 +420,10 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                     let sensitivity_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
                     Ok(sensitivity_property.value().map(Value::Number).unwrap_or(Value::None))
                 }
+                PropertyType::Presence => {
+                    let presence_property = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
+                    Ok(Value::Boolean(presence_property.value()))
+                }
                 PropertyType::Illuminance => {
                     let illuminance_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
                     Ok(illuminance_property.value().map(Value::Number).unwrap_or(Value::None))
@@ -684,6 +688,14 @@ mod tests {
             Some(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap()),
         ));
 
+        let presence_property: Box<dyn Property> = Box::new(BooleanProperty::new(
+            "presenceZone200".to_string(),
+            PropertyType::Presence,
+            true,
+            Some("presencezone:200".to_string()),
+            true,
+        ));
+
         let battery_level_property: Box<dyn Property> = Box::new(
             NumberProperty::builder("batteryLevel".to_string(), PropertyType::BatteryLevel, true)
                 .unit(Unit::Percentage)
@@ -724,6 +736,7 @@ mod tests {
                 temperature_last_changed_property,
                 contact_property,
                 contact_last_changed_property,
+                presence_property,
                 battery_level_property,
                 battery_state_property,
             ])
@@ -1575,6 +1588,7 @@ mod tests {
     #[case::illuminance_last_changed("ab917a9a-a7d5-4853-9518-75909236a182", "illuminanceLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
     #[case::temperature("ab917a9a-a7d5-4853-9518-75909236a182", "temperature", Ok(Value::Number(Number::Float(21.5))))]
     #[case::temperature_last_changed("ab917a9a-a7d5-4853-9518-75909236a182", "temperatureLastChanged", Ok(Value::DateTime(Utc.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap())))]
+    #[case::presence("ab917a9a-a7d5-4853-9518-75909236a182", "presenceZone200", Ok(Value::Boolean(true)))]
     #[case::battery_level(
         "ab917a9a-a7d5-4853-9518-75909236a182",
         "batteryLevel",
