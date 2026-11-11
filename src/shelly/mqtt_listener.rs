@@ -2,7 +2,7 @@ use crate::domain::property::PropertyLocator;
 use crate::domain::{Connectivity, Event, InitiatedBy};
 use crate::integration::IntegrationError;
 use crate::mqtt::{MqttMessage, MqttService};
-use crate::shelly::domain::SwitchStatus;
+use crate::shelly::domain::{PresenceZoneStatus, SwitchStatus};
 use crate::shelly::pending_writes::PendingWrites;
 use crate::store::StoreSnapshot;
 use std::sync::Arc;
@@ -14,11 +14,13 @@ use tracing::{debug, warn};
 
 const AVAILABILITY_TOPIC: &str = "online";
 const SWITCH_STATUS_PREFIX: &str = "status/switch:";
+const PRESENCE_ZONE_STATUS_PREFIX: &str = "status/presencezone:";
 
 #[derive(Debug, PartialEq)]
 enum ShellyMessage {
     Availability(bool),
     Switch(SwitchStatus),
+    PresenceZone(PresenceZoneStatus),
 }
 
 pub fn mqtt_listen(
@@ -58,6 +60,15 @@ pub fn mqtt_listen(
                                 initiated_by,
                             }
                         }
+                        ShellyMessage::PresenceZone(status) => {
+                            // The sensor is read-only, so there are no writes to match in pending writes
+                            Event::BooleanPropertyChanged {
+                                device_id: device_id.to_string(),
+                                property_id: PropertyLocator::ExternalId(format!("presencezone:{}", status.id)),
+                                value: status.value,
+                                initiated_by: InitiatedBy::External,
+                            }
+                        }
                     };
                     if tx.send(event).await.is_err() {
                         warn!("⚠️ Event channel closed, stopping MQTT listener");
@@ -89,6 +100,9 @@ fn parse(message: &MqttMessage) -> Result<Option<(&str, ShellyMessage)>, ParseEr
             other => return Err(ParseError::Availability(other.to_vec())),
         },
         r if r.starts_with(SWITCH_STATUS_PREFIX) => ShellyMessage::Switch(serde_json::from_slice(&message.payload)?),
+        r if r.starts_with(PRESENCE_ZONE_STATUS_PREFIX) => {
+            ShellyMessage::PresenceZone(serde_json::from_slice(&message.payload)?)
+        }
         _ => return Ok(None),
     };
 
@@ -99,8 +113,8 @@ fn parse(message: &MqttMessage) -> Result<Option<(&str, ShellyMessage)>, ParseEr
 pub enum ParseError {
     #[error("unexpected availability payload: {0:?}")]
     Availability(Vec<u8>),
-    #[error("invalid switch status: {0}")]
-    Switch(#[from] serde_json::Error),
+    #[error("invalid status payload: {0}")]
+    Status(#[from] serde_json::Error),
 }
 
 #[cfg(test)]
@@ -212,7 +226,34 @@ mod tests {
         let message = message("shelly-1/status/switch:0", payload);
         let result = parse(&message);
 
-        assert!(matches!(result, Err(ParseError::Switch(_))));
+        assert!(matches!(result, Err(ParseError::Status(_))));
+    }
+
+    #[test]
+    fn parse_reads_a_presence_zone_status() {
+        let message = message("shellypresence-1/status/presencezone:200", r#"{"id":200,"value":true,"num_objects":1}"#);
+
+        let parsed = parse(&message).unwrap();
+
+        assert_eq!(
+            parsed,
+            Some((
+                "shellypresence-1",
+                ShellyMessage::PresenceZone(PresenceZoneStatus { id: 200, value: true, num_objects: 1 })
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case("{")]
+    #[case("{}")]
+    #[case(r#"{"id":200}"#)]
+    #[case(r#"{"id":200,"value":"yes","num_objects":1}"#)]
+    fn parse_rejects_an_invalid_presence_zone_status(#[case] payload: &'static str) {
+        let message = message("shellypresence-1/status/presencezone:200", payload);
+        let result = parse(&message);
+
+        assert!(matches!(result, Err(ParseError::Status(_))));
     }
 
     #[rstest]
