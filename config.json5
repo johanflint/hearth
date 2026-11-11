@@ -15,6 +15,8 @@
     enabled: false,
     host: "127.0.0.1",
     port: 1883,
+    advertised_host: "127.0.0.1",
+    advertised_port: 1883,
     username: "hearth",
     password: ""
   },
