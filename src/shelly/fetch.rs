@@ -1,12 +1,12 @@
+use crate::shelly::device_address::DeviceAddress;
 use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::net::SocketAddr;
 use thiserror::Error;
 
 pub async fn fetch<T>(
     client: &Client,
-    address: &SocketAddr,
+    address: &DeviceAddress,
     method: &str,
     params: &[(&str, &str)],
 ) -> Result<T, FetchError>
@@ -18,7 +18,7 @@ where
 
 pub async fn call<T: DeserializeOwned>(
     client: &Client,
-    address: &SocketAddr,
+    address: &DeviceAddress,
     method: &str,
     body: &impl Serialize,
 ) -> Result<T, FetchError> {
@@ -36,7 +36,7 @@ async fn send<T: DeserializeOwned>(request: RequestBuilder) -> Result<T, FetchEr
     response.json::<T>().await.map_err(FetchError::InvalidBody)
 }
 
-fn url(address: &SocketAddr, method: &str) -> String {
+fn url(address: &DeviceAddress, method: &str) -> String {
     format!("http://{address}/rpc/{method}")
 }
 
@@ -63,14 +63,15 @@ impl FetchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shelly::test_support::device_address;
     use mockito::{Matcher, Server};
     use rstest::rstest;
     use serde_json::{Value, json};
     use std::net::TcpListener;
 
     // An address nothing listens on, so connecting fails
-    fn unreachable_address() -> SocketAddr {
-        TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap()
+    fn unreachable_address() -> DeviceAddress {
+        device_address(TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap())
     }
 
     #[tokio::test]
@@ -83,10 +84,14 @@ mod tests {
             .create_async()
             .await;
 
-        let result: Value =
-            fetch(&Client::new(), &server.socket_address(), "Shelly.GetComponents", &[("include", "config")])
-                .await
-                .unwrap();
+        let result: Value = fetch(
+            &Client::new(),
+            &device_address(server.socket_address()),
+            "Shelly.GetComponents",
+            &[("include", "config")],
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result, json!({"a": 1}));
         mock.assert();
@@ -97,7 +102,8 @@ mod tests {
         let mut server = Server::new_async().await;
         server.mock("GET", "/rpc/Missing").with_status(404).create_async().await;
 
-        let error = fetch::<Value>(&Client::new(), &server.socket_address(), "Missing", &[]).await.unwrap_err();
+        let error =
+            fetch::<Value>(&Client::new(), &device_address(server.socket_address()), "Missing", &[]).await.unwrap_err();
 
         assert!(
             matches!(&error, FetchError::UnexpectedResponse(StatusCode::NOT_FOUND, url) if url.ends_with("/rpc/Missing")),
@@ -110,7 +116,8 @@ mod tests {
         let mut server = Server::new_async().await;
         server.mock("GET", "/rpc/Broken").with_body("not json").create_async().await;
 
-        let error = fetch::<Value>(&Client::new(), &server.socket_address(), "Broken", &[]).await.unwrap_err();
+        let error =
+            fetch::<Value>(&Client::new(), &device_address(server.socket_address()), "Broken", &[]).await.unwrap_err();
 
         assert!(matches!(error, FetchError::InvalidBody(_)), "got {error:?}");
     }
@@ -133,10 +140,14 @@ mod tests {
             .create_async()
             .await;
 
-        let result: Value =
-            call(&Client::new(), &server.socket_address(), "MQTT.SetConfig", &json!({"config": {"enable": true}}))
-                .await
-                .unwrap();
+        let result: Value = call(
+            &Client::new(),
+            &device_address(server.socket_address()),
+            "MQTT.SetConfig",
+            &json!({"config": {"enable": true}}),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result, json!({"restart_required": true}));
         mock.assert();
@@ -148,7 +159,9 @@ mod tests {
         let mut server = Server::new_async().await;
         server.mock("POST", "/rpc/Shelly.Reboot").with_body("null").create_async().await;
 
-        call::<()>(&Client::new(), &server.socket_address(), "Shelly.Reboot", &json!({})).await.unwrap();
+        call::<()>(&Client::new(), &device_address(server.socket_address()), "Shelly.Reboot", &json!({}))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -157,7 +170,9 @@ mod tests {
         server.mock("POST", "/rpc/MQTT.SetConfig").with_status(401).create_async().await;
 
         let error =
-            call::<Value>(&Client::new(), &server.socket_address(), "MQTT.SetConfig", &json!({})).await.unwrap_err();
+            call::<Value>(&Client::new(), &device_address(server.socket_address()), "MQTT.SetConfig", &json!({}))
+                .await
+                .unwrap_err();
 
         assert!(matches!(error, FetchError::UnexpectedResponse(StatusCode::UNAUTHORIZED, _)), "got {error:?}");
     }
@@ -184,7 +199,8 @@ mod tests {
         let mut server = Server::new_async().await;
         server.mock("GET", "/rpc/Broken").with_body("not json").create_async().await;
 
-        let error = fetch::<Value>(&Client::new(), &server.socket_address(), "Broken", &[]).await.unwrap_err();
+        let error =
+            fetch::<Value>(&Client::new(), &device_address(server.socket_address()), "Broken", &[]).await.unwrap_err();
 
         assert!(error.is_permanent());
     }

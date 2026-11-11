@@ -1,5 +1,6 @@
 mod client;
 mod controller;
+mod device_address;
 mod domain;
 mod fetch;
 mod integration;

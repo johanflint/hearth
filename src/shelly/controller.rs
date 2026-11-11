@@ -2,6 +2,7 @@ use crate::domain::property::{BooleanProperty, Property, PropertyType};
 use crate::domain::{Command, Controller, Device, DeviceType, Value};
 use crate::flow_engine::property_command::ResolvedPropertyCommand;
 use crate::metrics::Metric;
+use crate::shelly::device_address::DeviceAddress;
 use crate::shelly::pending_writes::PendingWrites;
 use crate::shelly::prober::ProbedDeviceMap;
 use async_trait::async_trait;
@@ -9,7 +10,6 @@ use metrics::counter;
 use reqwest::Client;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::watch::Receiver as WatchReceiver;
@@ -79,11 +79,11 @@ impl ShellyController {
             };
 
             self.pending_writes.record(&device.id, switch_id, on, Instant::now());
-            self.send_request(&device, probed_device.address, switch_id, on).await;
+            self.send_request(&device, &probed_device.address, switch_id, on).await;
         }
     }
 
-    async fn send_request(&self, device: &Device, address: SocketAddr, switch_id: u32, on: bool) {
+    async fn send_request(&self, device: &Device, address: &DeviceAddress, switch_id: u32, on: bool) {
         let on_text = if on { "on" } else { "off" };
         info!(device_id = device.id, "🟢 Turn {} switch '{}'", on_text, device.name);
 
@@ -130,7 +130,7 @@ struct SwitchSetRequest {
 mod tests {
     use super::*;
     use crate::shelly::map_shelly::map_shelly;
-    use crate::shelly::test_support::{PLUS_1_ID, probed_device, switch_component};
+    use crate::shelly::test_support::{PLUS_1_ID, device_address, probed_device, switch_component};
     use mockito::{Matcher, Mock, ServerGuard};
     use serde_json::json;
     use tokio::sync::watch;
@@ -407,7 +407,7 @@ mod tests {
     ) -> (ShellyController, Arc<PendingWrites>) {
         let components: Vec<String> = switch_ids.iter().map(|id| switch_component(*id, false)).collect();
         let mut probed = probed_device(PLUS_1_ID, &components);
-        probed.address = server.host_with_port().parse().unwrap();
+        probed.address = device_address(server.socket_address());
         let probed_devices = Arc::new(HashMap::from([(PLUS_1_ID.to_string(), Arc::new(probed))]));
         let pending_writes = Arc::new(PendingWrites::default());
         let controller =

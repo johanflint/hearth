@@ -78,6 +78,7 @@ pub type DiscoveredServices = Arc<HashMap<ServiceKey, Arc<DiscoveredService>>>;
 #[derive(Debug)]
 pub struct DiscoveredService {
     pub hostname: String,
+    pub port: u16,
     pub addresses: BTreeSet<SocketAddr>,
     #[allow(dead_code)]
     pub txt: HashMap<String, String>,
@@ -87,6 +88,7 @@ impl From<ResolvedService> for DiscoveredService {
     fn from(resolved: ResolvedService) -> Self {
         DiscoveredService {
             hostname: resolved.host,
+            port: resolved.port,
             addresses: resolved.addresses.iter().map(|address| socket_addr(address, resolved.port)).collect(),
             txt: resolved.txt_properties.into_property_map_str(),
         }

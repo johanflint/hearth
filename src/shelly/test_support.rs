@@ -1,5 +1,7 @@
+use crate::shelly::device_address::DeviceAddress;
 use crate::shelly::domain::{Component, ComponentsResult, DeviceInfo};
 use crate::shelly::prober::ProbedDevice;
+use std::net::SocketAddr;
 
 pub(super) const PLUS_1_DEVICE_INFO: &str =
     include_str!("../../tests/resources/shelly_device_info_plus1_response.json");
@@ -10,7 +12,7 @@ pub(super) const PLUS_1_ID: &str = "shellyplus1-aabbccddeeff";
 pub(super) fn probed_plus_1() -> ProbedDevice {
     let components: ComponentsResult = serde_json::from_str(PLUS_1_COMPONENTS).unwrap();
     ProbedDevice {
-        address: "192.168.1.35:80".parse().unwrap(),
+        address: DeviceAddress::new("192.168.1.35", 80),
         info: plus_1_device_info(),
         components: components.components,
     }
@@ -20,7 +22,12 @@ pub(super) fn probed_plus_1() -> ProbedDevice {
 pub(super) fn probed_device(id: &str, components: &[String]) -> ProbedDevice {
     let mut info = plus_1_device_info();
     info.id = id.to_string();
-    ProbedDevice { address: "192.168.1.35:80".parse().unwrap(), info, components: parse_components(components) }
+    ProbedDevice { address: DeviceAddress::new("192.168.1.35", 80), info, components: parse_components(components) }
+}
+
+/// The address of a mock server, which is reached by IP instead of by an mDNS hostname
+pub(super) fn device_address(server_address: SocketAddr) -> DeviceAddress {
+    DeviceAddress::new(&server_address.ip().to_string(), server_address.port())
 }
 
 pub(super) fn switch_component(id: u32, output: bool) -> String {

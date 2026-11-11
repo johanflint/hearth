@@ -1,5 +1,6 @@
 use crate::app_config::{AppConfig, Mqtt as MqttAppConfig};
 use crate::mqtt_security::{MqttSecurity, SecurityError};
+use crate::shelly::device_address::DeviceAddress;
 use crate::shelly::domain::{Component, ComponentsResult, DeviceInfo, MqttConfig, MqttStatus};
 use crate::shelly::fetch::{FetchError, call, fetch};
 use crate::shelly::prober::{ProbedDevice, ProbedDeviceMap};
@@ -8,7 +9,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -120,17 +120,21 @@ enum RefreshError {
     #[error(transparent)]
     Fetch(#[from] FetchError),
     #[error("{address} is device '{found}', expected '{expected}'")]
-    OtherDevice { address: SocketAddr, expected: String, found: String },
+    OtherDevice { address: DeviceAddress, expected: String, found: String },
 }
 
 async fn fetch_mqtt_state(
     client: &Client,
-    address: &SocketAddr,
+    address: &DeviceAddress,
     expected_id: &str,
 ) -> Result<Option<MqttState>, RefreshError> {
     let info = fetch::<DeviceInfo>(client, address, "Shelly.GetDeviceInfo", &[]).await?;
     if info.id != expected_id {
-        return Err(RefreshError::OtherDevice { address: *address, expected: expected_id.to_string(), found: info.id });
+        return Err(RefreshError::OtherDevice {
+            address: address.clone(),
+            expected: expected_id.to_string(),
+            found: info.id,
+        });
     }
 
     let components = fetch::<ComponentsResult>(
@@ -274,7 +278,9 @@ mod tests {
     use super::*;
     use crate::app_config::AppConfigBuilder;
     use crate::mqtt::MqttService;
-    use crate::shelly::test_support::{PLUS_1_DEVICE_INFO, PLUS_1_ID, ble_component, mqtt_component, probed_device};
+    use crate::shelly::test_support::{
+        PLUS_1_DEVICE_INFO, PLUS_1_ID, ble_component, device_address, mqtt_component, probed_device,
+    };
     use mockito::{Matcher, Mock, Server, ServerGuard};
     use pretty_assertions::assert_eq;
     use reqwest::StatusCode;
@@ -312,7 +318,7 @@ mod tests {
     }
 
     fn device(address: SocketAddr, components: &[String]) -> ProbedDevice {
-        ProbedDevice { address, ..probed_device(PLUS_1_ID, components) }
+        ProbedDevice { address: device_address(address), ..probed_device(PLUS_1_ID, components) }
     }
 
     fn state(connected: bool, config: Value) -> MqttState {
@@ -485,7 +491,8 @@ mod tests {
         let info = device_info_mock(&mut server).create_async().await;
         let mock = mqtt_state_mock(&mut server, true, provisioned_config()).create_async().await;
 
-        let fetched = fetch_mqtt_state(&Client::new(), &server.socket_address(), PLUS_1_ID).await.unwrap();
+        let fetched =
+            fetch_mqtt_state(&Client::new(), &device_address(server.socket_address()), PLUS_1_ID).await.unwrap();
 
         assert_eq!(fetched, Some(state(true, provisioned_config())));
         info.assert_async().await;
@@ -503,7 +510,8 @@ mod tests {
             .create_async()
             .await;
 
-        let fetched = fetch_mqtt_state(&Client::new(), &server.socket_address(), PLUS_1_ID).await.unwrap();
+        let fetched =
+            fetch_mqtt_state(&Client::new(), &device_address(server.socket_address()), PLUS_1_ID).await.unwrap();
 
         assert_eq!(fetched, None);
     }
@@ -515,7 +523,9 @@ mod tests {
         let components =
             server.mock("GET", "/rpc/Shelly.GetComponents").match_query(Matcher::Any).expect(0).create_async().await;
 
-        let result = fetch_mqtt_state(&Client::new(), &server.socket_address(), "shellyplus1-112233445566").await;
+        let result =
+            fetch_mqtt_state(&Client::new(), &device_address(server.socket_address()), "shellyplus1-112233445566")
+                .await;
 
         assert!(
             matches!(result, Err(RefreshError::OtherDevice { ref expected, ref found, .. })
@@ -530,7 +540,7 @@ mod tests {
         let mut server = Server::new_async().await;
         server.mock("GET", "/rpc/Shelly.GetDeviceInfo").with_status(500).create_async().await;
 
-        let result = fetch_mqtt_state(&Client::new(), &server.socket_address(), PLUS_1_ID).await;
+        let result = fetch_mqtt_state(&Client::new(), &device_address(server.socket_address()), PLUS_1_ID).await;
 
         assert!(
             matches!(
@@ -547,7 +557,7 @@ mod tests {
         device_info_mock(&mut server).create_async().await;
         server.mock("GET", "/rpc/Shelly.GetComponents").match_query(Matcher::Any).with_status(500).create_async().await;
 
-        let result = fetch_mqtt_state(&Client::new(), &server.socket_address(), PLUS_1_ID).await;
+        let result = fetch_mqtt_state(&Client::new(), &device_address(server.socket_address()), PLUS_1_ID).await;
 
         assert!(
             matches!(

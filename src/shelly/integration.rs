@@ -2,6 +2,7 @@ use crate::app_config::AppConfig;
 use crate::domain::{Command, Controller, Event};
 use crate::integration::{Discovery, Integration, IntegrationError, IntegrationStatus};
 use crate::mdns_browser::MdnsBrowser;
+use crate::mdns_resolver::MdnsResolver;
 use crate::mqtt::MqttService;
 use crate::mqtt_security::MqttSecurity;
 use crate::shelly::client::new_client;
@@ -39,8 +40,9 @@ impl ShellyIntegration {
         mqtt_service: MqttService,
         store_rx: WatchReceiver<StoreSnapshot>,
     ) -> Result<Self, IntegrationError> {
-        let client = new_client(&config)?;
         let mdns_rx = mdns_browser.browse(SERVICE_TYPE)?;
+        let mdns_resolver = MdnsResolver::new(mdns_rx.clone());
+        let client = new_client(&config, mdns_resolver)?;
         let probed_rx = prober::probe_announced_devices(&client, mdns_rx);
         let mqtt_security = Arc::new(MqttSecurity::new(mqtt_service.clone())?);
         let pending_writes = Arc::new(PendingWrites::default());

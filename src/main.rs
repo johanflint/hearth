@@ -41,6 +41,7 @@ mod hue;
 mod integration;
 mod integration_list;
 mod mdns_browser;
+mod mdns_resolver;
 mod metrics;
 mod metrics_layer;
 mod mqtt;
