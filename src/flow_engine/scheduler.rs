@@ -5,7 +5,7 @@ use crate::flow_engine::flow::Flow;
 use crate::flow_registry::FlowRegistry;
 use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,6 +40,9 @@ struct ScheduledJob {
     generation: u64,
     cancellation: CancellationToken,
 }
+
+// A healthy schedule only moves forward, an occurrence that isn't later than the latest one means it's looping
+const MAX_STALLED_OCCURRENCES: u32 = 100;
 
 #[instrument(skip_all)]
 pub async fn scheduler(
@@ -117,9 +120,23 @@ pub async fn scheduler(
                 let geo_location_clone = geo_location.clone();
                 let timezone = system_timezone();
                 let join_handle = tokio::spawn(async move {
+                    let mut latest_skipped: Option<DateTime<Tz>> = None;
+                    let mut stalled_occurrences = 0;
                     for datetime in schedule.upcoming(timezone, geo_location_clone.clone()) {
                         let duration = datetime.signed_duration_since(Utc::now());
                         if duration.num_milliseconds() < 0 {
+                            if latest_skipped.is_some_and(|latest| datetime <= latest) {
+                                stalled_occurrences += 1;
+                                if stalled_occurrences > MAX_STALLED_OCCURRENCES {
+                                    error!(
+                                        "🕗 Scheduling flow '{}'... schedule stopped advancing, stopping",
+                                        flow_id_clone
+                                    );
+                                    return;
+                                }
+                            } else {
+                                latest_skipped = Some(datetime);
+                            }
                             continue; // Already passed
                         }
 
