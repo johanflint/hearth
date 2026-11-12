@@ -227,7 +227,7 @@ fn cancel_existing_job(flow_id: &str, jobs: &mut HashMap<String, ScheduledJob>) 
 }
 
 // Waits until either `scheduled_instant` or cancellation, whichever comes first.
-// Returns `true` only when the deadline wins; a `true` result coommits the
+// Returns `true` only when the deadline wins; a `true` result commits the
 // caller to running. A cancellation after this returns does not interrupt an
 // already committed execution.
 async fn scheduled_deadline_won(cancellation: &CancellationToken, scheduled_instant: Instant) -> bool {
