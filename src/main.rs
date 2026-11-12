@@ -118,6 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
     let geo_location_clone = config.geo_location().clone();
+    let timezone = config.timezone();
     let scheduler_handle = task::spawn(async move {
         scheduler(
             scheduler_tx_clone,
@@ -126,6 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             flow_registry_clone,
             preset_registry_clone,
             geo_location_clone,
+            timezone,
         )
         .await;
     });

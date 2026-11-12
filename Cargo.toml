@@ -30,7 +30,7 @@ mdns-sd = "0.21.7"
 
 # Date and time
 chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.10"
+chrono-tz = { version = "0.10", features = ["serde"] }
 iana-time-zone = "0.1"
 sunrise = "3.0"
 

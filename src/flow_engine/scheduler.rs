@@ -52,6 +52,7 @@ pub async fn scheduler(
     flow_registry: Arc<FlowRegistry>,
     preset_registry: Arc<PresetRegistry>,
     geo_location: GeoLocation,
+    timezone: Tz,
 ) {
     let mut scheduled_flows: HashMap<String, ScheduledJob> = HashMap::new();
     let mut next_generation: u64 = 0;
@@ -118,7 +119,6 @@ pub async fn scheduler(
                 let tx_clone = tx.clone();
                 let preset_registry_clone = preset_registry.clone();
                 let geo_location_clone = geo_location.clone();
-                let timezone = system_timezone();
                 let join_handle = tokio::spawn(async move {
                     let mut latest_skipped: Option<DateTime<Tz>> = None;
                     let mut stalled_occurrences = 0;
@@ -224,15 +224,6 @@ fn cancel_existing_job(flow_id: &str, jobs: &mut HashMap<String, ScheduledJob>) 
     };
     previous_job.cancellation.cancel();
     true
-}
-
-// chrono::Local wrongly treats 02:00 on fall-back day as occurring twice and returns the two candidates in the
-// wrong order (https://github.com/chronotope/chrono/issues/1625), which makes cron yield the same time forever.
-fn system_timezone() -> Tz {
-    iana_time_zone::get_timezone().ok().and_then(|name| name.parse().ok()).unwrap_or_else(|| {
-        warn!("🕗 Unable to determine the system timezone, falling back to UTC");
-        Tz::UTC
-    })
 }
 
 // Waits until either `scheduled_instant` or cancellation, whichever comes first.
