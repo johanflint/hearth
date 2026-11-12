@@ -105,6 +105,9 @@ where
     }
 }
 
+// Covers the longest polar night, an event that doesn't occur within a year never will
+const MAX_DAYS_AHEAD: u32 = 366;
+
 pub struct SunEventIterator<Z>
 where
     Z: TimeZone,
@@ -155,7 +158,7 @@ where
     type Item = DateTime<Z>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
+        for _ in 0..MAX_DAYS_AHEAD {
             let date = self.current.clone();
             self.current += Duration::days(1);
             if !self.when.included_days().contains(&date.to_weekday()) {
@@ -164,8 +167,9 @@ where
             if let Some(event_time) = self.event_time(date.date_naive()) {
                 return Some(event_time);
             }
-            // Polar day/night, no sunrise/sunseton this date - try the next day instead of ending the iterator
+            // Polar day/night, no sunrise/sunset on this date - try the next day instead of ending the iterator
         }
+        None
     }
 }
 
@@ -248,6 +252,13 @@ mod tests {
         assert_eq!(upcoming[0], Utc.with_ymd_and_hms(2000, 02, 16, 10, 37, 58).unwrap());
         assert_eq!(upcoming[1], Utc.with_ymd_and_hms(2000, 02, 17, 10, 05, 42).unwrap());
         assert_eq!(upcoming[2], Utc.with_ymd_and_hms(2000, 02, 18, 09, 44, 18).unwrap());
+    }
+
+    #[test]
+    fn test_schedule_with_sunrise_event_without_days_ends() {
+        let schedule = Schedule::Sunrise { when: WeekdayCondition::Set(vec![]), offset: 0 };
+
+        assert_eq!(schedule.after(Utc::now(), location()).next(), None);
     }
 
     // Europe/London leaves BST on 2026-10-25: 01:00-02:00 occurs twice, 02:00 occurs once
