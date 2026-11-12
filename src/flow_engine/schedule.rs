@@ -1,6 +1,6 @@
 use crate::domain::{GeoLocation, WeekdayCondition};
 use crate::extensions::date_time_ext::ToWeekday;
-use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone};
 use std::fmt::{Display, Formatter};
 use std::ops::Add;
 use std::str::FromStr;
@@ -71,15 +71,6 @@ impl Schedule {
                 SolarEvent::Sunset,
             )),
         }
-    }
-
-    /// Returns an iterator which will return each `DateTime` that matches the schedule starting at the current time.
-    pub fn upcoming<Z>(&self, timezone: Z, location: GeoLocation) -> ScheduleIterator<Z>
-    where
-        Z: TimeZone,
-    {
-        let now = Utc::now().with_timezone(&timezone);
-        self.after(now, location)
     }
 }
 
@@ -177,7 +168,7 @@ where
 mod tests {
     use super::*;
     use crate::domain::Weekday::*;
-    use chrono::{Datelike, NaiveDate};
+    use chrono::{Datelike, NaiveDate, Utc};
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
