@@ -5,7 +5,8 @@ use crate::flow_engine::flow::Flow;
 use crate::flow_registry::FlowRegistry;
 use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
-use chrono::Local;
+use chrono::Utc;
+use chrono_tz::Tz;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -114,9 +115,10 @@ pub async fn scheduler(
                 let tx_clone = tx.clone();
                 let preset_registry_clone = preset_registry.clone();
                 let geo_location_clone = geo_location.clone();
+                let timezone = system_timezone();
                 let join_handle = tokio::spawn(async move {
-                    for datetime in schedule.upcoming(Local, geo_location_clone.clone()) {
-                        let duration = datetime.signed_duration_since(Local::now());
+                    for datetime in schedule.upcoming(timezone, geo_location_clone.clone()) {
+                        let duration = datetime.signed_duration_since(Utc::now());
                         if duration.num_milliseconds() < 0 {
                             continue; // Already passed
                         }
@@ -205,6 +207,15 @@ fn cancel_existing_job(flow_id: &str, jobs: &mut HashMap<String, ScheduledJob>) 
     };
     previous_job.cancellation.cancel();
     true
+}
+
+// chrono::Local wrongly treats 02:00 on fall-back day as occurring twice and returns the two candidates in the
+// wrong order (https://github.com/chronotope/chrono/issues/1625), which makes cron yield the same time forever.
+fn system_timezone() -> Tz {
+    iana_time_zone::get_timezone().ok().and_then(|name| name.parse().ok()).unwrap_or_else(|| {
+        warn!("🕗 Unable to determine the system timezone, falling back to UTC");
+        Tz::UTC
+    })
 }
 
 // Waits until either `scheduled_instant` or cancellation, whichever comes first.

@@ -175,6 +175,7 @@ mod tests {
     use crate::domain::Weekday::*;
     use chrono::{Datelike, NaiveDate};
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     #[test]
     fn test_schedule_with_cron() {
@@ -247,6 +248,22 @@ mod tests {
         assert_eq!(upcoming[0], Utc.with_ymd_and_hms(2000, 02, 16, 10, 37, 58).unwrap());
         assert_eq!(upcoming[1], Utc.with_ymd_and_hms(2000, 02, 17, 10, 05, 42).unwrap());
         assert_eq!(upcoming[2], Utc.with_ymd_and_hms(2000, 02, 18, 09, 44, 18).unwrap());
+    }
+
+    // Europe/London leaves BST on 2026-10-25: 01:00-02:00 occurs twice, 02:00 occurs once
+    #[rstest]
+    #[case("0 0 2 * * *")]
+    #[case("0 0 * * * *")]
+    #[case("0 */30 * * * *")]
+    #[case("0 30 1 * * *")]
+    fn test_cron_schedule_advances_past_the_end_of_daylight_saving_time(#[case] expression: &str) {
+        let schedule = Schedule::Cron(expression.to_string());
+        let from = chrono_tz::Europe::London.with_ymd_and_hms(2026, 10, 24, 12, 0, 0).unwrap();
+        let until = chrono_tz::Europe::London.with_ymd_and_hms(2026, 10, 27, 0, 0, 0).unwrap();
+
+        let reached_until = schedule.after(from, location()).take(1_000).any(|datetime| datetime >= until);
+
+        assert!(reached_until, "schedule '{expression}' did not advance past the end of daylight saving time");
     }
 
     fn location() -> GeoLocation {

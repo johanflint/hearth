@@ -24,11 +24,15 @@ thiserror = "2.0"
 async-trait = "0.1"
 strum = { version = "0.28", features = ["derive"] }
 cron = "0.17"
-chrono = { version = "0.4", features = ["serde"] }
 ordered-float = "5.1.0"
 humantime-serde = "1.1.1"
-sunrise = "3.0"
 mdns-sd = "0.21.7"
+
+# Date and time
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+iana-time-zone = "0.1"
+sunrise = "3.0"
 
 # Webserver
 axum = "0.8"
