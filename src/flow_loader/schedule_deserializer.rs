@@ -30,6 +30,9 @@ impl<'de> Deserialize<'de> for Schedule {
                     Some(v) => WeekdayCondition::deserialize(v).map_err(Error::custom)?,
                     None => WeekdayCondition::Any,
                 };
+                if when.included_days().is_empty() {
+                    return Err(Error::custom("field 'when' must contain at least one day"));
+                }
                 let offset = map.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
 
                 match event {
@@ -132,6 +135,13 @@ mod tests {
             "when": 42
         }),
         "expected a string like 'Monday', 'Mon-Fri'"
+    )]
+    #[case::when_without_days(
+        json!({
+            "event": "sunrise",
+            "when": []
+        }),
+        "'when' must contain at least one day"
     )]
     #[case::invalid_cron_expression(
         json!(42),
