@@ -46,6 +46,7 @@ impl Controller for HueController {
                 DeviceType::Remote => {}
                 DeviceType::ContactSensor => {}
                 DeviceType::Switch => {} // Doesn't exist for Hue
+                DeviceType::PresenceSensor => {}
             },
             Command::ControlGroup { group, devices, property } => self.control_group(&group, &devices, &property).await,
             Command::ControlZone { zone, devices, property } => self.control_zone(&zone, &devices, &property).await,

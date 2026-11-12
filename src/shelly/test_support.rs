@@ -34,6 +34,13 @@ pub(super) fn switch_component(id: u32, output: bool) -> String {
     format!(r#"{{"key":"switch:{id}","status":{{"id":{id},"output":{output}}},"config":{{}}}}"#)
 }
 
+pub(super) fn presence_zone_component(id: u32, value: bool) -> String {
+    let num_objects = u32::from(value);
+    format!(
+        r#"{{"key":"presencezone:{id}","status":{{"id":{id},"value":{value},"num_objects":{num_objects}}},"config":{{}}}}"#
+    )
+}
+
 pub(super) fn ble_component() -> String {
     r#"{"key":"ble","status":{},"config":{"enable":false}}"#.to_string()
 }

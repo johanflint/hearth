@@ -1,5 +1,5 @@
 use crate::app_config::AppConfig;
-use crate::domain::{Command, Controller, Event};
+use crate::domain::{Controller, Event};
 use crate::integration::{Discovery, Integration, IntegrationError, IntegrationStatus};
 use crate::mdns_browser::MdnsBrowser;
 use crate::mdns_resolver::MdnsResolver;

@@ -77,6 +77,7 @@ pub enum PropertyType {
     MotionLastChanged,
     MotionSensitivity,
     On,
+    Presence,
     Temperature,
     TemperatureLastChanged,
 }

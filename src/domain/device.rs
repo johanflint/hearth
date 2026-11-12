@@ -52,6 +52,7 @@ pub enum DeviceType {
     Remote,
     ContactSensor,
     Switch,
+    PresenceSensor,
 }
 
 #[cfg(test)]
