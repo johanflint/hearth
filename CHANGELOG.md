@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.0 (2026-11-13)
+
+### Features
+
+- Support Shelly presence sensor ([#88](https://github.com/johanflint/hearth/pull/88))
+- Provision and control Shelly devices ([#87](https://github.com/johanflint/hearth/pull/87))
+- Support Shelly devices ([#85](https://github.com/johanflint/hearth/pull/85))
+
+### Bug Fixes
+
+- Use the configured timezone in the flow engine ([#91](https://github.com/johanflint/hearth/pull/91))
+- Fix scheduler freezing at the end of daylight saving time ([#89](https://github.com/johanflint/hearth/pull/89))
+
 ## v0.3.0 (2026-11-05)
 
 ### Features
