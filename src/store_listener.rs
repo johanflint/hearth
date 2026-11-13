@@ -8,6 +8,7 @@ use crate::flow_registry::FlowRegistry;
 use crate::preset_registry::PresetRegistry;
 use crate::scheduler::SchedulerCommand;
 use crate::store::{PropertyChange, ReactiveUpdate, StoreSnapshot};
+use chrono_tz::Tz;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::instrument;
@@ -19,6 +20,7 @@ pub async fn store_listener(
     preset_registry: Arc<PresetRegistry>,
     scheduler_tx: Sender<SchedulerCommand>,
     geo_location: GeoLocation,
+    timezone: Tz,
 ) {
     while let Some(update) = rx.recv().await {
         if let Some(change) = &update.changed {
@@ -33,6 +35,7 @@ pub async fn store_listener(
             update.changed,
             scheduler_tx.clone(),
             geo_location.clone(),
+            timezone,
         )
         .await;
     }

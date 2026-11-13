@@ -95,6 +95,7 @@ mod tests {
     use crate::flow_engine::property_command::ResolvedPropertyCommand;
     use crate::store::DeviceMap;
     use crate::test_support::{DeviceBuilder, property_command};
+    use chrono_tz::Tz;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use std::io;
@@ -295,7 +296,7 @@ mod tests {
         action: &ControlDeviceAction,
         preset_registry: Arc<PresetRegistry>,
     ) -> Option<CommandMap> {
-        let context = Context::builder().snapshot(snapshot()).preset_registry(preset_registry).build();
+        let context = Context::builder(Tz::UTC).snapshot(snapshot()).preset_registry(preset_registry).build();
         let mut scope = Scope::new();
         action.execute(&context, &mut scope).await;
         scope.take().remove("command_map").and_then(|v| v.downcast::<CommandMap>().ok()).map(|boxed| *boxed)
@@ -312,7 +313,7 @@ mod tests {
         #[case] second: Option<ClaimMode>,
         #[case] expected: Option<ClaimMode>,
     ) {
-        let context = Context::builder().snapshot(snapshot()).build();
+        let context = Context::builder(Tz::UTC).snapshot(snapshot()).build();
         let mut scope = Scope::new();
 
         ControlDeviceAction::new("lamp".to_string(), first, HashMap::new()).execute(&context, &mut scope).await;

@@ -479,7 +479,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                     EventTime::PolarNight => false,
                 })),
                 TemporalExpression::HasSunSet => Ok(Value::Boolean(match context.sunset() {
-                    EventTime::At(sunrise) => now.time() >= sunrise.time(),
+                    EventTime::At(sunset) => now.time() >= sunset.time(),
                     EventTime::PolarDay => true,
                     EventTime::PolarNight => false,
                 })),
@@ -592,21 +592,24 @@ mod tests {
     };
     use crate::store::{DeviceMap, PropertyChange, StoreSnapshot};
     use crate::test_support::DeviceBuilder;
-    use chrono::{DateTime, Local, TimeZone, Utc};
+    use chrono::{DateTime, TimeZone, Utc};
+    use chrono_tz::Tz;
     use rstest::rstest;
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    const TIMEZONE: Tz = Tz::Europe__Amsterdam;
+
     fn context_with_location() -> ContextBuilder {
-        Context::builder().location(GeoLocation { latitude: 51.9244, longitude: 4.4777, altitude: 0.0 })
+        Context::builder(TIMEZONE).location(GeoLocation { latitude: 51.9244, longitude: 4.4777, altitude: 0.0 })
     }
 
     fn context_with_polar_location() -> ContextBuilder {
         // Longyearbyen, Svalbard: far enough north to experience both a polar day (sun never sets,
         // roughly mid-April to late-August) and a polar night (sun never rises, roughly late-October
         // to mid-February).
-        Context::builder().location(GeoLocation { latitude: 78.2232, longitude: 15.6267, altitude: 0.0 })
+        Context::builder(TIMEZONE).location(GeoLocation { latitude: 78.2232, longitude: 15.6267, altitude: 0.0 })
     }
 
     fn preset(id: &str, value: Value) -> VersionedPreset {
@@ -614,7 +617,7 @@ mod tests {
     }
 
     fn context_with_presets(presets: Vec<VersionedPreset>) -> Context {
-        Context::builder().preset_registry(Arc::new(PresetRegistry::new(presets))).build()
+        Context::builder(TIMEZONE).preset_registry(Arc::new(PresetRegistry::new(presets))).build()
     }
 
     fn preset_value(id: &str) -> Expression {
@@ -1524,7 +1527,7 @@ mod tests {
 
     #[test]
     fn property_changed_evaluates_to_true_when_it_matches_the_context() {
-        let context = Context::builder()
+        let context = Context::builder(TIMEZONE)
             .changed(Some(PropertyChange {
                 device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
                 property_id: "on".to_string(),
@@ -1540,7 +1543,7 @@ mod tests {
 
     #[test]
     fn property_changed_evaluates_to_false_for_a_different_property() {
-        let context = Context::builder()
+        let context = Context::builder(TIMEZONE)
             .changed(Some(PropertyChange {
                 device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
                 property_id: "brightness".to_string(),
@@ -1556,7 +1559,7 @@ mod tests {
 
     #[test]
     fn property_changed_evaluates_to_false_when_the_context_has_no_change() {
-        let context = Context::builder().build(); // e.g. a scheduled flow's context
+        let context = Context::builder(TIMEZONE).build(); // e.g. a scheduled flow's context
         let expression = PropertyChanged {
             device_id: "ab917a9a-a7d5-4853-9518-75909236a182".to_string(),
             property_id: "on".to_string(),
@@ -1606,7 +1609,7 @@ mod tests {
 
         let result = evaluate(
             &PropertyValue { device_id: device_id.to_string(), property_id: property_id.to_string() },
-            &Context::builder().snapshot(snapshot).build(),
+            &Context::builder(TIMEZONE).snapshot(snapshot).build(),
         );
 
         assert_eq!(result, expected);
@@ -1679,10 +1682,24 @@ mod tests {
     #[case(Saturday, false)]
     #[case(Sunday, false)]
     fn is_today(#[case] weekday: Weekday, #[case] expected: bool) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap(); // A Friday
+        let fixed_date_time = TIMEZONE.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap().to_utc(); // A Friday
         let result = evaluate(
             &Temporal { expression: IsToday { when: WeekdayCondition::Specific(weekday) } },
-            &Context::builder().now(fixed_date_time).build(),
+            &Context::builder(TIMEZONE).now(fixed_date_time).build(),
+        )
+        .unwrap();
+        assert_eq!(result, Value::Boolean(expected));
+    }
+
+    #[rstest]
+    #[case::utc(Tz::UTC, true)]
+    #[case::amsterdam(Tz::Europe__Amsterdam, false)]
+    fn is_today_uses_the_timezone_of_the_context(#[case] timezone: Tz, #[case] expected: bool) {
+        // 22:30 UTC on a Friday is already 00:30 on Saturday in Amsterdam (UTC+2)
+        let instant = Utc.with_ymd_and_hms(2000, 8, 4, 22, 30, 0).unwrap();
+        let result = evaluate(
+            &Temporal { expression: IsToday { when: WeekdayCondition::Specific(Friday) } },
+            &Context::builder(timezone).now(instant).build(),
         )
         .unwrap();
         assert_eq!(result, Value::Boolean(expected));
@@ -1695,9 +1712,9 @@ mod tests {
     #[case::after_time(Time { hour: 12, minute: 1 }, true)]
     #[case::before_midnight(Time { hour: 23, minute: 59 }, true)]
     fn is_before_time(#[case] time: Time, #[case] expected: bool) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap();
+        let fixed_date_time = TIMEZONE.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsBeforeTime { time } }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsBeforeTime { time } }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1708,9 +1725,9 @@ mod tests {
     #[case::after_time(Time { hour: 12, minute: 1 }, false)]
     #[case::before_midnight(Time { hour: 23, minute: 59 }, false)]
     fn is_after_time(#[case] time: Time, #[case] expected: bool) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap();
+        let fixed_date_time = TIMEZONE.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsAfterTime { time } }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsAfterTime { time } }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1720,9 +1737,10 @@ mod tests {
     #[case(Time { hour: 23, minute: 0 }, true)]
     fn has_sun_risen(#[case] time: Time, #[case] expected: bool) {
         // Sunrise at given location and date: 2000-08-04T06:09:31+02:00
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunRisen }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunRisen }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1732,9 +1750,10 @@ mod tests {
     #[case(Time { hour: 23, minute: 0 }, true)]
     fn has_sun_set(#[case] time: Time, #[case] expected: bool) {
         // Sunset at given location and date: 2000-08-04T21:26:42+02:00
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunSet }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunSet }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1744,9 +1763,10 @@ mod tests {
     #[case(Time { hour: 23, minute: 0 }, false)]
     fn is_daytime(#[case] time: Time, #[case] expected: bool) {
         // Sunrise and sunset at given location and date: 2000-08-04T06:09:31+02:00 and 2000-08-04T21:26:42+02:00
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsDaytime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsDaytime }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1756,9 +1776,10 @@ mod tests {
     #[case(Time { hour: 23, minute: 0 }, true)]
     fn is_nighttime(#[case] time: Time, #[case] expected: bool) {
         // Sunrise and sunset at given location and date: 2000-08-04T06:09:31+02:00 and 2000-08-04T21:26:42+02:00
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsNighttime }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1770,9 +1791,10 @@ mod tests {
     #[case::midday(Time { hour: 12, minute: 0 })]
     #[case::just_before_midnight(Time { hour: 23, minute: 59 })]
     fn has_sun_risen_on_polar_day(#[case] time: Time) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunRisen }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunRisen }, context).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
@@ -1781,9 +1803,10 @@ mod tests {
     #[case::midday(Time { hour: 12, minute: 0 })]
     #[case::just_before_midnight(Time { hour: 23, minute: 59 })]
     fn has_sun_risen_on_polar_night(#[case] time: Time) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunRisen }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunRisen }, context).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
@@ -1792,9 +1815,10 @@ mod tests {
     #[case::midday(Time { hour: 12, minute: 0 })]
     #[case::just_before_midnight(Time { hour: 23, minute: 59 })]
     fn has_sun_set_on_polar_day(#[case] time: Time) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunSet }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunSet }, context).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
@@ -1803,9 +1827,10 @@ mod tests {
     #[case::midday(Time { hour: 12, minute: 0 })]
     #[case::just_before_midnight(Time { hour: 23, minute: 59 })]
     fn has_sun_set_on_polar_night(#[case] time: Time) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunSet }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunSet }, context).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
@@ -1814,9 +1839,10 @@ mod tests {
     #[case::midday(Time { hour: 12, minute: 0 })]
     #[case::just_before_midnight(Time { hour: 23, minute: 59 })]
     fn is_daytime_on_polar_day(#[case] time: Time) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsDaytime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsDaytime }, context).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
@@ -1825,9 +1851,10 @@ mod tests {
     #[case::midday(Time { hour: 12, minute: 0 })]
     #[case::just_before_midnight(Time { hour: 23, minute: 59 })]
     fn is_daytime_on_polar_night(#[case] time: Time) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsDaytime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsDaytime }, context).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
@@ -1836,9 +1863,10 @@ mod tests {
     #[case::midday(Time { hour: 12, minute: 0 })]
     #[case::just_before_midnight(Time { hour: 23, minute: 59 })]
     fn is_nighttime_on_polar_day(#[case] time: Time) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsNighttime }, context).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
@@ -1847,9 +1875,10 @@ mod tests {
     #[case::midday(Time { hour: 12, minute: 0 })]
     #[case::just_before_midnight(Time { hour: 23, minute: 59 })]
     fn is_nighttime_on_polar_night(#[case] time: Time) {
-        let fixed_date_time = Local.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap();
+        let fixed_date_time =
+            TIMEZONE.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsNighttime }, context).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
@@ -1872,7 +1901,7 @@ mod tests {
 
         let result = evaluate(
             &PropertyValue { device_id: "device".to_string(), property_id: "batteryState".to_string() },
-            &Context::builder().snapshot(snapshot).build(),
+            &Context::builder(TIMEZONE).snapshot(snapshot).build(),
         );
 
         assert_eq!(result, Ok(Value::None));

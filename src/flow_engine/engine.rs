@@ -212,6 +212,7 @@ mod tests {
     use crate::flow_engine::Expression::Literal;
     use crate::flow_engine::action::LogAction;
     use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNodeKind};
+    use chrono_tz::Tz;
     use std::sync::Arc;
     use test_log::test;
     use tokio::sync::mpsc;
@@ -307,7 +308,7 @@ mod tests {
         let (scheduler_tx, mut scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
 
         // The property change that fires the flow - only true for this event's context
-        let triggering_context = Context::builder()
+        let triggering_context = Context::builder(Tz::UTC)
             .changed(Some(PropertyChange {
                 device_id: "device".to_string(),
                 property_id: "on".to_string(),

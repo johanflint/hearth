@@ -126,6 +126,7 @@ mod tests {
     use crate::flow_engine::action::device_command::DeviceCommand;
     use crate::store::{DeviceMap, GroupMap};
     use crate::test_support::{DeviceBuilder, property_command, resolved_property_command};
+    use chrono_tz::Tz;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use std::io;
@@ -181,7 +182,7 @@ mod tests {
     }
 
     async fn execute(action: &ControlGroupAction, snapshot: StoreSnapshot) -> CommandMap {
-        let context = Context::builder().snapshot(snapshot).build();
+        let context = Context::builder(Tz::UTC).snapshot(snapshot).build();
         let mut scope = Scope::new();
         action.execute(&context, &mut scope).await;
         scope
@@ -336,7 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_adds_to_the_commands_of_earlier_actions() {
-        let context = Context::builder().snapshot(snapshot(&["lamp1", "lamp2"])).build();
+        let context = Context::builder(Tz::UTC).snapshot(snapshot(&["lamp1", "lamp2"])).build();
         let mut scope = Scope::new();
         let on = control_group("room", None, &[("on", Value::Boolean(true))]);
         let dim = control_group("room", Some(ClaimMode::Claim), &[("brightness", number(20))]);

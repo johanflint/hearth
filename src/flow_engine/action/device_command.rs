@@ -121,6 +121,7 @@ mod tests {
     use crate::flow_engine::Expression;
     use crate::store::StoreSnapshot;
     use crate::test_support::{DeviceBuilder, property_command, resolved_property_command};
+    use chrono_tz::Tz;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use std::time::Duration;
@@ -137,7 +138,7 @@ mod tests {
     }
 
     fn context() -> Context {
-        Context::builder().snapshot(StoreSnapshot::default()).build()
+        Context::builder(Tz::UTC).snapshot(StoreSnapshot::default()).build()
     }
 
     fn number(value: u64) -> Value {

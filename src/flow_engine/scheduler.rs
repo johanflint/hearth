@@ -148,6 +148,7 @@ pub async fn scheduler(
                             None,
                             tx_clone.clone(),
                             geo_location_clone.clone(),
+                            timezone,
                         )
                         .await;
 
@@ -196,6 +197,7 @@ pub async fn scheduler(
                         preset_registry_clone,
                         tx_clone.clone(),
                         geo_location_clone.clone(),
+                        timezone,
                     )
                     .await;
                 });
