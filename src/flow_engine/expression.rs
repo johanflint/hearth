@@ -1714,7 +1714,7 @@ mod tests {
     fn is_before_time(#[case] time: Time, #[case] expected: bool) {
         let fixed_date_time = TIMEZONE.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsBeforeTime { time } }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsBeforeTime { time } }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1727,7 +1727,7 @@ mod tests {
     fn is_after_time(#[case] time: Time, #[case] expected: bool) {
         let fixed_date_time = TIMEZONE.with_ymd_and_hms(2000, 8, 4, 12, 0, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsAfterTime { time } }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsAfterTime { time } }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1740,7 +1740,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunRisen }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunRisen }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1753,7 +1753,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunSet }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunSet }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1766,7 +1766,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsDaytime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsDaytime }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1779,7 +1779,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 8, 4, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsNighttime }, context).unwrap();
         assert_eq!(result, Value::Boolean(expected));
     }
 
@@ -1794,7 +1794,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunRisen }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunRisen }, context).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
@@ -1806,7 +1806,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunRisen }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunRisen }, context).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
@@ -1818,7 +1818,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunSet }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunSet }, context).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
@@ -1830,7 +1830,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: HasSunSet }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: HasSunSet }, context).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
@@ -1842,7 +1842,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsDaytime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsDaytime }, context).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
@@ -1854,7 +1854,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsDaytime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsDaytime }, context).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
@@ -1866,7 +1866,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 6, 21, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsNighttime }, context).unwrap();
         assert_eq!(result, Value::Boolean(false));
     }
 
@@ -1878,7 +1878,7 @@ mod tests {
         let fixed_date_time =
             TIMEZONE.with_ymd_and_hms(2000, 2, 13, time.hour as u32, time.minute as u32, 0).unwrap().to_utc();
         let context = &context_with_polar_location().now(fixed_date_time).build();
-        let result = evaluate(&Temporal { expression: IsNighttime }, &context).unwrap();
+        let result = evaluate(&Temporal { expression: IsNighttime }, context).unwrap();
         assert_eq!(result, Value::Boolean(true));
     }
 
