@@ -1,7 +1,9 @@
 use crate::domain::GeoLocation;
+use chrono_tz::Tz;
 use config::{Config, FileFormat};
 use serde::Deserialize;
 use std::time::Duration;
+use tracing::warn;
 
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
@@ -10,6 +12,7 @@ pub struct AppConfig {
     mqtt: Mqtt,
     hue: Hue,
     shelly: Shelly,
+    timezone: Option<Tz>,
     location: GeoLocation,
 }
 
@@ -45,6 +48,18 @@ impl AppConfig {
 
     pub fn shelly(&self) -> &Shelly {
         &self.shelly
+    }
+
+    // Defaults to the system timezone. Note that chrono::Local isn't used for this as it wrongly treats 02:00 on
+    // fall-back day as occurring twice and returns the two candidates in the wrong order
+    // (https://github.com/chronotope/chrono/issues/1625), which makes cron yield the same time forever.
+    pub fn timezone(&self) -> Tz {
+        self.timezone.unwrap_or_else(|| {
+            iana_time_zone::get_timezone().ok().and_then(|name| name.parse().ok()).unwrap_or_else(|| {
+                warn!("🕗 Unable to determine the system timezone, falling back to UTC");
+                Tz::UTC
+            })
+        })
     }
 
     pub fn geo_location(&self) -> &GeoLocation {
@@ -228,6 +243,7 @@ impl AppConfigBuilder {
                     application_key: "key".to_string(),
                 },
                 shelly: Shelly { enabled: true, client_connection_timeout_ms: 100, client_request_timeout_ms: 100 },
+                timezone: Some(Tz::Europe__Amsterdam),
                 location: GeoLocation { latitude: 51.8615899, longitude: 4.3580323, altitude: 0.0 },
             },
         }
@@ -245,5 +261,42 @@ impl AppConfigBuilder {
 
     pub fn build(self) -> AppConfig {
         self.config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    fn load_with_overrides(overrides: &str) -> Result<AppConfig, config::ConfigError> {
+        Config::builder()
+            .add_source(config::File::from_str(include_str!("../config.json5"), FileFormat::Json5))
+            .add_source(config::File::from_str(overrides, FileFormat::Json5))
+            .build()?
+            .try_deserialize()
+    }
+
+    #[rstest]
+    #[case::europe_london("Europe/London", Tz::Europe__London)]
+    #[case::utc("UTC", Tz::UTC)]
+    fn timezone_uses_the_configured_value(#[case] name: &str, #[case] expected: Tz) {
+        let config = load_with_overrides(&format!(r#"{{ "timezone": "{name}" }}"#)).unwrap();
+
+        assert_eq!(config.timezone(), expected);
+    }
+
+    #[test]
+    fn loading_fails_for_an_unknown_timezone() {
+        let result = load_with_overrides(r#"{ "timezone": "Europe/Atlantis" }"#);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn loading_without_a_timezone_uses_the_system_timezone() {
+        let config = load_with_overrides("{}").unwrap();
+
+        assert_eq!(config.timezone, None);
     }
 }

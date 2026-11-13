@@ -1,6 +1,6 @@
 use crate::domain::{GeoLocation, WeekdayCondition};
 use crate::extensions::date_time_ext::ToWeekday;
-use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone};
 use std::fmt::{Display, Formatter};
 use std::ops::Add;
 use std::str::FromStr;
@@ -72,15 +72,6 @@ impl Schedule {
             )),
         }
     }
-
-    /// Returns an iterator which will return each `DateTime` that matches the schedule starting at the current time.
-    pub fn upcoming<Z>(&self, timezone: Z, location: GeoLocation) -> ScheduleIterator<Z>
-    where
-        Z: TimeZone,
-    {
-        let now = Utc::now().with_timezone(&timezone);
-        self.after(now, location)
-    }
 }
 
 pub enum ScheduleIterator<Z>
@@ -104,6 +95,9 @@ where
         }
     }
 }
+
+// Covers the longest polar night, an event that doesn't occur within a year never will
+const MAX_DAYS_AHEAD: u32 = 366;
 
 pub struct SunEventIterator<Z>
 where
@@ -155,7 +149,7 @@ where
     type Item = DateTime<Z>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
+        for _ in 0..MAX_DAYS_AHEAD {
             let date = self.current.clone();
             self.current += Duration::days(1);
             if !self.when.included_days().contains(&date.to_weekday()) {
@@ -164,8 +158,9 @@ where
             if let Some(event_time) = self.event_time(date.date_naive()) {
                 return Some(event_time);
             }
-            // Polar day/night, no sunrise/sunseton this date - try the next day instead of ending the iterator
+            // Polar day/night, no sunrise/sunset on this date - try the next day instead of ending the iterator
         }
+        None
     }
 }
 
@@ -173,8 +168,9 @@ where
 mod tests {
     use super::*;
     use crate::domain::Weekday::*;
-    use chrono::{Datelike, NaiveDate};
+    use chrono::{Datelike, NaiveDate, Utc};
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     #[test]
     fn test_schedule_with_cron() {
@@ -247,6 +243,29 @@ mod tests {
         assert_eq!(upcoming[0], Utc.with_ymd_and_hms(2000, 02, 16, 10, 37, 58).unwrap());
         assert_eq!(upcoming[1], Utc.with_ymd_and_hms(2000, 02, 17, 10, 05, 42).unwrap());
         assert_eq!(upcoming[2], Utc.with_ymd_and_hms(2000, 02, 18, 09, 44, 18).unwrap());
+    }
+
+    #[test]
+    fn test_schedule_with_sunrise_event_without_days_ends() {
+        let schedule = Schedule::Sunrise { when: WeekdayCondition::Set(vec![]), offset: 0 };
+
+        assert_eq!(schedule.after(Utc::now(), location()).next(), None);
+    }
+
+    // Europe/London leaves BST on 2026-10-25: 01:00-02:00 occurs twice, 02:00 occurs once
+    #[rstest]
+    #[case("0 0 2 * * *")]
+    #[case("0 0 * * * *")]
+    #[case("0 */30 * * * *")]
+    #[case("0 30 1 * * *")]
+    fn test_cron_schedule_advances_past_the_end_of_daylight_saving_time(#[case] expression: &str) {
+        let schedule = Schedule::Cron(expression.to_string());
+        let from = chrono_tz::Europe::London.with_ymd_and_hms(2026, 10, 24, 12, 0, 0).unwrap();
+        let until = chrono_tz::Europe::London.with_ymd_and_hms(2026, 10, 27, 0, 0, 0).unwrap();
+
+        let reached_until = schedule.after(from, location()).take(1_000).any(|datetime| datetime >= until);
+
+        assert!(reached_until, "schedule '{expression}' did not advance past the end of daylight saving time");
     }
 
     fn location() -> GeoLocation {

@@ -34,6 +34,8 @@
     "client_connection_timeout_ms": 2000,
     "client_request_timeout_ms": 10000
   },
+  // Defaults to the system timezone, set an IANA name to override it
+  // "timezone": "Europe/Amsterdam",
   "location": {
     "latitude": 51.9244,
     "longitude": 4.4777,

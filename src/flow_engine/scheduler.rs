@@ -5,7 +5,8 @@ use crate::flow_engine::flow::Flow;
 use crate::flow_registry::FlowRegistry;
 use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
-use chrono::Local;
+use chrono::{DateTime, Utc};
+use chrono_tz::Tz;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,6 +41,9 @@ struct ScheduledJob {
     cancellation: CancellationToken,
 }
 
+// A healthy schedule only moves forward, an occurrence that isn't later than the latest one means it's looping
+const MAX_STALLED_OCCURRENCES: u32 = 100;
+
 #[instrument(skip_all)]
 pub async fn scheduler(
     tx: Sender<SchedulerCommand>,
@@ -48,6 +52,7 @@ pub async fn scheduler(
     flow_registry: Arc<FlowRegistry>,
     preset_registry: Arc<PresetRegistry>,
     geo_location: GeoLocation,
+    timezone: Tz,
 ) {
     let mut scheduled_flows: HashMap<String, ScheduledJob> = HashMap::new();
     let mut next_generation: u64 = 0;
@@ -115,11 +120,14 @@ pub async fn scheduler(
                 let preset_registry_clone = preset_registry.clone();
                 let geo_location_clone = geo_location.clone();
                 let join_handle = tokio::spawn(async move {
-                    for datetime in schedule.upcoming(Local, geo_location_clone.clone()) {
-                        let duration = datetime.signed_duration_since(Local::now());
-                        if duration.num_milliseconds() < 0 {
-                            continue; // Already passed
-                        }
+                    let mut occurrences =
+                        schedule.after(Utc::now().with_timezone(&timezone), geo_location_clone.clone());
+                    loop {
+                        let now = Utc::now();
+                        let Some(datetime) = next_upcoming_occurrence(&mut occurrences, now, &flow_id_clone) else {
+                            return;
+                        };
+                        let duration = datetime.signed_duration_since(now);
 
                         let scheduled_instant =
                             Instant::now() + Duration::from_millis(duration.num_milliseconds() as u64);
@@ -207,8 +215,34 @@ fn cancel_existing_job(flow_id: &str, jobs: &mut HashMap<String, ScheduledJob>) 
     true
 }
 
+// Skips the occurrences that have already passed. Returns None when the schedule has ended or stopped advancing.
+fn next_upcoming_occurrence(
+    occurrences: &mut impl Iterator<Item = DateTime<Tz>>,
+    now: DateTime<Utc>,
+    flow_id: &str,
+) -> Option<DateTime<Tz>> {
+    let mut latest_skipped: Option<DateTime<Tz>> = None;
+    let mut stalled_occurrences = 0;
+    for datetime in occurrences {
+        if datetime >= now {
+            return Some(datetime);
+        }
+
+        if latest_skipped.is_some_and(|latest| datetime <= latest) {
+            stalled_occurrences += 1;
+            if stalled_occurrences > MAX_STALLED_OCCURRENCES {
+                error!("🕗 Scheduling flow '{}'... schedule stopped advancing, stopping", flow_id);
+                return None;
+            }
+        } else {
+            latest_skipped = Some(datetime);
+        }
+    }
+    None
+}
+
 // Waits until either `scheduled_instant` or cancellation, whichever comes first.
-// Returns `true` only when the deadline wins; a `true` result coommits the
+// Returns `true` only when the deadline wins; a `true` result commits the
 // caller to running. A cancellation after this returns does not interrupt an
 // already committed execution.
 async fn scheduled_deadline_won(cancellation: &CancellationToken, scheduled_instant: Instant) -> bool {
@@ -251,6 +285,8 @@ mod tests {
     use super::*;
     use crate::flow_engine::Schedule;
     use crate::flow_engine::flow::{FlowNode, FlowNodeKind};
+    use chrono::TimeZone;
+    use rstest::rstest;
 
     fn versioned_flow(schedule: Option<Schedule>, revision: u64) -> VersionedFlow {
         let start_node = FlowNode::new("start".to_string(), vec![], FlowNodeKind::Start);
@@ -258,6 +294,49 @@ mod tests {
             Flow::new("flow".to_string(), "flow".to_string(), schedule, None, Arc::new(start_node), HashMap::new())
                 .unwrap();
         VersionedFlow { flow: Arc::new(flow), revision }
+    }
+
+    #[test]
+    fn next_upcoming_occurrence_skips_passed_occurrences() {
+        let at = |hour| Tz::UTC.with_ymd_and_hms(2026, 1, 1, hour, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 1, 1, 11, 30, 0).unwrap();
+
+        let next = next_upcoming_occurrence(&mut [at(10), at(11), at(12), at(13)].into_iter(), now, "flow");
+
+        assert_eq!(next, Some(at(12)));
+    }
+
+    #[test]
+    fn next_upcoming_occurrence_returns_none_when_the_schedule_has_ended() {
+        let now = Utc.with_ymd_and_hms(2026, 1, 1, 11, 30, 0).unwrap();
+
+        assert_eq!(next_upcoming_occurrence(&mut std::iter::empty(), now, "flow"), None);
+    }
+
+    #[test]
+    fn next_upcoming_occurrence_stops_a_schedule_that_goes_back_in_time() {
+        let at = |hour| Tz::UTC.with_ymd_and_hms(2026, 1, 1, hour, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap();
+
+        // Never returns without the stall detection, the iterator is endless
+        let next = next_upcoming_occurrence(&mut [at(2), at(1)].into_iter().cycle(), now, "flow");
+
+        assert_eq!(next, None);
+    }
+
+    // Europe/London leaves BST on 2026-10-25, everything before `now` has passed
+    #[rstest]
+    #[case("0 0 2 * * *", 2)]
+    #[case("0 0 * * * *", 0)]
+    fn next_upcoming_occurrence_passes_the_end_of_daylight_saving_time(#[case] expression: &str, #[case] hour: u32) {
+        let london = Tz::Europe__London;
+        let from = london.with_ymd_and_hms(2026, 10, 24, 12, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 10, 27, 0, 0, 0).unwrap();
+        let mut occurrences = Schedule::Cron(expression.to_string()).after(from, GeoLocation::default());
+
+        let next = next_upcoming_occurrence(&mut occurrences, now, "flow");
+
+        assert_eq!(next, Some(london.with_ymd_and_hms(2026, 10, 27, hour, 0, 0).unwrap()));
     }
 
     #[test]
