@@ -4,6 +4,7 @@ set -eu
 REPOSITORY="johanflint/hearth"
 APP_DIR="${HEARTH_HOME:-}"
 VERSION="${HEARTH_VERSION:-}"
+SERVICE="${HEARTH_SERVICE:-}"
 
 log() {
   printf  '%s\n' "$*";
@@ -37,6 +38,18 @@ case "$os" in
   esac ;;
   *) die "Unsupported OS '$os', only Linux and macOS are supported"
 esac
+
+### Check the service
+if [ "$SERVICE" = "1" ]; then
+  [ "$os" = "Linux" ] || die "HEARTH_SERVICE=1 is only supported on Linux"
+  command -v systemctl >/dev/null 2>&1 || die "HEARTH_SERVICE=1 requires systemd, but 'systemctl' was not found"
+  systemctl --user show-environment >/dev/null 2>&1 \
+    || die "HEARTH_SERVICE=1 requires a systemd user session (is XDG_RUNTIME_DIR set?)"
+  # Whitespace and '%' have a special meaning in unit files
+  case "$APP_DIR" in
+    *[[:space:]%\|\&\\]*) die "HEARTH_SERVICE=1 does not support whitespace or any of '%|&\\' in '${APP_DIR}'" ;;
+  esac
+fi
 
 ### Resolve version
 if [ -z "$VERSION" ]; then
@@ -94,6 +107,9 @@ log "✅ Verifying checksum... OK"
 tar -xzf "${tmp_dir}/${archive}" -C "$tmp_dir"
 extracted_dir="${tmp_dir}/hearth-${VERSION}-${archive_os}"
 [ -x "${extracted_dir}/hearth" ] || die "Extracted archive did not contain an executable"
+if [ "$SERVICE" = "1" ] && [ ! -f "${extracted_dir}/hearth.service" ]; then
+  die "Release ${VERSION} does not include hearth.service, try a newer version"
+fi
 
 ### Install
 mkdir -p "$APP_DIR" || die "Could not create '${APP_DIR}'"
@@ -108,8 +124,36 @@ if [ ! -f "${APP_DIR}/config.local.json5" ]; then
   log "⚠️ No config.local.json5 found in ${APP_DIR} - hearth will run with default settings"
 fi
 
+### Install a systemd user service, opt-in
+if [ "$SERVICE" = "1" ]; then
+  unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$unit_dir" || die "Could not create '${unit_dir}'"
+  sed "s|@APP_DIR@|${APP_DIR}|g" "${extracted_dir}/hearth.service" > "${unit_dir}/hearth.service" \
+      || die "Could not write '${unit_dir}/hearth.service'"
+  systemctl --user daemon-reload || die "Could not reload the systemd user manager"
+  log "✅ Installed ${unit_dir}/hearth.service"
+
+  if systemctl --user is-active --quiet hearth; then
+    systemctl --user restart hearth || die "Could not restart the hearth service"
+    log "🔄 Restarted the hearth service"
+  fi
+fi
+
 log "✅ Installed hearth ${VERSION} to ${APP_DIR}"
-log "Restart any already-running process to use this version"
-log ""
-log "Run it with:"
-log " cd ${APP_DIR} && ./hearth"
+
+if [ "$SERVICE" = "1" ]; then
+  log ""
+  log "Start it at boot with (after creating ${APP_DIR}/config.local.json5):"
+  log " systemctl --user enable --now hearth"
+  log " loginctl enable-linger \"\$USER\"   # keeps it running without a login session"
+  log "Logs: journalctl --user -u hearth -f"
+else
+  log "Restart any already-running process to use this version"
+  log ""
+  log "Run it with:"
+  log " cd ${APP_DIR} && ./hearth"
+  if [ "$os" = "Linux" ] && [ -f "${extracted_dir}/hearth.service" ]; then
+    log ""
+    log "To run hearth as a service, install again with HEARTH_SERVICE=1"
+  fi
+fi

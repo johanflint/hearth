@@ -54,6 +54,7 @@ jobs:
           name="hearth-${{ github.event.release.tag_name }}-${{ matrix.archive_os }}"
           mkdir "$name"
           cp "target/${{ matrix.target }}/release/hearth" "$name/"
+          cp scripts/hearth.service "$name/"
           cp README.md "$name/" 2>/dev/null || true
           tar czf "$name.tar.gz" "$name"
           shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
