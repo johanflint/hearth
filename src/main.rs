@@ -148,8 +148,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let preset_registry_clone = preset_registry.clone();
     let scheduler_tx_clone = scheduler_tx.clone();
     let store_listener_handle = task::spawn(async move {
-        store_listener(store_reactive_rx, flow_registry_clone, preset_registry_clone, scheduler_tx_clone, geo_location)
-            .await;
+        store_listener(
+            store_reactive_rx,
+            flow_registry_clone,
+            preset_registry_clone,
+            scheduler_tx_clone,
+            geo_location,
+            timezone,
+        )
+        .await;
     });
     info!("✅  Initialized store listener");
 

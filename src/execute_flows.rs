@@ -7,6 +7,7 @@ use crate::preset_registry::PresetRegistry;
 use crate::scheduler::SchedulerCommand;
 use crate::store::{PropertyChange, StoreSnapshot};
 use crate::{claim_registry, flow_engine};
+use chrono_tz::Tz;
 use futures::stream::FuturesUnordered;
 use futures::stream::StreamExt;
 use std::collections::{BTreeSet, HashMap};
@@ -50,8 +51,9 @@ pub async fn execute_flow(
     preset_registry: Arc<PresetRegistry>,
     tx: Sender<SchedulerCommand>,
     geo_location: GeoLocation,
+    timezone: Tz,
 ) {
-    let context = Context::builder()
+    let context = Context::builder(timezone)
         .snapshot(snapshot.clone())
         .preset_registry(preset_registry) // Passing the Arc to avoid expensive copies
         .location(geo_location)
@@ -70,8 +72,9 @@ pub async fn execute_flows(
     changed: Option<PropertyChange>,
     tx: Sender<SchedulerCommand>,
     geo_location: GeoLocation,
+    timezone: Tz,
 ) {
-    let context = Context::builder()
+    let context = Context::builder(timezone)
         .snapshot(snapshot.clone())
         .preset_registry(preset_registry)
         .changed(changed)
