@@ -479,7 +479,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                     EventTime::PolarNight => false,
                 })),
                 TemporalExpression::HasSunSet => Ok(Value::Boolean(match context.sunset() {
-                    EventTime::At(sunrise) => now.time() >= sunrise.time(),
+                    EventTime::At(sunset) => now.time() >= sunset.time(),
                     EventTime::PolarDay => true,
                     EventTime::PolarNight => false,
                 })),
