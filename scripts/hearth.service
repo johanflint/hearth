@@ -1,0 +1,11 @@
+[Unit]
+Description=Hearth
+
+[Service]
+WorkingDirectory=@APP_DIR@
+ExecStart=@APP_DIR@/hearth
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
