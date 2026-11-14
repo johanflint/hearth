@@ -277,6 +277,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a == b)),
             (Value::String(a), Value::String(b)) => Ok(Value::Boolean(a.eq(&b))),
             (Value::None, Value::None) => Ok(Value::Boolean(true)),
+            (Value::None, _) | (_, Value::None) => Ok(Value::Boolean(false)),
             (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
                 operand: "EqualTo",
                 expected: EQUATABLE,
@@ -291,6 +292,7 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
             (Value::DateTime(a), Value::DateTime(b)) => Ok(Value::Boolean(a != b)),
             (Value::String(a), Value::String(b)) => Ok(Value::Boolean(!a.eq(&b))),
             (Value::None, Value::None) => Ok(Value::Boolean(false)),
+            (Value::None, _) | (_, Value::None) => Ok(Value::Boolean(true)),
             (lhs, rhs) => Err(ExpressionError::OperandTypeMismatch {
                 operand: "NotEqualTo",
                 expected: EQUATABLE,
@@ -1173,7 +1175,12 @@ mod tests {
         }
 
         #[rstest]
-        #[case(Value::None, Value::None, true)]
+        #[case::both_none(Value::None, Value::None, true)]
+        #[case::none_and_number(Value::None, Value::Number(Number::PositiveInt(2)), false)]
+        #[case::number_and_none(Value::Number(Number::PositiveInt(2)), Value::None, false)]
+        #[case::none_and_string(Value::None, Value::String("short_release".to_string()), false)]
+        #[case::string_and_none(Value::String("short_release".to_string()), Value::None, false)]
+        #[case::none_and_boolean(Value::None, Value::Boolean(false), false)]
         fn none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
             let result = evaluate(
                 &EqualTo { lhs: Box::new(Literal { value: lhs }), rhs: Box::new(Literal { value: rhs }) },
@@ -1189,12 +1196,6 @@ mod tests {
                 operand: "EqualTo",
                 expected: EQUATABLE,
                 actual_lhs: ValueKind::Boolean,
-                actual_rhs: ValueKind::Number,
-            })]
-        #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
-                operand: "EqualTo",
-                expected: EQUATABLE,
-                actual_lhs: ValueKind::None,
                 actual_rhs: ValueKind::Number,
             })]
         #[case(Value::Color(Color::Hex("#ff0000".to_string())), Value::String("#ff0000".to_string()), OperandTypeMismatch{
@@ -1309,7 +1310,12 @@ mod tests {
         }
 
         #[rstest]
-        #[case(Value::None, Value::None, false)]
+        #[case::both_none(Value::None, Value::None, false)]
+        #[case::none_and_number(Value::None, Value::Number(Number::PositiveInt(2)), true)]
+        #[case::number_and_none(Value::Number(Number::PositiveInt(2)), Value::None, true)]
+        #[case::none_and_string(Value::None, Value::String("short_release".to_string()), true)]
+        #[case::string_and_none(Value::String("short_release".to_string()), Value::None, true)]
+        #[case::none_and_boolean(Value::None, Value::Boolean(false), true)]
         fn none(#[case] lhs: Value, #[case] rhs: Value, #[case] expected: bool) {
             let result = evaluate(
                 &NotEqualTo { lhs: Box::new(Literal { value: lhs }), rhs: Box::new(Literal { value: rhs }) },
@@ -1325,12 +1331,6 @@ mod tests {
                 operand: "NotEqualTo",
                 expected: EQUATABLE,
                 actual_lhs: ValueKind::Boolean,
-                actual_rhs: ValueKind::Number,
-            })]
-        #[case(Value::None, Value::Number(Number::PositiveInt(2)), OperandTypeMismatch{
-                operand: "NotEqualTo",
-                expected: EQUATABLE,
-                actual_lhs: ValueKind::None,
                 actual_rhs: ValueKind::Number,
             })]
         #[case(Value::Color(Color::Hex("#ff0000".to_string())), Value::String("#ff0000".to_string()), OperandTypeMismatch{
