@@ -9,10 +9,10 @@ use crate::repositories::FlowRepository;
 use crate::repositories::GroupRepository;
 use crate::repositories::PresetRepository;
 use crate::repositories::ZoneRepository;
-use crate::services::FlowService;
 use crate::services::GroupService;
 use crate::services::PresetService;
 use crate::services::ZoneService;
+use crate::services::{DeviceService, FlowService};
 use crate::store::StoreSnapshot;
 use axum::response::Response;
 use chrono::Utc;
@@ -113,6 +113,7 @@ fn build_state(
     let preset_repository = Arc::new(PresetRepository::new(database.clone()));
     let preset_registry = Arc::new(PresetRegistry::new(vec![]));
     let (_, snapshot_rx) = watch::channel(snapshot);
+    let device_service = Arc::new(DeviceService::new(snapshot_rx.clone()));
     let flow_service = Arc::new(FlowService::new(
         Arc::clone(&flow_repository),
         Arc::clone(&flow_registry),
@@ -144,6 +145,7 @@ fn build_state(
         database.clone(),
         Arc::new(core_tasks),
         vec![],
+        device_service,
         flow_service,
         group_service,
         zone_service,
