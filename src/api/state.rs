@@ -1,7 +1,7 @@
 use crate::core_tasks::CoreTasks;
 use crate::database::Database;
 use crate::integration::Integration;
-use crate::services::{FlowService, GroupService, PresetService, ZoneService};
+use crate::services::{DeviceService, FlowService, GroupService, PresetService, ZoneService};
 use metrics_exporter_prometheus::PrometheusHandle;
 use std::sync::Arc;
 
@@ -11,6 +11,7 @@ pub struct ApiState {
     pub(super) database: Database,
     pub(super) core_tasks: Arc<CoreTasks>,
     pub(super) integrations: Arc<[Arc<dyn Integration>]>,
+    pub(super) device_service: Arc<DeviceService>,
     pub(super) flow_service: Arc<FlowService>,
     pub(super) group_service: Arc<GroupService>,
     pub(super) zone_service: Arc<ZoneService>,
@@ -23,6 +24,7 @@ impl ApiState {
         database: Database,
         core_tasks: Arc<CoreTasks>,
         integrations: Vec<Arc<dyn Integration>>,
+        device_service: Arc<DeviceService>,
         flow_service: Arc<FlowService>,
         group_service: Arc<GroupService>,
         zone_service: Arc<ZoneService>,
@@ -33,6 +35,7 @@ impl ApiState {
             database,
             core_tasks,
             integrations: integrations.into(),
+            device_service,
             flow_service,
             group_service,
             zone_service,

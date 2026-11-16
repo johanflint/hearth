@@ -12,7 +12,7 @@ use crate::metrics_layer::MetricsLayer;
 use crate::mqtt::MqttService;
 use crate::preset_registry::PresetRegistry;
 use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
-use crate::services::{FlowService, GroupService, PresetService, ZoneService};
+use crate::services::{DeviceService, FlowService, GroupService, PresetService, ZoneService};
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -161,6 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("✅  Initialized store listener");
 
     let store_rx_clone = store.notifier();
+    let devices_rx_clone = store.notifier();
     let integrations_rx_clone = store.notifier();
     let group_service_rx_clone = store.notifier();
     let zone_service_rx_clone = store.notifier();
@@ -176,6 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     info!("✅  Initialized controllers");
 
+    let device_service = Arc::new(DeviceService::new(devices_rx_clone));
     let flow_service = Arc::new(FlowService::new(
         flow_repository,
         flow_registry.clone(),
@@ -194,6 +196,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         database,
         core_tasks,
         integrations.clone(),
+        device_service,
         flow_service,
         group_service,
         zone_service,

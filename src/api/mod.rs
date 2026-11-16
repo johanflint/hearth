@@ -1,3 +1,4 @@
+mod devices;
 mod error;
 mod flows;
 mod groups;
@@ -18,6 +19,7 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         .merge(health::router())
         .merge(metrics::router())
+        .merge(devices::router())
         .merge(flows::router())
         .merge(groups::router())
         .merge(zones::router())
