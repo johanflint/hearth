@@ -36,7 +36,7 @@ pub struct ReactiveUpdate {
 // Delivered to API clients, only when a device actually changed.
 #[derive(Clone, Debug)]
 pub enum DeviceUpdate {
-    PropertyChanged { snapshot: StoreSnapshot, changed: PropertyChange },
+    PropertyChanged { device: Arc<Device>, changed: PropertyChange },
     DevicesDiscovered,
 }
 
@@ -115,9 +115,10 @@ impl Store {
             // After the watch, so a client that subscribes before reading the snapshot never misses an update.
             // Before the reactive send, so slow flows don't delay clients. Fails without clients.
             let device_update = match &changed {
-                Some(change) => {
-                    Some(DeviceUpdate::PropertyChanged { snapshot: snapshot.clone(), changed: change.clone() })
-                }
+                Some(change) => self.devices.get(&change.device_id).map(|device| DeviceUpdate::PropertyChanged {
+                    device: Arc::clone(device),
+                    changed: change.clone(),
+                }),
                 None if devices_discovered => Some(DeviceUpdate::DevicesDiscovered),
                 // A group or zone changed, or a property kept its value
                 None => None,
@@ -1601,14 +1602,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn property_change_is_sent_to_clients_with_the_new_snapshot() {
+    async fn property_change_is_sent_to_clients_with_the_changed_device() {
         let (tx, mut reactive_rx, mut updates_rx) = start_store_with_client();
         process(&tx, &mut reactive_rx, discovered_device(false)).await;
         updates_rx.try_recv().unwrap();
 
         process(&tx, &mut reactive_rx, turn_on(true)).await;
 
-        let Ok(DeviceUpdate::PropertyChanged { snapshot, changed }) = updates_rx.try_recv() else {
+        let Ok(DeviceUpdate::PropertyChanged { device, changed }) = updates_rx.try_recv() else {
             panic!("expected a property change");
         };
         assert_eq!(
@@ -1619,8 +1620,8 @@ mod tests {
                 initiated_by: InitiatedBy::Device
             }
         );
-        let on = snapshot.devices["device"].get_property::<BooleanProperty>("on").unwrap().value();
-        assert!(on, "expected the snapshot to contain the new value");
+        let on = device.get_property::<BooleanProperty>("on").unwrap().value();
+        assert!(on, "expected the device to contain the new value");
     }
 
     #[tokio::test]

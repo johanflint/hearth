@@ -1,8 +1,9 @@
 use crate::api::ApiState;
 use crate::api::devices::device_view::DeviceView;
 use crate::api::devices::property_view::PropertyView;
+use crate::domain::Device;
 use crate::services::DeviceService;
-use crate::store::{DeviceUpdate, PropertyChange, StoreSnapshot};
+use crate::store::{DeviceUpdate, PropertyChange};
 use axum::extract::State;
 use axum::response::Sse;
 use axum::response::sse::{Event, KeepAlive};
@@ -37,20 +38,17 @@ fn snapshot_event(device_service: &DeviceService) -> Result<Event, axum::Error> 
 
 fn update_event(device_service: &DeviceService, update: DeviceUpdate) -> Result<Event, axum::Error> {
     match update {
-        DeviceUpdate::PropertyChanged { snapshot, changed } => {
-            property_changed_event(device_service, snapshot, changed)
-        }
+        DeviceUpdate::PropertyChanged { device, changed } => property_changed_event(device_service, &device, changed),
         DeviceUpdate::DevicesDiscovered => snapshot_event(device_service),
     }
 }
 
 fn property_changed_event(
     device_service: &DeviceService,
-    snapshot: StoreSnapshot,
+    device: &Device,
     changed: PropertyChange,
 ) -> Result<Event, axum::Error> {
-    let property =
-        snapshot.devices.get(&changed.device_id).and_then(|device| device.properties.get(&changed.property_id));
+    let property = device.properties.get(&changed.property_id);
     let Some(property) = property else {
         // Can't happen, the store only reports changes to existing properties
         return snapshot_event(device_service);
@@ -85,6 +83,7 @@ mod tests {
     use crate::api::devices::test_support::{device, snapshot_with_devices};
     use crate::api::test_support::{body_json, create_state_with_snapshot};
     use crate::domain::{Device, InitiatedBy};
+    use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
     use axum::body::Body;
     use axum::http::{Request, StatusCode, header};
@@ -147,7 +146,7 @@ mod tests {
                 property_id: property_id.to_string(),
                 initiated_by: InitiatedBy::External,
             },
-            snapshot: snapshot_with_devices(vec![device]),
+            device: Arc::new(device),
         }
     }
 
