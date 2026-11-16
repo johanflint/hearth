@@ -21,22 +21,20 @@ struct ListDevicesResponse {
 mod tests {
     use super::*;
     use crate::api::devices::router;
-    use crate::api::test_support::{body_json, create_state, create_state_with_snapshot};
+    use crate::api::devices::test_support::{device, state_with_devices};
+    use crate::api::test_support::{body_json, create_state};
     use crate::domain::property::{
         BooleanProperty, CartesianCoordinate, DateTimeProperty, EnumProperty, Gamut, NumberProperty, Property,
         PropertyType, Unit,
     };
     use crate::domain::{Device, DeviceType};
     use crate::flow_registry::FlowRegistry;
-    use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
     use axum::body::Body;
     use axum::http::Request;
     use chrono::{TimeZone, Utc};
     use rstest::rstest;
     use serde_json::{Value, json};
-    use std::collections::HashMap;
-    use std::sync::Arc;
     use tower::ServiceExt;
 
     async fn call_list_devices(state: ApiState) -> Response {
@@ -45,21 +43,12 @@ mod tests {
         router().with_state(state).oneshot(request).await.unwrap()
     }
 
-    fn device(id: &str, name: &str) -> Device {
-        Device { name: name.to_string(), ..DeviceBuilder::new(id).build() }
-    }
-
     fn device_with_property(property: impl Property + 'static) -> Device {
         DeviceBuilder::new("device").with_properties(vec![Box::new(property)]).build()
     }
 
-    fn snapshot(devices: Vec<Device>) -> StoreSnapshot {
-        let devices: HashMap<_, _> = devices.into_iter().map(|device| (device.id.clone(), Arc::new(device))).collect();
-        StoreSnapshot { devices: Arc::new(devices), ..Default::default() }
-    }
-
     async fn list_devices_json(devices: Vec<Device>) -> Value {
-        let response = call_list_devices(create_state_with_snapshot(snapshot(devices))).await;
+        let response = call_list_devices(state_with_devices(devices)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
         body_json(response).await

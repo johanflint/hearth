@@ -4,7 +4,7 @@ mod group_service;
 mod preset_service;
 mod zone_service;
 
-pub use device_service::DeviceService;
+pub use device_service::{DeviceService, RetrieveDeviceError};
 pub use flow_service::{
     CreateFlowError, CreatedFlow, DeleteFlowError, FlowService, ListFlowsError, RetrieveFlowError, UpdateFlowError,
     ValidateError,

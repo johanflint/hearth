@@ -1,6 +1,7 @@
 use crate::domain::Device;
 use crate::store::StoreSnapshot;
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::watch::Receiver;
 
 #[derive(Debug)]
@@ -19,6 +20,16 @@ impl DeviceService {
         devices.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
         devices
     }
+
+    pub fn retrieve_device(&self, id: &str) -> Result<Arc<Device>, RetrieveDeviceError> {
+        self.snapshot_rx.borrow().devices.get(id).cloned().ok_or(RetrieveDeviceError::NotFound)
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum RetrieveDeviceError {
+    #[error("device not found")]
+    NotFound,
 }
 
 #[cfg(test)]
@@ -75,5 +86,42 @@ mod tests {
         tx.send(snapshot(vec![device("1", "Lamp"), device("2", "Ceiling")])).unwrap();
 
         assert_eq!(ids(&service.list()), vec!["2", "1"]);
+    }
+
+    #[test]
+    fn retrieve_device_returns_the_device_with_the_id() {
+        let (_tx, rx) = watch::channel(snapshot(vec![device("1", "Lamp"), device("2", "Ceiling")]));
+
+        let found = DeviceService::new(rx).retrieve_device("2").unwrap();
+
+        assert_eq!(found.name, "Ceiling");
+    }
+
+    #[test]
+    fn retrieve_device_returns_not_found_for_an_unknown_id() {
+        let (_tx, rx) = watch::channel(snapshot(vec![device("1", "Lamp")]));
+
+        let result = DeviceService::new(rx).retrieve_device("unknown");
+
+        assert!(matches!(result, Err(RetrieveDeviceError::NotFound)));
+    }
+
+    #[test]
+    fn retrieve_device_does_not_match_on_the_name() {
+        let (_tx, rx) = watch::channel(snapshot(vec![device("1", "Lamp")]));
+
+        let result = DeviceService::new(rx).retrieve_device("Lamp");
+
+        assert!(matches!(result, Err(RetrieveDeviceError::NotFound)));
+    }
+
+    #[test]
+    fn retrieve_device_follows_the_latest_snapshot() {
+        let (tx, rx) = watch::channel(snapshot(vec![device("1", "Lamp")]));
+        let service = DeviceService::new(rx);
+
+        tx.send(snapshot(vec![device("1", "Lamp"), device("2", "Ceiling")])).unwrap();
+
+        assert!(service.retrieve_device("2").is_ok());
     }
 }
