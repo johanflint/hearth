@@ -21,7 +21,7 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use rusqlite::params;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 
 pub(super) const VALID_FLOW_ID: &str = "01K7KK6H5R7Y72QJEJSJQCKMRQ";
 pub(super) const VALID_FLOW_JSON: &str = include_str!("../../tests/resources/flows/logFlow.json");
@@ -113,7 +113,7 @@ fn build_state(
     let preset_repository = Arc::new(PresetRepository::new(database.clone()));
     let preset_registry = Arc::new(PresetRegistry::new(vec![]));
     let (_, snapshot_rx) = watch::channel(snapshot);
-    let device_service = Arc::new(DeviceService::new(snapshot_rx.clone()));
+    let device_service = Arc::new(DeviceService::new(snapshot_rx.clone(), broadcast::channel(1).1));
     let flow_service = Arc::new(FlowService::new(
         Arc::clone(&flow_repository),
         Arc::clone(&flow_registry),

@@ -12,6 +12,10 @@ pub(super) fn device(id: &str, name: &str) -> Device {
 
 /// The API state with the devices in the store
 pub(super) fn state_with_devices(devices: Vec<Device>) -> ApiState {
+    create_state_with_snapshot(snapshot_with_devices(devices))
+}
+
+pub(super) fn snapshot_with_devices(devices: Vec<Device>) -> StoreSnapshot {
     let devices: HashMap<_, _> = devices.into_iter().map(|device| (device.id.clone(), Arc::new(device))).collect();
-    create_state_with_snapshot(StoreSnapshot { devices: Arc::new(devices), ..Default::default() })
+    StoreSnapshot { devices: Arc::new(devices), ..Default::default() }
 }

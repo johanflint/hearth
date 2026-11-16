@@ -1,17 +1,23 @@
 use crate::domain::Device;
-use crate::store::StoreSnapshot;
+use crate::store::{DeviceUpdate, StoreSnapshot};
 use std::sync::Arc;
 use thiserror::Error;
+use tokio::sync::broadcast;
 use tokio::sync::watch::Receiver;
 
 #[derive(Debug)]
 pub struct DeviceService {
     snapshot_rx: Receiver<StoreSnapshot>,
+    updates_rx: broadcast::Receiver<DeviceUpdate>,
 }
 
 impl DeviceService {
-    pub fn new(snapshot_rx: Receiver<StoreSnapshot>) -> Self {
-        DeviceService { snapshot_rx }
+    pub fn new(snapshot_rx: Receiver<StoreSnapshot>, updates_rx: broadcast::Receiver<DeviceUpdate>) -> Self {
+        DeviceService { snapshot_rx, updates_rx }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<DeviceUpdate> {
+        self.updates_rx.resubscribe()
     }
 
     pub fn list(&self) -> Vec<Arc<Device>> {
@@ -52,11 +58,16 @@ mod tests {
         devices.iter().map(|device| device.id.as_str()).collect()
     }
 
+    /// A service without device updates, for the tests that only read the snapshot
+    fn device_service(snapshot_rx: watch::Receiver<StoreSnapshot>) -> DeviceService {
+        DeviceService::new(snapshot_rx, broadcast::channel(1).1)
+    }
+
     #[test]
     fn list_returns_nothing_for_an_empty_snapshot() {
         let (_tx, rx) = watch::channel(StoreSnapshot::default());
 
-        assert!(DeviceService::new(rx).list().is_empty());
+        assert!(device_service(rx).list().is_empty());
     }
 
     #[test]
@@ -64,7 +75,7 @@ mod tests {
         let (_tx, rx) =
             watch::channel(snapshot(vec![device("1", "Remote"), device("2", "Ceiling"), device("3", "Lamp")]));
 
-        let devices = DeviceService::new(rx).list();
+        let devices = device_service(rx).list();
 
         assert_eq!(ids(&devices), vec!["2", "3", "1"]);
     }
@@ -73,7 +84,7 @@ mod tests {
     fn list_orders_devices_with_the_same_name_by_id() {
         let (_tx, rx) = watch::channel(snapshot(vec![device("c", "Lamp"), device("a", "Lamp"), device("b", "Lamp")]));
 
-        let devices = DeviceService::new(rx).list();
+        let devices = device_service(rx).list();
 
         assert_eq!(ids(&devices), vec!["a", "b", "c"]);
     }
@@ -81,7 +92,7 @@ mod tests {
     #[test]
     fn list_follows_the_latest_snapshot() {
         let (tx, rx) = watch::channel(snapshot(vec![device("1", "Lamp")]));
-        let service = DeviceService::new(rx);
+        let service = device_service(rx);
 
         tx.send(snapshot(vec![device("1", "Lamp"), device("2", "Ceiling")])).unwrap();
 
@@ -92,7 +103,7 @@ mod tests {
     fn retrieve_device_returns_the_device_with_the_id() {
         let (_tx, rx) = watch::channel(snapshot(vec![device("1", "Lamp"), device("2", "Ceiling")]));
 
-        let found = DeviceService::new(rx).retrieve_device("2").unwrap();
+        let found = device_service(rx).retrieve_device("2").unwrap();
 
         assert_eq!(found.name, "Ceiling");
     }
@@ -101,7 +112,7 @@ mod tests {
     fn retrieve_device_returns_not_found_for_an_unknown_id() {
         let (_tx, rx) = watch::channel(snapshot(vec![device("1", "Lamp")]));
 
-        let result = DeviceService::new(rx).retrieve_device("unknown");
+        let result = device_service(rx).retrieve_device("unknown");
 
         assert!(matches!(result, Err(RetrieveDeviceError::NotFound)));
     }
@@ -110,7 +121,7 @@ mod tests {
     fn retrieve_device_does_not_match_on_the_name() {
         let (_tx, rx) = watch::channel(snapshot(vec![device("1", "Lamp")]));
 
-        let result = DeviceService::new(rx).retrieve_device("Lamp");
+        let result = device_service(rx).retrieve_device("Lamp");
 
         assert!(matches!(result, Err(RetrieveDeviceError::NotFound)));
     }
@@ -118,10 +129,48 @@ mod tests {
     #[test]
     fn retrieve_device_follows_the_latest_snapshot() {
         let (tx, rx) = watch::channel(snapshot(vec![device("1", "Lamp")]));
-        let service = DeviceService::new(rx);
+        let service = device_service(rx);
 
         tx.send(snapshot(vec![device("1", "Lamp"), device("2", "Ceiling")])).unwrap();
 
         assert!(service.retrieve_device("2").is_ok());
+    }
+
+    #[test]
+    fn subscribe_receives_the_updates_sent_after_subscribing() {
+        let (_snapshot_tx, snapshot_rx) = watch::channel(StoreSnapshot::default());
+        let (updates_tx, updates_rx) = broadcast::channel(8);
+        let service = DeviceService::new(snapshot_rx, updates_rx);
+
+        let mut subscription = service.subscribe();
+        updates_tx.send(DeviceUpdate::DevicesDiscovered).unwrap();
+
+        assert!(matches!(subscription.try_recv(), Ok(DeviceUpdate::DevicesDiscovered)));
+    }
+
+    #[test]
+    fn subscribe_skips_the_updates_sent_before_subscribing() {
+        let (_snapshot_tx, snapshot_rx) = watch::channel(StoreSnapshot::default());
+        let (updates_tx, updates_rx) = broadcast::channel(8);
+        let service = DeviceService::new(snapshot_rx, updates_rx);
+
+        updates_tx.send(DeviceUpdate::DevicesDiscovered).unwrap();
+        let mut subscription = service.subscribe();
+
+        assert!(matches!(subscription.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn every_subscriber_receives_every_update() {
+        let (_snapshot_tx, snapshot_rx) = watch::channel(StoreSnapshot::default());
+        let (updates_tx, updates_rx) = broadcast::channel(8);
+        let service = DeviceService::new(snapshot_rx, updates_rx);
+
+        let mut first = service.subscribe();
+        let mut second = service.subscribe();
+        updates_tx.send(DeviceUpdate::DevicesDiscovered).unwrap();
+
+        assert!(matches!(first.try_recv(), Ok(DeviceUpdate::DevicesDiscovered)));
+        assert!(matches!(second.try_recv(), Ok(DeviceUpdate::DevicesDiscovered)));
     }
 }

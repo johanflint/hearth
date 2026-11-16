@@ -165,6 +165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let integrations_rx_clone = store.notifier();
     let group_service_rx_clone = store.notifier();
     let zone_service_rx_clone = store.notifier();
+    let device_updates_rx = store.updates();
     let store_handle = task::spawn(async move {
         store.listen().await;
     });
@@ -177,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     info!("✅  Initialized controllers");
 
-    let device_service = Arc::new(DeviceService::new(devices_rx_clone));
+    let device_service = Arc::new(DeviceService::new(devices_rx_clone, device_updates_rx));
     let flow_service = Arc::new(FlowService::new(
         flow_repository,
         flow_registry.clone(),
