@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.4.0 (2026-11-16)
+
+### Features
+
+- Add device event stream ([#95](https://github.com/johanflint/hearth/pull/95))
+- Add API endpoints for listing and retrieving devices ([#94](https://github.com/johanflint/hearth/pull/94))
+- Define comparison behavior for `None` values in expressions ([#93](https://github.com/johanflint/hearth/pull/93))
+- Install Hearth as a systemd user service with `HEARTH_SERVICE=1` ([#92](https://github.com/johanflint/hearth/pull/92))
+- Support Shelly presence sensor ([#88](https://github.com/johanflint/hearth/pull/88))
+- Provision and control Shelly devices ([#87](https://github.com/johanflint/hearth/pull/87))
+- Support Shelly devices ([#85](https://github.com/johanflint/hearth/pull/85))
+
+### Bug Fixes
+
+- Use the configured timezone in the flow engine ([#91](https://github.com/johanflint/hearth/pull/91))
+- Fix scheduler freezing at the end of daylight saving time ([#89](https://github.com/johanflint/hearth/pull/89))
+
 ## v0.3.0 (2026-11-05)
 
 ### Features
