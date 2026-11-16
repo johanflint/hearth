@@ -22,6 +22,10 @@ impl NumberProperty {
         NumberPropertyBuilder::new(name, property_type, readonly)
     }
 
+    pub fn unit(&self) -> &Unit {
+        &self.unit
+    }
+
     #[allow(dead_code)]
     pub fn as_u64(&self) -> Option<u64> {
         match self.value? {
@@ -83,6 +87,14 @@ impl NumberProperty {
     pub fn set_value(&mut self, value: Option<Number>) -> Result<(), PropertyError> {
         self.value = value;
         Ok(())
+    }
+
+    pub fn minimum(&self) -> Option<Number> {
+        self.minimum
+    }
+
+    pub fn maximum(&self) -> Option<Number> {
+        self.maximum
     }
 }
 

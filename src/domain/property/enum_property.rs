@@ -55,6 +55,10 @@ impl EnumProperty {
         self.value = value;
         Ok(())
     }
+
+    pub fn allowed_values(&self) -> &[String] {
+        &self.allowed_values
+    }
 }
 
 impl Property for EnumProperty {
