@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch::{Receiver as WatchReceiver, Sender as WatchSender};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{debug, error, info, instrument, warn};
 
 pub type DeviceMap = HashMap<String, Arc<Device>>;
@@ -33,6 +33,13 @@ pub struct ReactiveUpdate {
     pub changed: Option<PropertyChange>,
 }
 
+// Delivered to API clients, only when a device actually changed.
+#[derive(Clone, Debug)]
+pub enum DeviceUpdate {
+    PropertyChanged { snapshot: StoreSnapshot, changed: PropertyChange },
+    DevicesDiscovered,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PropertyChange {
     pub device_id: String,
@@ -49,6 +56,7 @@ pub struct Store {
     notifier_tx: WatchSender<StoreSnapshot>,
     notifier_rx: WatchReceiver<StoreSnapshot>,
     reactive_tx: Sender<ReactiveUpdate>,
+    updates_tx: broadcast::Sender<DeviceUpdate>,
 }
 
 /// Capacity of the reactive update channel, see `ReactiveUpdate`.
@@ -59,6 +67,11 @@ pub struct Store {
 /// reactive updates. If reactive flows are consistently slower than incoming
 /// events, raise this value or investigate the slow flow(s).
 const REACTIVE_CHANNEL_CAPACITY: usize = 32;
+/// Capacity of the update channel for API clients, see `Store::updates()`.
+///
+/// Unlike the reactive channel, a full buffer never blocks the store. A client
+/// that falls behind skips the missed updates and receives a fresh snapshot.
+const UPDATES_CHANNEL_CAPACITY: usize = 64;
 
 impl Store {
     pub fn new(rx: Receiver<Event>, groups: Vec<Group>, zones: Vec<Zone>) -> (Self, Receiver<ReactiveUpdate>) {
@@ -73,7 +86,8 @@ impl Store {
         let (notifier_tx, notifier_rx) = watch::channel::<StoreSnapshot>(snapshot);
         let (reactive_tx, reactive_rx) = mpsc::channel::<ReactiveUpdate>(REACTIVE_CHANNEL_CAPACITY);
 
-        let store = Store { devices, groups, zones, rx, notifier_tx, notifier_rx, reactive_tx };
+        let (updates_tx, _) = broadcast::channel::<DeviceUpdate>(UPDATES_CHANNEL_CAPACITY);
+        let store = Store { devices, groups, zones, rx, notifier_tx, notifier_rx, reactive_tx, updates_tx };
         // Returning the receiver makes is impossible to forget to wire it
         (store, reactive_rx)
     }
@@ -82,9 +96,14 @@ impl Store {
         self.notifier_rx.clone()
     }
 
+    pub fn updates(&self) -> broadcast::Receiver<DeviceUpdate> {
+        self.updates_tx.subscribe()
+    }
+
     #[instrument(skip(self))]
     pub async fn listen(&mut self) {
         while let Some(event) = self.rx.recv().await {
+            let devices_discovered = matches!(event, Event::DiscoveredDevices(_));
             let changed = self.apply_event(event);
             let snapshot = StoreSnapshot {
                 devices: Arc::new(self.devices.clone()),
@@ -92,6 +111,21 @@ impl Store {
                 zones: Arc::new(self.zones.clone()),
             };
             self.notifier_tx.send(snapshot.clone()).unwrap_or_default();
+
+            // After the watch, so a client that subscribes before reading the snapshot never misses an update.
+            // Before the reactive send, so slow flows don't delay clients. Fails without clients.
+            let device_update = match &changed {
+                Some(change) => {
+                    Some(DeviceUpdate::PropertyChanged { snapshot: snapshot.clone(), changed: change.clone() })
+                }
+                None if devices_discovered => Some(DeviceUpdate::DevicesDiscovered),
+                // A group or zone changed, or a property kept its value
+                None => None,
+            };
+            if let Some(device_update) = device_update {
+                let _ = self.updates_tx.send(device_update);
+            }
+
             if let Err(e) = self.reactive_tx.send(ReactiveUpdate { snapshot, changed }).await {
                 error!("⚠️ Unable to deliver reactive update, reactive flows will not run for this change: {}", e);
             }
@@ -1525,5 +1559,157 @@ mod tests {
                 "update #{i} must reflect its own event's value, not a later one merged into it"
             );
         }
+    }
+
+    /// Starts a store with a client subscribed to its device updates
+    fn start_store_with_client() -> (Sender<Event>, Receiver<ReactiveUpdate>, broadcast::Receiver<DeviceUpdate>) {
+        let (tx, rx) = channel::<Event>(8);
+        let (mut store, reactive_rx) = Store::new(rx, vec![], vec![]);
+        let updates_rx = store.updates();
+        tokio::spawn(async move {
+            store.listen().await;
+        });
+        (tx, reactive_rx, updates_rx)
+    }
+
+    /// Sends the event and waits until the store processed it, the device update is sent before the reactive update
+    async fn process(tx: &Sender<Event>, reactive_rx: &mut Receiver<ReactiveUpdate>, event: Event) {
+        tx.send(event).await.unwrap();
+        reactive_rx.recv().await.expect("expected a reactive update");
+    }
+
+    fn discovered_device(on: bool) -> Event {
+        Event::DiscoveredDevices(vec![DeviceBuilder::new("device").with_boolean_property("on", on).build()])
+    }
+
+    fn turn_on(value: bool) -> Event {
+        Event::BooleanPropertyChanged {
+            device_id: "device".to_string(),
+            property_id: PropertyLocator::Name("on".to_string()),
+            value,
+            initiated_by: InitiatedBy::Device,
+        }
+    }
+
+    #[tokio::test]
+    async fn discovered_devices_are_sent_to_clients() {
+        let (tx, mut reactive_rx, mut updates_rx) = start_store_with_client();
+
+        process(&tx, &mut reactive_rx, discovered_device(false)).await;
+
+        assert!(matches!(updates_rx.try_recv(), Ok(DeviceUpdate::DevicesDiscovered)));
+    }
+
+    #[tokio::test]
+    async fn property_change_is_sent_to_clients_with_the_new_snapshot() {
+        let (tx, mut reactive_rx, mut updates_rx) = start_store_with_client();
+        process(&tx, &mut reactive_rx, discovered_device(false)).await;
+        updates_rx.try_recv().unwrap();
+
+        process(&tx, &mut reactive_rx, turn_on(true)).await;
+
+        let Ok(DeviceUpdate::PropertyChanged { snapshot, changed }) = updates_rx.try_recv() else {
+            panic!("expected a property change");
+        };
+        assert_eq!(
+            changed,
+            PropertyChange {
+                device_id: "device".to_string(),
+                property_id: "on".to_string(),
+                initiated_by: InitiatedBy::Device
+            }
+        );
+        let on = snapshot.devices["device"].get_property::<BooleanProperty>("on").unwrap().value();
+        assert!(on, "expected the snapshot to contain the new value");
+    }
+
+    #[tokio::test]
+    async fn property_change_to_the_same_value_is_not_sent_to_clients() {
+        let (tx, mut reactive_rx, mut updates_rx) = start_store_with_client();
+        process(&tx, &mut reactive_rx, discovered_device(false)).await;
+        updates_rx.try_recv().unwrap();
+
+        process(&tx, &mut reactive_rx, turn_on(false)).await;
+
+        assert!(matches!(updates_rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn rejected_property_change_is_not_sent_to_clients() {
+        let (tx, mut reactive_rx, mut updates_rx) = start_store_with_client();
+
+        // No device exists, so the reducer rejects this event
+        process(&tx, &mut reactive_rx, turn_on(true)).await;
+
+        assert!(matches!(updates_rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn group_created_is_not_sent_to_clients() {
+        let (tx, mut reactive_rx, mut updates_rx) = start_store_with_client();
+
+        process(&tx, &mut reactive_rx, Event::GroupCreated(hearth_group("group", "Group", &["a"]))).await;
+
+        assert!(matches!(updates_rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn zone_created_is_not_sent_to_clients() {
+        let (tx, mut reactive_rx, mut updates_rx) = start_store_with_client();
+
+        process(&tx, &mut reactive_rx, Event::ZoneCreated(hearth_zone("zone", "Zone", &["a"]))).await;
+
+        assert!(matches!(updates_rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn device_update_is_sent_after_the_snapshot_is_published() {
+        // A client that reads the snapshot after receiving an update must see that update in it
+        let (tx, rx) = channel::<Event>(8);
+        let (mut store, _reactive_rx) = Store::new(rx, vec![], vec![]);
+        let notifier = store.notifier();
+        let mut updates_rx = store.updates();
+        tokio::spawn(async move {
+            store.listen().await;
+        });
+
+        tx.send(discovered_device(false)).await.unwrap();
+        updates_rx.recv().await.unwrap();
+
+        assert!(notifier.borrow().devices.contains_key("device"));
+    }
+
+    #[tokio::test]
+    async fn store_processes_events_without_clients() {
+        let (tx, mut reactive_rx) = start_store();
+
+        process(&tx, &mut reactive_rx, discovered_device(false)).await;
+        tx.send(turn_on(true)).await.unwrap();
+
+        let update = reactive_rx.recv().await.expect("expected the store to keep running without clients");
+        assert!(update.changed.is_some());
+    }
+
+    #[tokio::test]
+    async fn slow_client_does_not_block_the_store() {
+        let num_events = UPDATES_CHANNEL_CAPACITY * 2;
+        let (tx, rx) = channel::<Event>(num_events + 8);
+        let (mut store, mut reactive_rx) = Store::new(rx, vec![], vec![]);
+        // Never read until all events are processed
+        let mut updates_rx = store.updates();
+        tokio::spawn(async move {
+            store.listen().await;
+        });
+
+        tx.send(discovered_device(false)).await.unwrap();
+        for i in 0..num_events {
+            tx.send(turn_on(i % 2 == 0)).await.unwrap();
+        }
+        for _ in 0..=num_events {
+            reactive_rx.recv().await.expect("expected the store to process every event");
+        }
+
+        let skipped = (num_events + 1 - UPDATES_CHANNEL_CAPACITY) as u64;
+        assert!(matches!(updates_rx.recv().await, Err(broadcast::error::RecvError::Lagged(n)) if n == skipped));
     }
 }
