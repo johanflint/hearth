@@ -13,7 +13,7 @@ use crate::metrics_layer::MetricsLayer;
 use crate::mqtt::MqttService;
 use crate::preset_registry::PresetRegistry;
 use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
-use crate::services::{DeviceService, FlowService, GroupService, PresetService, ZoneService};
+use crate::services::{AttentionService, DeviceService, FlowService, GroupService, PresetService, ZoneService};
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let zones = zone_repository.list().await?.into_iter().map(Zone::from).collect();
     let (mut store, store_reactive_rx) = Store::new(rx, groups, zones);
 
-    let (attention_tracker, _attention_rx) = AttentionTracker::new(store.notifier());
+    let (attention_tracker, attention_rx) = AttentionTracker::new(store.notifier());
     task::spawn(attention_tracker.track());
 
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
@@ -198,6 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let group_service =
         Arc::new(GroupService::new(group_service_rx_clone, group_repository, flow_registry.clone(), tx.clone()));
     let zone_service = Arc::new(ZoneService::new(zone_service_rx_clone, zone_repository, flow_registry, tx.clone()));
+    let attention_service = Arc::new(AttentionService::new(attention_rx));
     let api_state = ApiState::new(
         prometheus_handle,
         database,
@@ -208,6 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         group_service,
         zone_service,
         preset_service,
+        attention_service,
     );
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");

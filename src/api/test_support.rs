@@ -1,4 +1,5 @@
 use crate::api::ApiState;
+use crate::attention::Attention;
 use crate::core_tasks::CoreTasks;
 use crate::database::{Database, DatabaseError};
 use crate::domain::Event;
@@ -9,6 +10,7 @@ use crate::repositories::FlowRepository;
 use crate::repositories::GroupRepository;
 use crate::repositories::PresetRepository;
 use crate::repositories::ZoneRepository;
+use crate::services::AttentionService;
 use crate::services::GroupService;
 use crate::services::PresetService;
 use crate::services::ZoneService;
@@ -67,6 +69,14 @@ pub(super) fn create_state(flow_registry: FlowRegistry) -> Fixture {
 /// The API state with the given store snapshot, e.g. to seed groups
 pub(super) fn create_state_with_snapshot(snapshot: StoreSnapshot) -> ApiState {
     build_state(FlowRegistry::new(vec![]), snapshot, draining_store_tx()).0.state
+}
+
+/// The API state with the given store snapshot and attention items
+pub(super) fn create_state_with_attention(snapshot: StoreSnapshot, attention: Vec<Attention>) -> ApiState {
+    let mut state = create_state_with_snapshot(snapshot);
+    let (_, attention_rx) = watch::channel(Arc::from(attention));
+    state.attention_service = Arc::new(AttentionService::new(attention_rx));
+    state
 }
 
 /// The API state with the given snapshot and store event sender, to inspect the events a handler sends.
@@ -140,6 +150,8 @@ fn build_state(
         scheduler: tokio::spawn(std::future::pending()),
         store_listener: tokio::spawn(std::future::pending()),
     };
+    let (_, attention_rx) = watch::channel(Arc::from([]));
+    let attention_service = Arc::new(AttentionService::new(attention_rx));
     let state = ApiState::new(
         handle,
         database.clone(),
@@ -150,6 +162,7 @@ fn build_state(
         group_service,
         zone_service,
         preset_service,
+        attention_service,
     );
     (Fixture { state, flow_repository, flow_registry, scheduler_rx }, database)
 }
