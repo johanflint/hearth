@@ -1,5 +1,6 @@
 use crate::api::ApiState;
 use crate::app_config::AppConfig;
+use crate::attention_tracker::AttentionTracker;
 use crate::core_tasks::CoreTasks;
 use crate::database::Database;
 use crate::domain::{Event, Group, Zone, controller_registry};
@@ -27,6 +28,8 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 mod api;
 mod app_config;
+mod attention;
+mod attention_tracker;
 mod claim_registry;
 mod core_tasks;
 mod database;
@@ -111,6 +114,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let zone_repository = Arc::new(ZoneRepository::new(database.clone()));
     let zones = zone_repository.list().await?.into_iter().map(Zone::from).collect();
     let (mut store, store_reactive_rx) = Store::new(rx, groups, zones);
+
+    let (attention_tracker, _attention_rx) = AttentionTracker::new(store.notifier());
+    task::spawn(attention_tracker.track());
 
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let scheduler_tx_clone = scheduler_tx.clone();

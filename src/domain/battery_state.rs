@@ -1,7 +1,8 @@
 use std::fmt;
-use strum::EnumIter;
+use strum::{EnumIter, EnumString};
 
-#[derive(EnumIter, Debug, PartialEq)]
+#[derive(EnumIter, EnumString, Debug, PartialEq)]
+#[strum(serialize_all = "lowercase")]
 pub enum BatteryState {
     Normal,
     Low,
@@ -36,6 +37,8 @@ impl fmt::Display for BatteryState {
 mod tests {
     use super::*;
     use rstest::rstest;
+    use std::str::FromStr;
+    use strum::IntoEnumIterator;
 
     #[rstest]
     #[case::empty(0, BatteryState::Critical)]
@@ -54,5 +57,17 @@ mod tests {
     #[case::critical(BatteryState::Critical, "critical")]
     fn display(#[case] state: BatteryState, #[case] expected: &str) {
         assert_eq!(state.to_string(), expected);
+    }
+
+    #[test]
+    fn from_str_is_the_inverse_of_display() {
+        for state in BatteryState::iter() {
+            assert_eq!(BatteryState::from_str(&state.to_string()), Ok(state));
+        }
+    }
+
+    #[test]
+    fn from_str_rejects_unknown_values() {
+        assert!(BatteryState::from_str("empty").is_err());
     }
 }
