@@ -115,9 +115,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let zones = zone_repository.list().await?.into_iter().map(Zone::from).collect();
     let (mut store, store_reactive_rx) = Store::new(rx, groups, zones);
 
-    let (attention_tracker, attention_rx) = AttentionTracker::new(store.notifier());
-    task::spawn(attention_tracker.track());
-
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let scheduler_tx_clone = scheduler_tx.clone();
     let store_rx = store.notifier();
@@ -167,6 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("✅  Initialized store listener");
 
     let store_rx_clone = store.notifier();
+    let attention_rx_clone = store.notifier();
     let devices_rx_clone = store.notifier();
     let integrations_rx_clone = store.notifier();
     let group_service_rx_clone = store.notifier();
@@ -183,6 +181,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         controller_registry::register(integration.controller());
     }
     info!("✅  Initialized controllers");
+
+    let (attention_tracker, attention_rx) = AttentionTracker::new(attention_rx_clone, integrations.clone().into());
 
     let device_service = Arc::new(DeviceService::new(devices_rx_clone, device_updates_rx));
     let flow_service = Arc::new(FlowService::new(
@@ -232,6 +232,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     info!("✅  Observing all integrations");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
+
+    // After observing, otherwise every integration is down for a moment
+    task::spawn(attention_tracker.track());
 
     if let Err(err) = signal::ctrl_c().await {
         error!("Unable to listen for shutdown signal: {}", err);

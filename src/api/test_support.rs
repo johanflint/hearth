@@ -1,5 +1,5 @@
 use crate::api::ApiState;
-use crate::attention::Attention;
+use crate::attention::AttentionList;
 use crate::core_tasks::CoreTasks;
 use crate::database::{Database, DatabaseError};
 use crate::domain::Event;
@@ -72,9 +72,9 @@ pub(super) fn create_state_with_snapshot(snapshot: StoreSnapshot) -> ApiState {
 }
 
 /// The API state with the given store snapshot and attention items
-pub(super) fn create_state_with_attention(snapshot: StoreSnapshot, attention: Vec<Attention>) -> ApiState {
+pub(super) fn create_state_with_attention(snapshot: StoreSnapshot, attention: AttentionList) -> ApiState {
     let mut state = create_state_with_snapshot(snapshot);
-    let (_, attention_rx) = watch::channel(Arc::from(attention));
+    let (_, attention_rx) = watch::channel(attention);
     state.attention_service = Arc::new(AttentionService::new(attention_rx));
     state
 }
@@ -150,7 +150,7 @@ fn build_state(
         scheduler: tokio::spawn(std::future::pending()),
         store_listener: tokio::spawn(std::future::pending()),
     };
-    let (_, attention_rx) = watch::channel(Arc::from([]));
+    let (_, attention_rx) = watch::channel(AttentionList::default());
     let attention_service = Arc::new(AttentionService::new(attention_rx));
     let state = ApiState::new(
         handle,

@@ -1,18 +1,17 @@
-use crate::attention::Attention;
-use std::sync::Arc;
+use crate::attention::AttentionList;
 use tokio::sync::watch;
 
 #[derive(Debug)]
 pub struct AttentionService {
-    attention_rx: watch::Receiver<Arc<[Attention]>>,
+    attention_rx: watch::Receiver<AttentionList>,
 }
 
 impl AttentionService {
-    pub fn new(attention_rx: watch::Receiver<Arc<[Attention]>>) -> Self {
+    pub fn new(attention_rx: watch::Receiver<AttentionList>) -> Self {
         AttentionService { attention_rx }
     }
 
-    pub fn list(&self) -> Arc<[Attention]> {
+    pub fn list(&self) -> AttentionList {
         self.attention_rx.borrow().clone()
     }
 }

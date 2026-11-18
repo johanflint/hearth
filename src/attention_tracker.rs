@@ -1,61 +1,93 @@
-use crate::attention::{Attention, Issue, Subject};
+use crate::attention::{Attention, AttentionList, Issue, Subject};
 use crate::domain::property::{EnumProperty, PropertyType};
 use crate::domain::{BatteryState, Connectivity, Device};
+use crate::integration::{Integration, IntegrationStatus};
 use crate::store::StoreSnapshot;
 use chrono::{DateTime, Utc};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver as WatchReceiver;
+use tokio::time::{MissedTickBehavior, interval};
+
+const INTEGRATION_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct AttentionTracker {
     store_rx: WatchReceiver<StoreSnapshot>,
-    attention_tx: watch::Sender<Arc<[Attention]>>,
+    integrations: Arc<[Arc<dyn Integration>]>,
+    attention_tx: watch::Sender<AttentionList>,
 }
 
 impl AttentionTracker {
-    pub fn new(store_rx: WatchReceiver<StoreSnapshot>) -> (Self, watch::Receiver<Arc<[Attention]>>) {
-        let (attention_tx, attention_rx) = watch::channel(Arc::from([]));
+    pub fn new(
+        store_rx: WatchReceiver<StoreSnapshot>,
+        integrations: Arc<[Arc<dyn Integration>]>,
+    ) -> (Self, watch::Receiver<AttentionList>) {
+        let (attention_tx, attention_rx) = watch::channel(AttentionList::default());
 
-        (AttentionTracker { store_rx, attention_tx }, attention_rx)
+        (AttentionTracker { store_rx, integrations, attention_tx }, attention_rx)
     }
 
     pub async fn track(mut self) {
+        let mut poll = interval(INTEGRATION_POLL_INTERVAL);
+        poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
         self.store_rx.mark_changed();
-        while self.store_rx.changed().await.is_ok() {
-            let snapshot = self.store_rx.borrow_and_update().clone();
-            // The published list is the previous state, so there is nothing else to keep track of
-            self.attention_tx.send_if_modified(|current| {
-                let attention = attention_for_devices(&snapshot, current, Utc::now());
-                if attention == *current {
-                    return false;
+
+        loop {
+            tokio::select! {
+                changed = self.store_rx.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    let snapshot = self.store_rx.borrow_and_update().clone();
+                    // The published list is the previous state, so there is nothing else to keep track of
+                    self.publish(|list| &mut list.devices, |current, now| attention_for_devices(&snapshot, current, now));
                 }
-                *current = attention;
-                true
-            });
+                _ = poll.tick() => {
+                    self.publish(
+                        |list| &mut list.integrations,
+                        |current, now| attention_for_integrations(self.integrations.as_ref(), current, now)
+                    );
+                }
+            }
         }
+    }
+
+    /// Replaces one section of the list, the other sections are left alone
+    fn publish(
+        &self,
+        section: impl FnOnce(&mut AttentionList) -> &mut Arc<[Attention]>,
+        update: impl FnOnce(&[Attention], DateTime<Utc>) -> Vec<Attention>,
+    ) {
+        self.attention_tx.send_if_modified(|current| {
+            let section = section(current);
+            let next = update(section, Utc::now());
+
+            if next == **section {
+                return false;
+            }
+            *section = next.into();
+            true
+        });
     }
 }
 
-fn attention_for_devices(snapshot: &StoreSnapshot, previous: &[Attention], now: DateTime<Utc>) -> Arc<[Attention]> {
+fn attention_for_devices(snapshot: &StoreSnapshot, previous: &[Attention], now: DateTime<Utc>) -> Vec<Attention> {
     let mut attention: Vec<_> = snapshot
         .devices
         .values()
         .flat_map(|device| {
             device_issues(device).into_iter().map(|issue| {
                 let subject = Subject::Device(device.id.clone());
-                // An issue that was already there keeps its `since`, also when its level changes (Low -> Critical)
-                let since = previous
-                    .iter()
-                    .find(|p| p.subject == subject && p.issue.is_same_kind(&issue))
-                    .map_or(now, |p| p.since);
+                let since = since_of(previous, &subject, &issue, now);
                 Attention { subject, issue, since }
             })
         })
         .collect();
     // A HashMap has no order, without sorting every update looks like a change
     attention.sort_by(|a, b| a.subject.cmp(&b.subject));
-    attention.into()
+    attention
 }
 
 fn device_issues(device: &Device) -> Vec<Issue> {
@@ -85,17 +117,99 @@ fn device_issues(device: &Device) -> Vec<Issue> {
     issues
 }
 
+fn attention_for_integrations(
+    integrations: &[Arc<dyn Integration>],
+    previous: &[Attention],
+    now: DateTime<Utc>,
+) -> Vec<Attention> {
+    integrations
+        .iter()
+        .map(|integration| (integration.name(), integration.status()))
+        .filter(|(_, status)| matches!(status, IntegrationStatus::Degraded | IntegrationStatus::Down))
+        .map(|(integration_name, status)| {
+            let subject = Subject::Integration(integration_name.to_string());
+            let issue = Issue::Integration(status);
+            let since = since_of(previous, &subject, &issue, now);
+            Attention { subject, issue, since }
+        })
+        .collect()
+}
+
+// An issue that was already there keeps its `since`, also when its level changes (Low -> Critical)
+fn since_of(previous: &[Attention], subject: &Subject, issue: &Issue, now: DateTime<Utc>) -> DateTime<Utc> {
+    previous.iter().find(|p| &p.subject == subject && p.issue.is_same_kind(issue)).map_or(now, |p| p.since)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::property::Property;
+    use crate::domain::{Command, Controller, Event};
+    use crate::integration::{Discovery, IntegrationError, SharedStatus};
     use crate::test_support::DeviceBuilder;
+    use async_trait::async_trait;
     use chrono::TimeZone;
     use rstest::rstest;
     use std::collections::HashMap;
-    use std::time::Duration;
+    use std::slice::from_ref;
     use strum::IntoEnumIterator;
+    use tokio::sync::mpsc::Sender;
     use tokio::time::timeout;
+
+    #[derive(Debug)]
+    struct StubController;
+
+    #[async_trait]
+    impl Controller for StubController {
+        fn id(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn execute(&self, _command: Command) {}
+    }
+
+    #[derive(Debug)]
+    struct StubIntegration {
+        name: &'static str,
+        status: SharedStatus,
+    }
+
+    #[async_trait]
+    impl Integration for StubIntegration {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn enabled(&self) -> bool {
+            true
+        }
+
+        async fn discover(&self) -> Result<Discovery, IntegrationError> {
+            unimplemented!()
+        }
+
+        async fn observe(&self, _tx: Sender<Event>) -> Result<(), IntegrationError> {
+            unimplemented!()
+        }
+
+        fn controller(&self) -> Arc<dyn Controller> {
+            Arc::new(StubController)
+        }
+
+        fn status(&self) -> IntegrationStatus {
+            self.status.get()
+        }
+    }
+
+    /// The integration and the handle to change its status
+    fn stub(name: &'static str, status: IntegrationStatus) -> (Arc<dyn Integration>, SharedStatus) {
+        let status = SharedStatus::new(status);
+        (Arc::new(StubIntegration { name, status: status.clone() }), status)
+    }
+
+    fn integration_subject(name: &str) -> Subject {
+        Subject::Integration(name.into())
+    }
 
     fn at(minute: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 1, 1, 12, minute, 0).unwrap()
@@ -264,6 +378,138 @@ mod tests {
         assert_eq!(subjects(&attention), expected.iter().collect::<Vec<_>>());
     }
 
+    #[rstest]
+    #[case::up(IntegrationStatus::Up, vec![])]
+    #[case::degraded(IntegrationStatus::Degraded, vec![Issue::Integration(IntegrationStatus::Degraded)])]
+    #[case::down(IntegrationStatus::Down, vec![Issue::Integration(IntegrationStatus::Down)])]
+    fn attention_for_integrations_reports_integrations_that_are_not_up(
+        #[case] status: IntegrationStatus,
+        #[case] expected: Vec<Issue>,
+    ) {
+        let (hue, _) = stub("hue", status);
+
+        let attention = attention_for_integrations(&[hue], &[], at(0));
+
+        assert_eq!(attention.into_iter().map(|a| a.issue).collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn attention_for_integrations_starts_new_issues_now() {
+        let (hue, _) = stub("hue", IntegrationStatus::Down);
+
+        let attention = attention_for_integrations(&[hue], &[], at(5));
+
+        assert_eq!(
+            attention,
+            [Attention {
+                subject: integration_subject("hue"),
+                issue: Issue::Integration(IntegrationStatus::Down),
+                since: at(5)
+            }]
+        );
+    }
+
+    #[test]
+    fn attention_for_integrations_keeps_since_when_the_status_changes() {
+        let (hue, status) = stub("hue", IntegrationStatus::Down);
+        let first = attention_for_integrations(from_ref(&hue), &[], at(0));
+
+        status.set(IntegrationStatus::Degraded);
+        let second = attention_for_integrations(&[hue], &first, at(5));
+
+        assert_eq!(second[0].issue, Issue::Integration(IntegrationStatus::Degraded));
+        assert_eq!(second[0].since, at(0));
+    }
+
+    #[test]
+    fn attention_for_integrations_starts_over_when_an_issue_returns() {
+        let (hue, status) = stub("hue", IntegrationStatus::Down);
+        let first = attention_for_integrations(from_ref(&hue), &[], at(0));
+        status.set(IntegrationStatus::Up);
+        let resolved = attention_for_integrations(from_ref(&hue), &first, at(5));
+        assert!(resolved.is_empty());
+
+        status.set(IntegrationStatus::Down);
+        let again = attention_for_integrations(&[hue], &resolved, at(10));
+
+        assert_eq!(again[0].since, at(10));
+    }
+
+    #[test]
+    fn attention_for_integrations_does_not_mix_up_integrations() {
+        let (hue, _) = stub("hue", IntegrationStatus::Down);
+        let first = attention_for_integrations(&[hue], &[], at(0));
+
+        let (shelly, _) = stub("shelly", IntegrationStatus::Down);
+        let second = attention_for_integrations(&[shelly], &first, at(5));
+
+        assert_eq!(second[0].subject, integration_subject("shelly"));
+        assert_eq!(second[0].since, at(5));
+    }
+
+    fn new_tracker() -> (watch::Sender<StoreSnapshot>, AttentionTracker, watch::Receiver<AttentionList>) {
+        let (store_tx, store_rx) = watch::channel(snapshot(vec![]));
+        let (tracker, attention_rx) = AttentionTracker::new(store_rx, Arc::from([]));
+        (store_tx, tracker, attention_rx)
+    }
+
+    fn attention_at_0(subject: Subject, issue: Issue) -> Attention {
+        Attention { subject, issue, since: at(0) }
+    }
+
+    #[test]
+    fn publish_replaces_only_its_own_section() {
+        let (_store_tx, tracker, attention_rx) = new_tracker();
+        tracker.publish(
+            |list| &mut list.devices,
+            |_, _| vec![attention_at_0(Subject::Device("1".into()), Issue::Battery(BatteryState::Low))],
+        );
+        tracker.publish(
+            |list| &mut list.integrations,
+            |_, _| vec![attention_at_0(integration_subject("hue"), Issue::Integration(IntegrationStatus::Down))],
+        );
+
+        tracker.publish(|list| &mut list.integrations, |_, _| vec![]);
+
+        let list = attention_rx.borrow();
+        assert_eq!(subjects(&list.devices), [&Subject::Device("1".into())]);
+        assert!(list.integrations.is_empty());
+    }
+
+    #[test]
+    fn publish_hands_the_current_section_to_the_update() {
+        let (_store_tx, tracker, _attention_rx) = new_tracker();
+        tracker.publish(
+            |list| &mut list.devices,
+            |_, _| vec![attention_at_0(Subject::Device("1".into()), Issue::Battery(BatteryState::Low))],
+        );
+
+        let mut previous_len = 0;
+        tracker.publish(
+            |list| &mut list.devices,
+            |previous, _| {
+                previous_len = previous.len();
+                vec![]
+            },
+        );
+
+        assert_eq!(previous_len, 1);
+    }
+
+    #[test]
+    fn publish_does_not_notify_when_the_section_is_unchanged() {
+        let (_store_tx, tracker, mut attention_rx) = new_tracker();
+        let update =
+            |_: &[Attention], _| vec![attention_at_0(Subject::Device("1".into()), Issue::Battery(BatteryState::Low))];
+        tracker.publish(|list| &mut list.devices, update);
+        assert!(attention_rx.has_changed().unwrap());
+        attention_rx.borrow_and_update();
+
+        tracker.publish(|list| &mut list.devices, update);
+
+        assert!(!attention_rx.has_changed().unwrap());
+    }
+
     #[test]
     fn is_same_kind_ignores_the_level() {
         let low = Issue::Battery(BatteryState::Low);
@@ -272,9 +518,12 @@ mod tests {
         assert!(!low.is_same_kind(&Issue::Connectivity(Connectivity::Disconnected)));
     }
 
-    fn start_tracker(devices: Vec<Device>) -> (watch::Sender<StoreSnapshot>, watch::Receiver<Arc<[Attention]>>) {
+    fn start_tracker(
+        devices: Vec<Device>,
+        integrations: Vec<Arc<dyn Integration>>,
+    ) -> (watch::Sender<StoreSnapshot>, watch::Receiver<AttentionList>) {
         let (store_tx, store_rx) = watch::channel(snapshot(devices));
-        let (tracker, attention_rx) = AttentionTracker::new(store_rx);
+        let (tracker, attention_rx) = AttentionTracker::new(store_rx, integrations.into());
         tokio::spawn(tracker.track());
         (store_tx, attention_rx)
     }
@@ -288,38 +537,38 @@ mod tests {
 
     #[tokio::test]
     async fn track_publishes_the_issues_that_exist_at_startup() {
-        let (_store_tx, mut attention_rx) = start_tracker(vec![battery_device("1", BatteryState::Low)]);
+        let (_store_tx, mut attention_rx) = start_tracker(vec![battery_device("1", BatteryState::Low)], vec![]);
 
         attention_rx.changed().await.unwrap();
 
-        assert_eq!(subjects(&attention_rx.borrow()), [&Subject::Device("1".into())]);
+        assert_eq!(subjects(&attention_rx.borrow().devices), [&Subject::Device("1".into())]);
     }
 
     #[tokio::test]
     async fn track_publishes_new_issues() {
-        let (store_tx, mut attention_rx) = start_tracker(vec![]);
+        let (store_tx, mut attention_rx) = start_tracker(vec![], vec![]);
         let_tracker_process().await;
 
         store_tx.send(snapshot(vec![battery_device("1", BatteryState::Critical)])).unwrap();
 
         attention_rx.changed().await.unwrap();
-        assert_eq!(attention_rx.borrow()[0].issue, Issue::Battery(BatteryState::Critical));
+        assert_eq!(attention_rx.borrow().devices[0].issue, Issue::Battery(BatteryState::Critical));
     }
 
     #[tokio::test]
     async fn track_publishes_when_an_issue_is_resolved() {
-        let (store_tx, mut attention_rx) = start_tracker(vec![battery_device("1", BatteryState::Low)]);
+        let (store_tx, mut attention_rx) = start_tracker(vec![battery_device("1", BatteryState::Low)], vec![]);
         attention_rx.changed().await.unwrap();
 
         store_tx.send(snapshot(vec![battery_device("1", BatteryState::Normal)])).unwrap();
 
         attention_rx.changed().await.unwrap();
-        assert!(attention_rx.borrow().is_empty());
+        assert!(attention_rx.borrow().devices.is_empty());
     }
 
     #[tokio::test]
     async fn track_does_not_publish_changes_that_need_no_attention() {
-        let (store_tx, mut attention_rx) = start_tracker(vec![battery_device("1", BatteryState::Low)]);
+        let (store_tx, mut attention_rx) = start_tracker(vec![battery_device("1", BatteryState::Low)], vec![]);
         attention_rx.changed().await.unwrap();
 
         store_tx
@@ -331,9 +580,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn track_publishes_integrations_that_are_down_at_startup() {
+        let (hue, _) = stub("hue", IntegrationStatus::Down);
+        let (_store_tx, mut attention_rx) = start_tracker(vec![], vec![hue]);
+
+        attention_rx.changed().await.unwrap();
+
+        assert_eq!(subjects(&attention_rx.borrow().integrations), [&integration_subject("hue")]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn track_publishes_when_an_integration_recovers() {
+        let (hue, status) = stub("hue", IntegrationStatus::Down);
+        let (_store_tx, mut attention_rx) = start_tracker(vec![], vec![hue]);
+        attention_rx.changed().await.unwrap();
+
+        status.set(IntegrationStatus::Up);
+
+        attention_rx.changed().await.unwrap();
+        assert!(attention_rx.borrow().integrations.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn track_keeps_the_device_issues_when_an_integration_recovers() {
+        let (hue, status) = stub("hue", IntegrationStatus::Down);
+        let (_store_tx, mut attention_rx) = start_tracker(vec![battery_device("1", BatteryState::Low)], vec![hue]);
+        attention_rx.wait_for(|list| list.iter().count() == 2).await.unwrap();
+
+        status.set(IntegrationStatus::Up);
+
+        attention_rx.wait_for(|list| list.integrations.is_empty()).await.unwrap();
+        assert_eq!(subjects(&attention_rx.borrow().devices), [&Subject::Device("1".into())]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn track_keeps_the_integration_issues_when_a_device_recovers() {
+        let (hue, _) = stub("hue", IntegrationStatus::Down);
+        let (store_tx, mut attention_rx) = start_tracker(vec![battery_device("1", BatteryState::Low)], vec![hue]);
+        attention_rx.wait_for(|list| list.iter().count() == 2).await.unwrap();
+
+        store_tx.send(snapshot(vec![battery_device("1", BatteryState::Normal)])).unwrap();
+
+        attention_rx.wait_for(|list| list.devices.is_empty()).await.unwrap();
+        assert_eq!(subjects(&attention_rx.borrow().integrations), [&integration_subject("hue")]);
+    }
+
+    #[tokio::test]
     async fn track_stops_when_the_store_stops() {
         let (store_tx, store_rx) = watch::channel(snapshot(vec![]));
-        let (tracker, _attention_rx) = AttentionTracker::new(store_rx);
+        let (tracker, _attention_rx) = AttentionTracker::new(store_rx, Arc::from([]));
         let task = tokio::spawn(tracker.track());
 
         drop(store_tx);

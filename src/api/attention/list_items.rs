@@ -45,6 +45,7 @@ impl AttentionView {
 #[serde(tag = "type", rename_all = "camelCase")]
 enum SubjectView {
     Device { id: String, name: Option<String> },
+    Integration { name: String },
 }
 
 impl SubjectView {
@@ -55,6 +56,7 @@ impl SubjectView {
                 // The device can disappear between the attention snapshot and this lookup
                 name: device_service.retrieve_device(id).ok().map(|device| device.name.clone()),
             },
+            Subject::Integration(name) => SubjectView::Integration { name: name.clone() },
         }
     }
 }
@@ -64,6 +66,7 @@ impl SubjectView {
 enum IssueView {
     Connectivity { state: String },
     Battery { state: String },
+    Integration { state: String },
 }
 
 impl From<&Issue> for IssueView {
@@ -71,6 +74,7 @@ impl From<&Issue> for IssueView {
         match issue {
             Issue::Connectivity(connectivity) => IssueView::Connectivity { state: connectivity.to_string() },
             Issue::Battery(battery_state) => IssueView::Battery { state: battery_state.to_string() },
+            Issue::Integration(integration_status) => IssueView::Integration { state: integration_status.to_string() },
         }
     }
 }
@@ -80,7 +84,9 @@ mod tests {
     use super::*;
     use crate::api::attention::router;
     use crate::api::test_support::{body_json, create_state_with_attention};
+    use crate::attention::AttentionList;
     use crate::domain::{BatteryState, Connectivity, Device};
+    use crate::integration::IntegrationStatus;
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
     use axum::body::Body;
@@ -104,6 +110,18 @@ mod tests {
         }
     }
 
+    fn integration_attention(name: &str, status: IntegrationStatus) -> Attention {
+        Attention {
+            subject: Subject::Integration(name.into()),
+            issue: Issue::Integration(status),
+            since: Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap(),
+        }
+    }
+
+    fn devices(items: Vec<Attention>) -> AttentionList {
+        AttentionList { devices: items.into(), ..Default::default() }
+    }
+
     async fn call_list_items(state: ApiState) -> Response {
         let request = Request::builder().method("GET").uri("/api/attention").body(Body::empty()).unwrap();
 
@@ -112,7 +130,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_items_returns_no_items_when_nothing_needs_attention() {
-        let state = create_state_with_attention(StoreSnapshot::default(), vec![]);
+        let state = create_state_with_attention(StoreSnapshot::default(), AttentionList::default());
 
         let response = call_list_items(state).await;
 
@@ -131,7 +149,7 @@ mod tests {
             attention("2", Issue::Battery(BatteryState::Low)),
         ];
 
-        let response = call_list_items(create_state_with_attention(snapshot, items)).await;
+        let response = call_list_items(create_state_with_attention(snapshot, devices(items))).await;
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
@@ -154,10 +172,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_items_returns_the_integrations_after_the_devices() {
+        let snapshot =
+            snapshot_with_devices(vec![Device { name: "Door sensor".into(), ..DeviceBuilder::new("1").build() }]);
+        let list = AttentionList {
+            devices: vec![attention("1", Issue::Battery(BatteryState::Low))].into(),
+            integrations: vec![
+                integration_attention("hue", IntegrationStatus::Down),
+                integration_attention("shelly", IntegrationStatus::Degraded),
+            ]
+            .into(),
+        };
+
+        let response = call_list_items(create_state_with_attention(snapshot, list)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            body_json(response).await,
+            json!({
+                "items": [
+                    {
+                        "subject": { "type": "device", "id": "1", "name": "Door sensor" },
+                        "issue": { "type": "battery", "state": "low" },
+                        "since": "2026-01-01T12:00:00Z",
+                    },
+                    {
+                        "subject": { "type": "integration", "name": "hue" },
+                        "issue": { "type": "integration", "state": "down" },
+                        "since": "2026-01-01T12:00:00Z",
+                    },
+                    {
+                        "subject": { "type": "integration", "name": "shelly" },
+                        "issue": { "type": "integration", "state": "degraded" },
+                        "since": "2026-01-01T12:00:00Z",
+                    },
+                ]
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn list_items_returns_a_null_name_for_a_device_that_is_gone() {
         let items = vec![attention("gone", Issue::Battery(BatteryState::Critical))];
 
-        let response = call_list_items(create_state_with_attention(StoreSnapshot::default(), items)).await;
+        let response = call_list_items(create_state_with_attention(StoreSnapshot::default(), devices(items))).await;
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
