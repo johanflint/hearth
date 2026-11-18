@@ -1,5 +1,4 @@
-use crate::domain::GeoLocation;
-use crate::execute_flows::{execute_flow, execute_flows};
+use crate::execute_flows::{FlowRunEnvironment, execute_flow, execute_flows};
 use crate::flow_engine::VersionedFlow;
 use crate::flow_engine::flow::Flow;
 use crate::flow_registry::FlowRegistry;
@@ -51,8 +50,7 @@ pub async fn scheduler(
     notifier_rx: WatchReceiver<StoreSnapshot>,
     flow_registry: Arc<FlowRegistry>,
     preset_registry: Arc<PresetRegistry>,
-    geo_location: GeoLocation,
-    timezone: Tz,
+    environment: FlowRunEnvironment,
 ) {
     let mut scheduled_flows: HashMap<String, ScheduledJob> = HashMap::new();
     let mut next_generation: u64 = 0;
@@ -118,10 +116,12 @@ pub async fn scheduler(
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
                 let preset_registry_clone = preset_registry.clone();
-                let geo_location_clone = geo_location.clone();
+                let environment_clone = environment.clone();
                 let join_handle = tokio::spawn(async move {
-                    let mut occurrences =
-                        schedule.after(Utc::now().with_timezone(&timezone), geo_location_clone.clone());
+                    let mut occurrences = schedule.after(
+                        Utc::now().with_timezone(&environment_clone.timezone),
+                        environment_clone.geo_location.clone(),
+                    );
                     loop {
                         let now = Utc::now();
                         let Some(datetime) = next_upcoming_occurrence(&mut occurrences, now, &flow_id_clone) else {
@@ -147,8 +147,7 @@ pub async fn scheduler(
                             preset_registry_clone.clone(),
                             None,
                             tx_clone.clone(),
-                            geo_location_clone.clone(),
-                            timezone,
+                            &environment_clone,
                         )
                         .await;
 
@@ -183,7 +182,7 @@ pub async fn scheduler(
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
                 let preset_registry_clone = preset_registry.clone();
-                let geo_location_clone = geo_location.clone();
+                let environment_clone = environment.clone();
                 tokio::spawn(async move {
                     let scheduled_instant = Instant::now() + Duration::from_millis(delay.as_millis() as u64);
                     sleep_until(scheduled_instant).await;
@@ -196,8 +195,7 @@ pub async fn scheduler(
                         snapshot,
                         preset_registry_clone,
                         tx_clone.clone(),
-                        geo_location_clone.clone(),
-                        timezone,
+                        &environment_clone,
                     )
                     .await;
                 });
@@ -285,6 +283,7 @@ fn reconcile_action(entry: Option<VersionedFlow>, revision: u64) -> ReconcileAct
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::GeoLocation;
     use crate::flow_engine::Schedule;
     use crate::flow_engine::flow::{FlowNode, FlowNodeKind};
     use chrono::TimeZone;

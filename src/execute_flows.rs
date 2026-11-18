@@ -1,3 +1,4 @@
+use crate::attention::FlowRunReporter;
 use crate::claim_registry::{AuthorizeError, Claim, ClaimOrigin};
 use crate::domain::{ClaimMode, Command, Controller, Device, GeoLocation, controller_registry};
 use crate::flow_engine::flow::Flow;
@@ -43,6 +44,13 @@ pub struct DispatchCommand {
 
 pub type DispatchMap = HashMap<DeviceId, DispatchCommand>;
 
+#[derive(Debug, Clone)]
+pub struct FlowRunEnvironment {
+    pub flow_run_reporter: Arc<FlowRunReporter>,
+    pub geo_location: GeoLocation,
+    pub timezone: Tz,
+}
+
 #[instrument(skip_all, fields(flow = flow.name(), node_id = node_id.as_deref().unwrap_or("<start>")))]
 pub async fn execute_flow(
     flow: Arc<Flow>,
@@ -50,17 +58,20 @@ pub async fn execute_flow(
     snapshot: StoreSnapshot,
     preset_registry: Arc<PresetRegistry>,
     tx: Sender<SchedulerCommand>,
-    geo_location: GeoLocation,
-    timezone: Tz,
+    environment: &FlowRunEnvironment,
 ) {
-    let context = Context::builder(timezone)
+    let context = Context::builder(environment.timezone)
         .snapshot(snapshot.clone())
         .preset_registry(preset_registry) // Passing the Arc to avoid expensive copies
-        .location(geo_location)
+        .location(environment.geo_location.clone())
         .build();
     let result = flow_engine::execute(flow.clone(), node_id, &context, tx).await;
+    let Some(report) = report_run(&environment.flow_run_reporter, flow, result) else {
+        // No successful runs
+        return;
+    };
 
-    let dispatch_map = merge_command_maps(vec![(flow, result)]);
+    let dispatch_map = merge_command_maps(vec![report]);
     dispatch_commands(&snapshot, dispatch_map).await;
 }
 
@@ -71,35 +82,49 @@ pub async fn execute_flows(
     preset_registry: Arc<PresetRegistry>,
     changed: Option<PropertyChange>,
     tx: Sender<SchedulerCommand>,
-    geo_location: GeoLocation,
-    timezone: Tz,
+    environment: &FlowRunEnvironment,
 ) {
-    let context = Context::builder(timezone)
+    let context = Context::builder(environment.timezone)
         .snapshot(snapshot.clone())
         .preset_registry(preset_registry)
         .changed(changed)
-        .location(geo_location)
+        .location(environment.geo_location.clone())
         .build();
     let results = FuturesUnordered::from_iter(flows.into_iter().map(|flow| async {
         let result = flow_engine::execute(flow.clone(), None, &context, tx.clone()).await;
-        (flow, result)
+        report_run(&environment.flow_run_reporter, flow, result)
     }))
     .collect::<Vec<_>>()
     .await;
 
-    let dispatch_map = merge_command_maps(results);
+    let dispatch_map = merge_command_maps(results.into_iter().flatten().collect());
     dispatch_commands(&snapshot, dispatch_map).await;
 }
 
-fn merge_command_maps(reports: Vec<(Arc<Flow>, Result<FlowExecutionReport, FlowEngineError>)>) -> DispatchMap {
+fn report_run(
+    reporter: &FlowRunReporter,
+    flow: Arc<Flow>,
+    result: Result<FlowExecutionReport, FlowEngineError>,
+) -> Option<(Arc<Flow>, FlowExecutionReport)> {
+    match result {
+        Ok(report) => {
+            reporter.succeeded(flow.id());
+            Some((flow, report))
+        }
+        Err(error) => {
+            reporter.failed(flow.id(), error);
+            None
+        }
+    }
+}
+
+fn merge_command_maps(reports: Vec<(Arc<Flow>, FlowExecutionReport)>) -> DispatchMap {
     let mut proposals: ProposalMap = HashMap::new();
     let mut claim_proposals: ClaimProposalMap = HashMap::new();
     let mut group_proposals: GroupProposalMap = HashMap::new();
     let mut zone_proposals: ZoneProposalMap = HashMap::new();
 
     for (origin, report) in reports {
-        let Ok(report) = report else { continue };
-
         if let Some(command_map) = report.take_from_scope::<CommandMap>("command_map") {
             for (device_id, device_command) in command_map {
                 if let Some(zone_id) = device_command.zone_id {
@@ -361,6 +386,7 @@ fn is_exact_match(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::attention::FlowRun;
     use crate::domain::property::{BooleanProperty, PropertyType};
     use crate::domain::{Color, Group, Owner, Zone};
     use crate::domain::{Number, Value};
@@ -372,6 +398,7 @@ mod tests {
     use rstest::rstest;
     use std::any::Any;
     use std::time::Duration;
+    use tokio::sync::mpsc;
 
     const DEVICE_ID: &str = "device_id";
     const DEVICE2_ID: &str = "device2_id";
@@ -448,7 +475,7 @@ mod tests {
             HashMap::from([("property_id".to_string(), resolved_property_command(Value::Boolean(true)))]),
         );
         let flow = create_flow("flow");
-        let result = merge_command_maps(vec![(flow, Ok(report))]);
+        let result = merge_command_maps(vec![(flow, report)]);
 
         assert_eq!(
             result,
@@ -478,7 +505,7 @@ mod tests {
             HashMap::from([("property_id".to_string(), resolved_property_command(value.clone()))]),
         );
 
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
+        let result = merge_command_maps(vec![(flow, report), (flow2, report2)]);
         assert_eq!(
             result,
             HashMap::from([(
@@ -506,7 +533,7 @@ mod tests {
             HashMap::from([("property_id".to_string(), resolved_property_command(Value::Boolean(true)))]),
         );
 
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2)), (flow3, Ok(report3))]);
+        let result = merge_command_maps(vec![(flow, report), (flow2, report2), (flow3, report3)]);
         assert_eq!(
             result,
             HashMap::from([(
@@ -532,7 +559,7 @@ mod tests {
             HashMap::from([("property_id".to_string(), resolved_property_command(Value::Boolean(false)))]),
         );
 
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
+        let result = merge_command_maps(vec![(flow, report), (flow2, report2)]);
         assert_eq!(result, HashMap::new());
     }
 
@@ -545,7 +572,7 @@ mod tests {
         let report = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), command.clone())]));
         let report2 = create_report(DEVICE_ID, HashMap::from([("property_id".to_string(), command.clone())]));
 
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
+        let result = merge_command_maps(vec![(flow, report), (flow2, report2)]);
         assert_eq!(
             result,
             HashMap::from([(
@@ -579,7 +606,7 @@ mod tests {
             )]),
         );
 
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
+        let result = merge_command_maps(vec![(flow, report), (flow2, report2)]);
         assert_eq!(result, HashMap::new());
     }
 
@@ -599,7 +626,7 @@ mod tests {
             ]),
         );
 
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
+        let result = merge_command_maps(vec![(flow, report), (flow2, report2)]);
         assert_eq!(
             result,
             HashMap::from([(
@@ -631,7 +658,7 @@ mod tests {
             )]),
         );
 
-        let result = merge_command_maps(vec![(flow, Ok(report)), (flow2, Ok(report2))]);
+        let result = merge_command_maps(vec![(flow, report), (flow2, report2)]);
         assert_eq!(
             result,
             HashMap::from([
@@ -659,7 +686,7 @@ mod tests {
     fn merge_command_maps_single_claim_is_kept(#[case] claim: ClaimMode) {
         let report = create_report_with_claim(DEVICE_ID, Some(claim), on_command());
 
-        let result = merge_command_maps(vec![(create_flow("flow"), Ok(report))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report)]);
 
         assert_eq!(
             result,
@@ -679,7 +706,7 @@ mod tests {
     fn merge_command_maps_claim_without_properties_is_kept() {
         let report = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Release), HashMap::new());
 
-        let result = merge_command_maps(vec![(create_flow("flow"), Ok(report))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report)]);
 
         assert_eq!(
             result,
@@ -700,8 +727,7 @@ mod tests {
         let report = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Claim), on_command());
         let report2 = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Claim), on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("other_flow"), Ok(report)), (create_flow("flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("other_flow"), report), (create_flow("flow"), report2)]);
 
         assert_eq!(
             result,
@@ -722,8 +748,7 @@ mod tests {
         let report = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Claim), on_command());
         let report2 = create_report(DEVICE_ID, on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(
             result,
@@ -744,8 +769,7 @@ mod tests {
         let report = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Claim), on_command());
         let report2 = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Release), on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), device_command(on_command()))]));
     }
@@ -755,8 +779,7 @@ mod tests {
         let report = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Claim), HashMap::new());
         let report2 = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Release), HashMap::new());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(result, HashMap::new());
     }
@@ -766,8 +789,7 @@ mod tests {
         let report = create_report_with_claim(DEVICE_ID, Some(ClaimMode::Claim), HashMap::new());
         let report2 = create_report_with_claim(DEVICE2_ID, Some(ClaimMode::Release), HashMap::new());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(
             result,
@@ -806,7 +828,7 @@ mod tests {
     fn merge_command_maps_keeps_the_group() {
         let report = create_report_with_group(DEVICE_ID, "room", on_command());
 
-        let result = merge_command_maps(vec![(create_flow("flow"), Ok(report))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report)]);
 
         assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), group_command("room", on_command()))]));
     }
@@ -816,8 +838,7 @@ mod tests {
         let report = create_report_with_group(DEVICE_ID, "room", on_command());
         let report2 = create_report_with_group(DEVICE_ID, "room", on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), group_command("room", on_command()))]));
     }
@@ -827,8 +848,7 @@ mod tests {
         let report = create_report_with_group(DEVICE_ID, "room", on_command());
         let report2 = create_report(DEVICE_ID, on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), group_command("room", on_command()))]));
     }
@@ -838,8 +858,7 @@ mod tests {
         let report = create_report_with_group(DEVICE_ID, "room", on_command());
         let report2 = create_report_with_group(DEVICE_ID, "zone", on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), device_command(on_command()))]));
     }
@@ -848,7 +867,7 @@ mod tests {
     fn merge_command_maps_keeps_the_zone() {
         let report = create_report_with_zone(DEVICE_ID, "downstairs", on_command());
 
-        let result = merge_command_maps(vec![(create_flow("flow"), Ok(report))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report)]);
 
         assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), zone_command("downstairs", on_command()))]));
     }
@@ -858,8 +877,7 @@ mod tests {
         let report = create_report_with_zone(DEVICE_ID, "downstairs", on_command());
         let report2 = create_report_with_zone(DEVICE_ID, "downstairs", on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), zone_command("downstairs", on_command()))]));
     }
@@ -869,8 +887,7 @@ mod tests {
         let report = create_report_with_zone(DEVICE_ID, "downstairs", on_command());
         let report2 = create_report(DEVICE_ID, on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), zone_command("downstairs", on_command()))]));
     }
@@ -880,8 +897,7 @@ mod tests {
         let report = create_report_with_zone(DEVICE_ID, "downstairs", on_command());
         let report2 = create_report_with_zone(DEVICE_ID, "upstairs", on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         assert_eq!(result, HashMap::from([(DEVICE_ID.to_string(), device_command(on_command()))]));
     }
@@ -891,8 +907,7 @@ mod tests {
         let report = create_report_with_zone(DEVICE_ID, "downstairs", on_command());
         let report2 = create_report_with_group(DEVICE_ID, "room", on_command());
 
-        let result =
-            merge_command_maps(vec![(create_flow("flow"), Ok(report)), (create_flow("other_flow"), Ok(report2))]);
+        let result = merge_command_maps(vec![(create_flow("flow"), report), (create_flow("other_flow"), report2)]);
 
         let expected = DispatchCommand {
             zone_id: Some("downstairs".to_string()),
@@ -907,6 +922,36 @@ mod tests {
     fn merge_command_maps_empty_map() {
         let result = merge_command_maps(vec![]);
         assert_eq!(result, HashMap::new());
+    }
+
+    fn reporter() -> (FlowRunReporter, mpsc::Receiver<FlowRun>) {
+        let (tx, rx) = mpsc::channel(4);
+        (FlowRunReporter::new(tx), rx)
+    }
+
+    #[test]
+    fn report_run_reports_a_success_and_returns_the_report() {
+        let (reporter, mut rx) = reporter();
+
+        let result = report_run(&reporter, create_flow("flow"), Ok(FlowExecutionReport::empty()));
+
+        assert_eq!(result.unwrap().0.id(), "flow");
+        assert!(matches!(rx.try_recv().unwrap(), FlowRun::Succeeded { flow_id } if flow_id == "flow"));
+    }
+
+    #[test]
+    fn report_run_reports_a_failure_and_returns_nothing() {
+        let (reporter, mut rx) = reporter();
+        let error = FlowEngineError::MissingProvidedStartNode("node".to_string());
+
+        let result = report_run(&reporter, create_flow("flow"), Err(error));
+
+        assert!(result.is_none());
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            FlowRun::Failed { flow_id, error: FlowEngineError::MissingProvidedStartNode(node) }
+                if flow_id == "flow" && node == "node"
+        ));
     }
 
     #[test]

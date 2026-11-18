@@ -1,9 +1,11 @@
+mod attention_service;
 mod device_service;
 mod flow_service;
 mod group_service;
 mod preset_service;
 mod zone_service;
 
+pub use attention_service::AttentionService;
 pub use device_service::{DeviceService, RetrieveDeviceError};
 pub use flow_service::{
     CreateFlowError, CreatedFlow, DeleteFlowError, FlowService, ListFlowsError, RetrieveFlowError, UpdateFlowError,

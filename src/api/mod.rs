@@ -1,3 +1,4 @@
+mod attention;
 mod devices;
 mod error;
 mod flows;
@@ -24,5 +25,6 @@ pub fn router(state: ApiState) -> Router {
         .merge(groups::router())
         .merge(zones::router())
         .merge(presets::router())
+        .merge(attention::router())
         .with_state(state)
 }

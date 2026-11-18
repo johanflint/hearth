@@ -1,14 +1,13 @@
 use crate::claim_registry;
 use crate::claim_registry::ClaimOrigin;
+use crate::domain::InitiatedBy;
 use crate::domain::property::{BooleanProperty, PropertyType};
-use crate::domain::{GeoLocation, InitiatedBy};
-use crate::execute_flows::execute_flows;
+use crate::execute_flows::{FlowRunEnvironment, execute_flows};
 use crate::flow_engine::VersionedFlow;
 use crate::flow_registry::FlowRegistry;
 use crate::preset_registry::PresetRegistry;
 use crate::scheduler::SchedulerCommand;
 use crate::store::{PropertyChange, ReactiveUpdate, StoreSnapshot};
-use chrono_tz::Tz;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::instrument;
@@ -19,8 +18,7 @@ pub async fn store_listener(
     flow_registry: Arc<FlowRegistry>,
     preset_registry: Arc<PresetRegistry>,
     scheduler_tx: Sender<SchedulerCommand>,
-    geo_location: GeoLocation,
-    timezone: Tz,
+    environment: FlowRunEnvironment,
 ) {
     while let Some(update) = rx.recv().await {
         if let Some(change) = &update.changed {
@@ -34,8 +32,7 @@ pub async fn store_listener(
             preset_registry.clone(),
             update.changed,
             scheduler_tx.clone(),
-            geo_location.clone(),
-            timezone,
+            &environment,
         )
         .await;
     }

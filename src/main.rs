@@ -1,8 +1,10 @@
 use crate::api::ApiState;
 use crate::app_config::AppConfig;
+use crate::attention_tracker::AttentionTracker;
 use crate::core_tasks::CoreTasks;
 use crate::database::Database;
 use crate::domain::{Event, Group, Zone, controller_registry};
+use crate::execute_flows::FlowRunEnvironment;
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::integration::Discovery;
@@ -12,7 +14,7 @@ use crate::metrics_layer::MetricsLayer;
 use crate::mqtt::MqttService;
 use crate::preset_registry::PresetRegistry;
 use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
-use crate::services::{DeviceService, FlowService, GroupService, PresetService, ZoneService};
+use crate::services::{AttentionService, DeviceService, FlowService, GroupService, PresetService, ZoneService};
 use crate::store::Store;
 use crate::store_listener::store_listener;
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -27,6 +29,8 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 mod api;
 mod app_config;
+mod attention;
+mod attention_tracker;
 mod claim_registry;
 mod core_tasks;
 mod database;
@@ -112,13 +116,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let zones = zone_repository.list().await?.into_iter().map(Zone::from).collect();
     let (mut store, store_reactive_rx) = Store::new(rx, groups, zones);
 
+    let mdns_browser = mdns_browser.as_ref();
+    let integrations = enabled_only(integrations(config.clone(), store.notifier(), mdns_browser, mqtt_service)?);
+    for integration in &integrations {
+        controller_registry::register(integration.controller());
+    }
+    info!("✅  Initialized controllers");
+
+    let (attention_tracker, attention_rx, flow_run_reporter) =
+        AttentionTracker::new(store.notifier(), integrations.clone().into());
+    let flow_run_reporter = Arc::new(flow_run_reporter);
+
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let scheduler_tx_clone = scheduler_tx.clone();
     let store_rx = store.notifier();
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
-    let geo_location_clone = config.geo_location().clone();
-    let timezone = config.timezone();
+    let flow_run_environment = FlowRunEnvironment {
+        flow_run_reporter: flow_run_reporter.clone(),
+        geo_location: config.geo_location().clone(),
+        timezone: config.timezone(),
+    };
+    let flow_run_environment_clone = flow_run_environment.clone();
     let scheduler_handle = task::spawn(async move {
         scheduler(
             scheduler_tx_clone,
@@ -126,8 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             store_rx,
             flow_registry_clone,
             preset_registry_clone,
-            geo_location_clone,
-            timezone,
+            flow_run_environment_clone,
         )
         .await;
     });
@@ -143,7 +161,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     info!("✅  Scheduled flows");
 
-    let geo_location = config.geo_location().clone();
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
     let scheduler_tx_clone = scheduler_tx.clone();
@@ -153,8 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             flow_registry_clone,
             preset_registry_clone,
             scheduler_tx_clone,
-            geo_location,
-            timezone,
+            flow_run_environment,
         )
         .await;
     });
@@ -162,7 +178,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let store_rx_clone = store.notifier();
     let devices_rx_clone = store.notifier();
-    let integrations_rx_clone = store.notifier();
     let group_service_rx_clone = store.notifier();
     let zone_service_rx_clone = store.notifier();
     let device_updates_rx = store.updates();
@@ -170,13 +185,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         store.listen().await;
     });
     info!("✅  Initialized store");
-
-    let mdns_browser = mdns_browser.as_ref();
-    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone, mdns_browser, mqtt_service)?);
-    for integration in &integrations {
-        controller_registry::register(integration.controller());
-    }
-    info!("✅  Initialized controllers");
 
     let device_service = Arc::new(DeviceService::new(devices_rx_clone, device_updates_rx));
     let flow_service = Arc::new(FlowService::new(
@@ -192,6 +200,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let group_service =
         Arc::new(GroupService::new(group_service_rx_clone, group_repository, flow_registry.clone(), tx.clone()));
     let zone_service = Arc::new(ZoneService::new(zone_service_rx_clone, zone_repository, flow_registry, tx.clone()));
+    let attention_service = Arc::new(AttentionService::new(attention_rx));
     let api_state = ApiState::new(
         prometheus_handle,
         database,
@@ -202,6 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         group_service,
         zone_service,
         preset_service,
+        attention_service,
     );
     server::start(config.core().port(), api_state).await?;
     info!("✅  Initialized server");
@@ -224,6 +234,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     info!("✅  Observing all integrations");
     info!("🔥 {} is up and running", env!("CARGO_PKG_NAME"));
+
+    // After observing, otherwise every integration is down for a moment
+    task::spawn(attention_tracker.track());
 
     if let Err(err) = signal::ctrl_c().await {
         error!("Unable to listen for shutdown signal: {}", err);
