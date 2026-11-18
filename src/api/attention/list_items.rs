@@ -1,5 +1,5 @@
 use crate::api::ApiState;
-use crate::attention::{Attention, Issue, Subject};
+use crate::attention::{Attention, AttentionList, Issue, Subject};
 use crate::services::{DeviceService, FlowService};
 use axum::Json;
 use axum::extract::State;
@@ -9,18 +9,22 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 pub(super) async fn list_items(State(state): State<ApiState>) -> Result<Response, Response> {
-    let items: Vec<_> = state
-        .attention_service
-        .list()
-        .iter()
-        .map(|attention| AttentionView::new(attention, &state.device_service, &state.flow_service))
-        .collect();
+    let response = attention_response(&state.attention_service.list(), &state.device_service, &state.flow_service);
 
-    Ok((StatusCode::OK, Json(AttentionResponse { items })).into_response())
+    Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+pub(super) fn attention_response(
+    list: &AttentionList,
+    device_service: &DeviceService,
+    flow_service: &FlowService,
+) -> AttentionResponse {
+    let items = list.iter().map(|attention| AttentionView::new(attention, &device_service, &flow_service)).collect();
+    AttentionResponse { items }
 }
 
 #[derive(Debug, Serialize)]
-struct AttentionResponse {
+pub(super) struct AttentionResponse {
     items: Vec<AttentionView>,
 }
 

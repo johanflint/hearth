@@ -14,4 +14,8 @@ impl AttentionService {
     pub fn list(&self) -> AttentionList {
         self.attention_rx.borrow().clone()
     }
+
+    pub fn subscribe(&self) -> watch::Receiver<AttentionList> {
+        self.attention_rx.clone()
+    }
 }
