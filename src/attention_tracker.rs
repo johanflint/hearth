@@ -1,4 +1,4 @@
-use crate::attention::{Attention, AttentionList, Issue, Subject};
+use crate::attention::{Attention, AttentionList, FlowRun, FlowRunReporter, Issue, Subject};
 use crate::domain::property::{EnumProperty, PropertyType};
 use crate::domain::{BatteryState, Connectivity, Device};
 use crate::integration::{Integration, IntegrationStatus};
@@ -7,14 +7,15 @@ use chrono::{DateTime, Utc};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
 use tokio::sync::watch::Receiver as WatchReceiver;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{MissedTickBehavior, interval};
 
 const INTEGRATION_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct AttentionTracker {
     store_rx: WatchReceiver<StoreSnapshot>,
+    flow_run_rx: mpsc::Receiver<FlowRun>,
     integrations: Arc<[Arc<dyn Integration>]>,
     attention_tx: watch::Sender<AttentionList>,
 }
@@ -23,10 +24,12 @@ impl AttentionTracker {
     pub fn new(
         store_rx: WatchReceiver<StoreSnapshot>,
         integrations: Arc<[Arc<dyn Integration>]>,
-    ) -> (Self, watch::Receiver<AttentionList>) {
+    ) -> (Self, watch::Receiver<AttentionList>, FlowRunReporter) {
         let (attention_tx, attention_rx) = watch::channel(AttentionList::default());
+        let (flow_run_tx, flow_run_rx) = mpsc::channel::<FlowRun>(256);
+        let flow_run_reporter = FlowRunReporter::new(flow_run_tx);
 
-        (AttentionTracker { store_rx, integrations, attention_tx }, attention_rx)
+        (AttentionTracker { store_rx, flow_run_rx, integrations, attention_tx }, attention_rx, flow_run_reporter)
     }
 
     pub async fn track(mut self) {
@@ -43,6 +46,12 @@ impl AttentionTracker {
                     let snapshot = self.store_rx.borrow_and_update().clone();
                     // The published list is the previous state, so there is nothing else to keep track of
                     self.publish(|list| &mut list.devices, |current, now| attention_for_devices(&snapshot, current, now));
+                }
+                Some(run) = self.flow_run_rx.recv() => {
+                    self.publish(
+                        |list| &mut list.flows,
+                        |current, now| attention_for_flow(run, current, now)
+                    );
                 }
                 _ = poll.tick() => {
                     self.publish(
@@ -117,6 +126,21 @@ fn device_issues(device: &Device) -> Vec<Issue> {
     issues
 }
 
+fn attention_for_flow(run: FlowRun, previous: &[Attention], now: DateTime<Utc>) -> Vec<Attention> {
+    let (flow_id, issue) = match run {
+        FlowRun::Succeeded { flow_id } => (flow_id, None),
+        FlowRun::Failed { flow_id, error } => (flow_id, Some(Issue::FlowFailed { error: error.to_string() })),
+    };
+    let subject = Subject::Flow(flow_id.clone());
+    let since = issue.as_ref().map(|issue| since_of(previous, &subject, issue, now));
+    let mut next: Vec<_> = previous.iter().filter(|a| a.subject != subject).cloned().collect();
+    if let (Some(issue), Some(since)) = (issue, since) {
+        next.push(Attention { subject, issue, since });
+    }
+    next.sort_by(|a, b| a.subject.cmp(&b.subject));
+    next
+}
+
 fn attention_for_integrations(
     integrations: &[Arc<dyn Integration>],
     previous: &[Attention],
@@ -145,6 +169,7 @@ mod tests {
     use super::*;
     use crate::domain::property::Property;
     use crate::domain::{Command, Controller, Event};
+    use crate::flow_engine::FlowEngineError;
     use crate::integration::{Discovery, IntegrationError, SharedStatus};
     use crate::test_support::DeviceBuilder;
     use async_trait::async_trait;
@@ -447,9 +472,87 @@ mod tests {
         assert_eq!(second[0].since, at(5));
     }
 
+    fn failed(flow_id: &str, error: &str) -> FlowRun {
+        FlowRun::Failed { flow_id: flow_id.into(), error: FlowEngineError::MissingProvidedStartNode(error.into()) }
+    }
+
+    fn succeeded(flow_id: &str) -> FlowRun {
+        FlowRun::Succeeded { flow_id: flow_id.into() }
+    }
+
+    fn flow_failure(flow_id: &str, error: &str, since: DateTime<Utc>) -> Attention {
+        Attention {
+            subject: Subject::Flow(flow_id.into()),
+            issue: Issue::FlowFailed { error: format!("missing provided start node '{error}'") },
+            since,
+        }
+    }
+
+    #[test]
+    fn attention_for_flow_starts_a_failure_now() {
+        let attention = attention_for_flow(failed("a", "x"), &[], at(5));
+
+        assert_eq!(attention, [flow_failure("a", "x", at(5))]);
+    }
+
+    #[test]
+    fn attention_for_flow_keeps_since_and_takes_the_new_error_of_a_repeated_failure() {
+        let first = attention_for_flow(failed("a", "x"), &[], at(0));
+
+        let second = attention_for_flow(failed("a", "y"), &first, at(5));
+
+        assert_eq!(second, [flow_failure("a", "y", at(0))]);
+    }
+
+    #[test]
+    fn attention_for_flow_removes_the_failure_of_a_flow_that_succeeds() {
+        let first = attention_for_flow(failed("a", "x"), &[], at(0));
+
+        assert!(attention_for_flow(succeeded("a"), &first, at(5)).is_empty());
+    }
+
+    #[test]
+    fn attention_for_flow_leaves_other_flows_alone_and_sorts_by_subject() {
+        let previous = [flow_failure("a", "x", at(0)), flow_failure("c", "x", at(1))];
+
+        let after_failure = attention_for_flow(failed("b", "x"), &previous, at(5));
+        let after_success = attention_for_flow(succeeded("a"), &after_failure, at(6));
+
+        assert_eq!(
+            subjects(&after_failure),
+            [&Subject::Flow("a".into()), &Subject::Flow("b".into()), &Subject::Flow("c".into())]
+        );
+        assert_eq!(after_success, [flow_failure("b", "x", at(5)), flow_failure("c", "x", at(1))]);
+    }
+
+    #[test]
+    fn attention_for_flow_ignores_the_success_of_a_flow_that_did_not_fail() {
+        let previous = [flow_failure("a", "x", at(0))];
+
+        assert_eq!(attention_for_flow(succeeded("b"), &previous, at(5)), previous);
+    }
+
+    #[tokio::test]
+    async fn track_publishes_failed_flows_and_clears_them_when_they_succeed() {
+        let (store_tx, store_rx) = watch::channel(snapshot(vec![]));
+        let (tracker, mut attention_rx, reporter) = AttentionTracker::new(store_rx, Arc::from([]));
+        tokio::spawn(tracker.track());
+
+        reporter.failed("a", FlowEngineError::MissingOutgoingNode("n".into()));
+        attention_rx.wait_for(|list| !list.flows.is_empty()).await.unwrap();
+        assert_eq!(
+            attention_rx.borrow().flows[0].issue,
+            Issue::FlowFailed { error: "missing outgoing node for node 'n'".into() }
+        );
+
+        reporter.succeeded("a");
+        attention_rx.wait_for(|list| list.flows.is_empty()).await.unwrap();
+        drop(store_tx);
+    }
+
     fn new_tracker() -> (watch::Sender<StoreSnapshot>, AttentionTracker, watch::Receiver<AttentionList>) {
         let (store_tx, store_rx) = watch::channel(snapshot(vec![]));
-        let (tracker, attention_rx) = AttentionTracker::new(store_rx, Arc::from([]));
+        let (tracker, attention_rx, _) = AttentionTracker::new(store_rx, Arc::from([]));
         (store_tx, tracker, attention_rx)
     }
 
@@ -523,7 +626,7 @@ mod tests {
         integrations: Vec<Arc<dyn Integration>>,
     ) -> (watch::Sender<StoreSnapshot>, watch::Receiver<AttentionList>) {
         let (store_tx, store_rx) = watch::channel(snapshot(devices));
-        let (tracker, attention_rx) = AttentionTracker::new(store_rx, integrations.into());
+        let (tracker, attention_rx, _) = AttentionTracker::new(store_rx, integrations.into());
         tokio::spawn(tracker.track());
         (store_tx, attention_rx)
     }
@@ -628,7 +731,7 @@ mod tests {
     #[tokio::test]
     async fn track_stops_when_the_store_stops() {
         let (store_tx, store_rx) = watch::channel(snapshot(vec![]));
-        let (tracker, _attention_rx) = AttentionTracker::new(store_rx, Arc::from([]));
+        let (tracker, _attention_rx, _) = AttentionTracker::new(store_rx, Arc::from([]));
         let task = tokio::spawn(tracker.track());
 
         drop(store_tx);

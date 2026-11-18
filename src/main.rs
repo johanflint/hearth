@@ -115,11 +115,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let zones = zone_repository.list().await?.into_iter().map(Zone::from).collect();
     let (mut store, store_reactive_rx) = Store::new(rx, groups, zones);
 
+    let mdns_browser = mdns_browser.as_ref();
+    let integrations = enabled_only(integrations(config.clone(), store.notifier(), mdns_browser, mqtt_service)?);
+    for integration in &integrations {
+        controller_registry::register(integration.controller());
+    }
+    info!("✅  Initialized controllers");
+
+    let (attention_tracker, attention_rx, flow_run_reporter) =
+        AttentionTracker::new(store.notifier(), integrations.clone().into());
+    let flow_run_reporter = Arc::new(flow_run_reporter);
+
     let (scheduler_tx, scheduler_rx) = mpsc::channel::<SchedulerCommand>(32);
     let scheduler_tx_clone = scheduler_tx.clone();
     let store_rx = store.notifier();
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
+    let flow_run_reporter_clone = flow_run_reporter.clone();
     let geo_location_clone = config.geo_location().clone();
     let timezone = config.timezone();
     let scheduler_handle = task::spawn(async move {
@@ -129,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             store_rx,
             flow_registry_clone,
             preset_registry_clone,
+            flow_run_reporter_clone,
             geo_location_clone,
             timezone,
         )
@@ -150,12 +163,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
     let scheduler_tx_clone = scheduler_tx.clone();
+    let flow_run_reporter_clone = flow_run_reporter.clone();
     let store_listener_handle = task::spawn(async move {
         store_listener(
             store_reactive_rx,
             flow_registry_clone,
             preset_registry_clone,
             scheduler_tx_clone,
+            flow_run_reporter_clone,
             geo_location,
             timezone,
         )
@@ -164,9 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("✅  Initialized store listener");
 
     let store_rx_clone = store.notifier();
-    let attention_rx_clone = store.notifier();
     let devices_rx_clone = store.notifier();
-    let integrations_rx_clone = store.notifier();
     let group_service_rx_clone = store.notifier();
     let zone_service_rx_clone = store.notifier();
     let device_updates_rx = store.updates();
@@ -174,15 +187,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         store.listen().await;
     });
     info!("✅  Initialized store");
-
-    let mdns_browser = mdns_browser.as_ref();
-    let integrations = enabled_only(integrations(config.clone(), integrations_rx_clone, mdns_browser, mqtt_service)?);
-    for integration in &integrations {
-        controller_registry::register(integration.controller());
-    }
-    info!("✅  Initialized controllers");
-
-    let (attention_tracker, attention_rx) = AttentionTracker::new(attention_rx_clone, integrations.clone().into());
 
     let device_service = Arc::new(DeviceService::new(devices_rx_clone, device_updates_rx));
     let flow_service = Arc::new(FlowService::new(

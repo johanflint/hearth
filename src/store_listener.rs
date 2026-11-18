@@ -1,3 +1,4 @@
+use crate::attention::FlowRunReporter;
 use crate::claim_registry;
 use crate::claim_registry::ClaimOrigin;
 use crate::domain::property::{BooleanProperty, PropertyType};
@@ -19,6 +20,7 @@ pub async fn store_listener(
     flow_registry: Arc<FlowRegistry>,
     preset_registry: Arc<PresetRegistry>,
     scheduler_tx: Sender<SchedulerCommand>,
+    flow_run_reporter: Arc<FlowRunReporter>,
     geo_location: GeoLocation,
     timezone: Tz,
 ) {
@@ -34,6 +36,7 @@ pub async fn store_listener(
             preset_registry.clone(),
             update.changed,
             scheduler_tx.clone(),
+            flow_run_reporter.clone(),
             geo_location.clone(),
             timezone,
         )

@@ -1,6 +1,6 @@
 use crate::api::ApiState;
 use crate::attention::{Attention, Issue, Subject};
-use crate::services::DeviceService;
+use crate::services::{DeviceService, FlowService};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -13,7 +13,7 @@ pub(super) async fn list_items(State(state): State<ApiState>) -> Result<Response
         .attention_service
         .list()
         .iter()
-        .map(|attention| AttentionView::new(attention, &state.device_service))
+        .map(|attention| AttentionView::new(attention, &state.device_service, &state.flow_service))
         .collect();
 
     Ok((StatusCode::OK, Json(AttentionResponse { items })).into_response())
@@ -32,9 +32,9 @@ struct AttentionView {
 }
 
 impl AttentionView {
-    fn new(attention: &Attention, device_service: &DeviceService) -> AttentionView {
+    fn new(attention: &Attention, device_service: &DeviceService, flow_service: &FlowService) -> AttentionView {
         AttentionView {
-            subject: SubjectView::new(&attention.subject, device_service),
+            subject: SubjectView::new(&attention.subject, device_service, flow_service),
             issue: (&attention.issue).into(),
             since: attention.since,
         }
@@ -45,16 +45,21 @@ impl AttentionView {
 #[serde(tag = "type", rename_all = "camelCase")]
 enum SubjectView {
     Device { id: String, name: Option<String> },
+    Flow { id: String, name: Option<String> },
     Integration { name: String },
 }
 
 impl SubjectView {
-    fn new(subject: &Subject, device_service: &DeviceService) -> SubjectView {
+    fn new(subject: &Subject, device_service: &DeviceService, flow_service: &FlowService) -> SubjectView {
         match subject {
             Subject::Device(id) => SubjectView::Device {
                 id: id.clone(),
                 // The device can disappear between the attention snapshot and this lookup
                 name: device_service.retrieve_device(id).ok().map(|device| device.name.clone()),
+            },
+            Subject::Flow(id) => SubjectView::Flow {
+                id: id.clone(),
+                name: flow_service.registered_flow(id).map(|flow| flow.name().to_string()),
             },
             Subject::Integration(name) => SubjectView::Integration { name: name.clone() },
         }
@@ -66,6 +71,7 @@ impl SubjectView {
 enum IssueView {
     Connectivity { state: String },
     Battery { state: String },
+    Flow { error: String },
     Integration { state: String },
 }
 
@@ -74,6 +80,7 @@ impl From<&Issue> for IssueView {
         match issue {
             Issue::Connectivity(connectivity) => IssueView::Connectivity { state: connectivity.to_string() },
             Issue::Battery(battery_state) => IssueView::Battery { state: battery_state.to_string() },
+            Issue::FlowFailed { error } => IssueView::Flow { error: error.to_string() },
             Issue::Integration(integration_status) => IssueView::Integration { state: integration_status.to_string() },
         }
     }
@@ -83,10 +90,17 @@ impl From<&Issue> for IssueView {
 mod tests {
     use super::*;
     use crate::api::attention::router;
-    use crate::api::test_support::{body_json, create_state_with_attention};
+    use crate::api::test_support::{
+        VALID_FLOW_ID, VALID_FLOW_JSON, body_json, create_state_with_attention, create_state_with_flows,
+    };
     use crate::attention::AttentionList;
     use crate::domain::{BatteryState, Connectivity, Device};
+    use crate::flow_engine::VersionedFlow;
+    use crate::flow_loader;
+    use crate::flow_loader::SerializedFlow;
+    use crate::flow_registry::FlowRegistry;
     use crate::integration::IntegrationStatus;
+    use crate::services::AttentionService;
     use crate::store::StoreSnapshot;
     use crate::test_support::DeviceBuilder;
     use axum::body::Body;
@@ -182,6 +196,7 @@ mod tests {
                 integration_attention("shelly", IntegrationStatus::Degraded),
             ]
             .into(),
+            ..Default::default()
         };
 
         let response = call_list_items(create_state_with_attention(snapshot, list)).await;
@@ -209,6 +224,58 @@ mod tests {
                 ]
             })
         );
+    }
+
+    #[tokio::test]
+    async fn list_items_returns_the_failed_flows_between_the_devices_and_the_integrations() {
+        let list = AttentionList {
+            flows: vec![Attention {
+                subject: Subject::Flow("night-light".into()),
+                issue: Issue::FlowFailed { error: "broken".into() },
+                since: Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap(),
+            }]
+            .into(),
+            integrations: vec![integration_attention("hue", IntegrationStatus::Down)].into(),
+            ..Default::default()
+        };
+
+        let response = call_list_items(create_state_with_attention(StoreSnapshot::default(), list)).await;
+
+        let body = body_json(response).await;
+        assert_eq!(
+            body["items"][0],
+            json!({
+                "subject": { "type": "flow", "id": "night-light", "name": null },
+                "issue": { "type": "flow", "error": "broken" },
+                "since": "2026-01-01T12:00:00Z",
+            })
+        );
+        assert_eq!(body["items"][1]["subject"]["type"], "integration");
+    }
+
+    #[tokio::test]
+    async fn list_items_returns_the_name_of_a_registered_flow() {
+        let payload: SerializedFlow = serde_json::from_str(VALID_FLOW_JSON).unwrap();
+        let flow = VersionedFlow { flow: Arc::new(flow_loader::from_json(payload).unwrap()), revision: 1 };
+        let (store_tx, _store_rx) = tokio::sync::mpsc::channel(8);
+        let (mut state, _database) =
+            create_state_with_flows(FlowRegistry::new(vec![flow]), StoreSnapshot::default(), store_tx);
+        let list = AttentionList {
+            flows: vec![Attention {
+                subject: Subject::Flow(VALID_FLOW_ID.into()),
+                issue: Issue::FlowFailed { error: "broken".into() },
+                since: Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap(),
+            }]
+            .into(),
+            ..Default::default()
+        };
+        let (_, attention_rx) = tokio::sync::watch::channel(list);
+        state.attention_service = Arc::new(AttentionService::new(attention_rx));
+
+        let response = call_list_items(state).await;
+
+        let body = body_json(response).await;
+        assert_eq!(body["items"][0]["subject"], json!({ "type": "flow", "id": VALID_FLOW_ID, "name": "logFlow" }));
     }
 
     #[tokio::test]

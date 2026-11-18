@@ -1,7 +1,7 @@
 use std::fmt;
 use strum::{EnumIter, EnumString};
 
-#[derive(EnumIter, EnumString, Debug, PartialEq)]
+#[derive(EnumIter, EnumString, Debug, Clone, PartialEq)]
 #[strum(serialize_all = "lowercase")]
 pub enum BatteryState {
     Normal,

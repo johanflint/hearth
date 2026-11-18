@@ -3,7 +3,7 @@ use strum::{EnumIter, EnumString};
 
 /// The connectivity of a `Device`. Not all mesh protocols support the
 /// intermediary state `Issues`, Zigbee does but Z-Wave and Thread do not.
-#[derive(EnumIter, EnumString, Debug, PartialEq)]
+#[derive(EnumIter, EnumString, Debug, Clone, PartialEq)]
 #[strum(serialize_all = "lowercase")]
 pub enum Connectivity {
     Connected,

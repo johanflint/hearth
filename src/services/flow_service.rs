@@ -41,6 +41,10 @@ impl FlowService {
         Ok(self.flow_repository.list().await?)
     }
 
+    pub fn registered_flow(&self, id: &str) -> Option<VersionedFlow> {
+        self.flow_registry.by_id(id)
+    }
+
     pub async fn retrieve_flow(&self, id: &str) -> Result<StoredFlow, RetrieveFlowError> {
         self.flow_repository.by_id(id).await?.ok_or(RetrieveFlowError::NotFound)
     }

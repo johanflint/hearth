@@ -1,3 +1,4 @@
+use crate::attention::FlowRunReporter;
 use crate::domain::GeoLocation;
 use crate::execute_flows::{execute_flow, execute_flows};
 use crate::flow_engine::VersionedFlow;
@@ -51,6 +52,7 @@ pub async fn scheduler(
     notifier_rx: WatchReceiver<StoreSnapshot>,
     flow_registry: Arc<FlowRegistry>,
     preset_registry: Arc<PresetRegistry>,
+    flow_run_reporter: Arc<FlowRunReporter>,
     geo_location: GeoLocation,
     timezone: Tz,
 ) {
@@ -117,6 +119,7 @@ pub async fn scheduler(
                 let flow_id_clone = flow_id.clone();
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
+                let flow_run_reporter_clone = flow_run_reporter.clone();
                 let preset_registry_clone = preset_registry.clone();
                 let geo_location_clone = geo_location.clone();
                 let join_handle = tokio::spawn(async move {
@@ -147,6 +150,7 @@ pub async fn scheduler(
                             preset_registry_clone.clone(),
                             None,
                             tx_clone.clone(),
+                            flow_run_reporter_clone.clone(),
                             geo_location_clone.clone(),
                             timezone,
                         )
@@ -183,6 +187,7 @@ pub async fn scheduler(
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
                 let preset_registry_clone = preset_registry.clone();
+                let flow_run_reporter_clone = flow_run_reporter.clone();
                 let geo_location_clone = geo_location.clone();
                 tokio::spawn(async move {
                     let scheduled_instant = Instant::now() + Duration::from_millis(delay.as_millis() as u64);
@@ -196,6 +201,7 @@ pub async fn scheduler(
                         snapshot,
                         preset_registry_clone,
                         tx_clone.clone(),
+                        flow_run_reporter_clone,
                         geo_location_clone.clone(),
                         timezone,
                     )
