@@ -4,6 +4,7 @@ use crate::attention_tracker::AttentionTracker;
 use crate::core_tasks::CoreTasks;
 use crate::database::Database;
 use crate::domain::{Event, Group, Zone, controller_registry};
+use crate::execute_flows::FlowRunEnvironment;
 use crate::flow_engine::{SchedulerCommand, scheduler};
 use crate::flow_registry::FlowRegistry;
 use crate::integration::Discovery;
@@ -131,9 +132,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let store_rx = store.notifier();
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
-    let flow_run_reporter_clone = flow_run_reporter.clone();
-    let geo_location_clone = config.geo_location().clone();
-    let timezone = config.timezone();
+    let flow_run_environment = FlowRunEnvironment {
+        flow_run_reporter: flow_run_reporter.clone(),
+        geo_location: config.geo_location().clone(),
+        timezone: config.timezone(),
+    };
+    let flow_run_environment_clone = flow_run_environment.clone();
     let scheduler_handle = task::spawn(async move {
         scheduler(
             scheduler_tx_clone,
@@ -141,9 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             store_rx,
             flow_registry_clone,
             preset_registry_clone,
-            flow_run_reporter_clone,
-            geo_location_clone,
-            timezone,
+            flow_run_environment_clone,
         )
         .await;
     });
@@ -159,20 +161,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     info!("✅  Scheduled flows");
 
-    let geo_location = config.geo_location().clone();
     let flow_registry_clone = flow_registry.clone();
     let preset_registry_clone = preset_registry.clone();
     let scheduler_tx_clone = scheduler_tx.clone();
-    let flow_run_reporter_clone = flow_run_reporter.clone();
     let store_listener_handle = task::spawn(async move {
         store_listener(
             store_reactive_rx,
             flow_registry_clone,
             preset_registry_clone,
             scheduler_tx_clone,
-            flow_run_reporter_clone,
-            geo_location,
-            timezone,
+            flow_run_environment,
         )
         .await;
     });

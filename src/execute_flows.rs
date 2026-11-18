@@ -44,6 +44,13 @@ pub struct DispatchCommand {
 
 pub type DispatchMap = HashMap<DeviceId, DispatchCommand>;
 
+#[derive(Debug, Clone)]
+pub struct FlowRunEnvironment {
+    pub flow_run_reporter: Arc<FlowRunReporter>,
+    pub geo_location: GeoLocation,
+    pub timezone: Tz,
+}
+
 #[instrument(skip_all, fields(flow = flow.name(), node_id = node_id.as_deref().unwrap_or("<start>")))]
 pub async fn execute_flow(
     flow: Arc<Flow>,
@@ -51,17 +58,15 @@ pub async fn execute_flow(
     snapshot: StoreSnapshot,
     preset_registry: Arc<PresetRegistry>,
     tx: Sender<SchedulerCommand>,
-    flow_run_reporter: Arc<FlowRunReporter>,
-    geo_location: GeoLocation,
-    timezone: Tz,
+    environment: &FlowRunEnvironment,
 ) {
-    let context = Context::builder(timezone)
+    let context = Context::builder(environment.timezone)
         .snapshot(snapshot.clone())
         .preset_registry(preset_registry) // Passing the Arc to avoid expensive copies
-        .location(geo_location)
+        .location(environment.geo_location.clone())
         .build();
     let result = flow_engine::execute(flow.clone(), node_id, &context, tx).await;
-    let Some(report) = report_run(&flow_run_reporter, flow, result) else {
+    let Some(report) = report_run(&environment.flow_run_reporter, flow, result) else {
         // No successful runs
         return;
     };
@@ -77,19 +82,17 @@ pub async fn execute_flows(
     preset_registry: Arc<PresetRegistry>,
     changed: Option<PropertyChange>,
     tx: Sender<SchedulerCommand>,
-    flow_run_reporter: Arc<FlowRunReporter>,
-    geo_location: GeoLocation,
-    timezone: Tz,
+    environment: &FlowRunEnvironment,
 ) {
-    let context = Context::builder(timezone)
+    let context = Context::builder(environment.timezone)
         .snapshot(snapshot.clone())
         .preset_registry(preset_registry)
         .changed(changed)
-        .location(geo_location)
+        .location(environment.geo_location.clone())
         .build();
     let results = FuturesUnordered::from_iter(flows.into_iter().map(|flow| async {
         let result = flow_engine::execute(flow.clone(), None, &context, tx.clone()).await;
-        report_run(&flow_run_reporter, flow, result)
+        report_run(&environment.flow_run_reporter, flow, result)
     }))
     .collect::<Vec<_>>()
     .await;
