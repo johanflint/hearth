@@ -1,7 +1,7 @@
 use crate::database::{Database, DatabaseError};
 use crate::domain::Token;
 use chrono::{DateTime, Utc};
-use rusqlite::params;
+use rusqlite::{Row, params};
 use thiserror::Error;
 
 #[derive(Debug)]
@@ -38,10 +38,39 @@ impl TokenRepository {
             })
             .await
     }
+
+    pub async fn list_by_user(&self, user_id: &str) -> Result<Vec<StoredToken>, TokenRepositoryError> {
+        let user_id = user_id.to_string();
+        self.database
+            .call(move |conn| {
+                let mut statement = conn.prepare(
+                    "SELECT id, user_id, name, created_at, last_used_at FROM api_tokens WHERE user_id = ?1 ORDER BY name",
+                )?;
+                let rows = statement.query_map([user_id], row_to_stored_token)?;
+                Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            })
+            .await
+    }
 }
 
 fn is_name_conflict(err: &rusqlite::Error) -> bool {
     matches!(err, rusqlite::Error::SqliteFailure(err, _) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE)
+}
+
+fn row_to_stored_token(row: &Row) -> rusqlite::Result<StoredToken> {
+    Ok(StoredToken {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        name: row.get(2)?,
+        created_at: parse_timestamp(3, &row.get::<_, String>(3)?)?,
+        last_used_at: row.get::<_, Option<String>>(4)?.map(|value| parse_timestamp(4, &value)).transpose()?,
+    })
+}
+
+fn parse_timestamp(index: usize, value: &str) -> rusqlite::Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(err)))
 }
 
 /// Never contains the token or its hash
@@ -180,5 +209,73 @@ mod tests {
             .unwrap();
 
         assert_eq!(stored_hashes(&database).await, vec![other.hash()]);
+    }
+
+    #[tokio::test]
+    async fn list_by_user_returns_the_tokens_of_that_user_ordered_by_name() {
+        let (_, repository) = open_with_users(&["johan", "anna"]).await;
+        repository.insert("token-1", "johan-id", "phone", &Token::generate()).await.unwrap();
+        repository.insert("token-2", "johan-id", "Kitchen tablet", &Token::generate()).await.unwrap();
+        repository.insert("token-3", "anna-id", "Laptop", &Token::generate()).await.unwrap();
+
+        let tokens = repository.list_by_user("johan-id").await.unwrap();
+
+        let names: Vec<_> = tokens.iter().map(|token| token.name.as_str()).collect();
+        assert_eq!(names, vec!["Kitchen tablet", "phone"]);
+        assert!(tokens.iter().all(|token| token.user_id == "johan-id"));
+    }
+
+    #[tokio::test]
+    async fn list_by_user_returns_the_stored_timestamps() {
+        let (database, repository) = open_with_users(&["johan"]).await;
+        let inserted = repository.insert("token-1", "johan-id", "Phone", &Token::generate()).await.unwrap();
+        database
+            .call(|conn| {
+                conn.execute("UPDATE api_tokens SET last_used_at = '2026-11-19T20:00:00+00:00'", [])
+                    .map_err(DatabaseError::from)
+            })
+            .await
+            .unwrap();
+
+        let tokens = repository.list_by_user("johan-id").await.unwrap();
+
+        assert_eq!(tokens[0].created_at, inserted.created_at);
+        assert_eq!(tokens[0].last_used_at, Some("2026-11-19T20:00:00Z".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn list_by_user_returns_no_last_used_for_a_token_that_was_never_used() {
+        let (_, repository) = open_with_users(&["johan"]).await;
+        repository.insert("token-1", "johan-id", "Phone", &Token::generate()).await.unwrap();
+
+        let tokens = repository.list_by_user("johan-id").await.unwrap();
+
+        assert!(tokens[0].last_used_at.is_none());
+    }
+
+    #[rstest]
+    #[case::user_without_tokens("johan-id")]
+    #[case::unknown_user("nobody-id")]
+    #[tokio::test]
+    async fn list_by_user_returns_an_empty_list_without_tokens(#[case] user_id: &str) {
+        let (_, repository) = open_with_users(&["johan"]).await;
+
+        let tokens = repository.list_by_user(user_id).await.unwrap();
+
+        assert!(tokens.is_empty());
+    }
+
+    #[rstest]
+    #[case::created_at("UPDATE api_tokens SET created_at = 'yesterday'")]
+    #[case::last_used_at("UPDATE api_tokens SET last_used_at = 'yesterday'")]
+    #[tokio::test]
+    async fn list_by_user_fails_on_an_invalid_timestamp(#[case] sql: &'static str) {
+        let (database, repository) = open_with_users(&["johan"]).await;
+        repository.insert("token-1", "johan-id", "Phone", &Token::generate()).await.unwrap();
+        database.call(move |conn| conn.execute(sql, []).map_err(DatabaseError::from)).await.unwrap();
+
+        let result = repository.list_by_user("johan-id").await;
+
+        assert!(matches!(result, Err(TokenRepositoryError::Sqlite(_))), "got {result:?}");
     }
 }

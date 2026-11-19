@@ -47,6 +47,8 @@ pub enum TokenCommand {
         /// A label for the device using the token, e.g. "Kitchen tablet"
         name: String,
     },
+    /// List the tokens of a user
+    List { user: String },
 }
 
 pub async fn run(command: Command, config: &AppConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -56,11 +58,16 @@ pub async fn run(command: Command, config: &AppConfig) -> Result<(), Box<dyn Err
             let database = Database::open(Path::new(config.db().file_name()))?;
             create_user(&UserRepository::new(database), name, admin).await
         }
-        Command::Token(TokenCommand::Create { user, name }) => {
+        Command::Token(command) => {
             let database = Database::open(Path::new(config.db().file_name()))?;
             let users = UserRepository::new(database.clone());
             let tokens = TokenRepository::new(database);
-            create_token(&users, &tokens, &user, validated_name(&name)?).await
+            match command {
+                TokenCommand::Create { user, name } => {
+                    create_token(&users, &tokens, &user, validated_name(&name)?).await
+                }
+                TokenCommand::List { user } => list_tokens(&users, &tokens, &user).await,
+            }
         }
     }
 }
@@ -111,6 +118,25 @@ async fn create_token(
         }
         Err(err) => Err(err.into()),
     }
+}
+
+async fn list_tokens(
+    users: &UserRepository,
+    tokens: &TokenRepository,
+    user: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let user = find_user(users, user).await?;
+    let stored = tokens.list_by_user(&user.id).await?;
+    if stored.is_empty() {
+        println!("User '{}' has no tokens", user.name);
+    }
+
+    for token in stored {
+        let last_used = token.last_used_at.map_or("never".to_string(), |at| at.to_rfc3339());
+        println!("{}\tcreated {}\tlast used {}", token.name, token.created_at.to_rfc3339(), last_used);
+    }
+
+    Ok(())
 }
 
 async fn find_user(users: &UserRepository, name: &str) -> Result<StoredUser, Box<dyn Error + Send + Sync>> {
@@ -237,5 +263,25 @@ mod tests {
 
         assert_eq!(err.to_string(), "User 'johan' already has a token named 'phone'");
         assert_eq!(count_tokens(&fixture.database).await, 1);
+    }
+
+    #[tokio::test]
+    async fn list_tokens_succeeds_for_a_user_with_and_without_tokens() {
+        let fixture = fixture();
+        create_user(&fixture.users, "johan", false).await.unwrap();
+        create_user(&fixture.users, "anna", false).await.unwrap();
+        create_token(&fixture.users, &fixture.tokens, "johan", "Phone").await.unwrap();
+
+        assert!(list_tokens(&fixture.users, &fixture.tokens, "johan").await.is_ok());
+        assert!(list_tokens(&fixture.users, &fixture.tokens, "anna").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn list_tokens_fails_for_an_unknown_user() {
+        let fixture = fixture();
+
+        let err = list_tokens(&fixture.users, &fixture.tokens, "nobody").await.unwrap_err();
+
+        assert_eq!(err.to_string(), "No user named 'nobody'");
     }
 }
