@@ -15,6 +15,7 @@ mod owner;
 mod preset;
 pub mod property;
 mod time;
+mod user;
 mod validator;
 mod value;
 mod versioned_preset;
