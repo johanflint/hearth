@@ -109,6 +109,16 @@ const MIGRATIONS: &[&str] = &[
         permission TEXT NOT NULL, -- domain::Permission in camelCase, e.g. readDevices
         PRIMARY KEY (user_id, permission)
     ) WITHOUT ROWID",
+    // v6: API tokens. Only the hash is stored, so a token can't be recovered after it's created.
+    "CREATE TABLE api_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL COLLATE NOCASE, -- label for the device using it, e.g. kitchen tablet
+        token_hash TEXT NOT NULL UNIQUE, -- hex SHA-256 of the token
+        created_at TEXT NOT NULL,
+        last_used_at TEXT,
+        UNIQUE (user_id, name)
+    )",
 ];
 
 #[derive(Error, Debug)]
