@@ -98,6 +98,17 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL,
         updated_at TEXT
     )",
+    // v5: API users and their permissions
+    "CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE user_permissions (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        permission TEXT NOT NULL, -- domain::Permission in camelCase, e.g. readDevices
+        PRIMARY KEY (user_id, permission)
+    ) WITHOUT ROWID",
 ];
 
 #[derive(Error, Debug)]
