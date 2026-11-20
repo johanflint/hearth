@@ -101,8 +101,13 @@ pub async fn scheduler(
                         continue;
                     }
                     ReconcileAction::CancelBecauseFlowRemoved => {
-                        if cancel_existing_job(&flow_id, &mut scheduled_flows) {
-                            info!("🕗 Reconciling flow '{}'... cancelled, flow no longer exists", flow_id);
+                        let cancelled_job = cancel_existing_job(&flow_id, &mut scheduled_flows);
+                        let cancelled_sleeps = cancel_sleeping_jobs(&flow_id, &mut sleeping);
+                        if cancelled_job || cancelled_sleeps > 0 {
+                            info!(
+                                "🕗 Reconciling flow '{}'... cancelled, flow no longer exists ({} sleeping run(s))",
+                                flow_id, cancelled_sleeps
+                            );
                         }
                         continue;
                     }
@@ -251,6 +256,23 @@ fn cancel_existing_job(flow_id: &str, jobs: &mut HashMap<String, ScheduledJob>) 
     };
     previous_job.cancellation.cancel();
     true
+}
+
+// Cancels and removes the sleeping runs of every Sleep node of `flow_id`. Returns how many were cancelled.
+// Like `cancel_existing_job`, this only interrupts the wait, a run that has already woken finishes.
+fn cancel_sleeping_jobs(flow_id: &str, sleeping: &mut HashMap<SleepKey, Vec<ScheduledJob>>) -> usize {
+    let mut cancelled = 0;
+    sleeping.retain(|key, jobs| {
+        if key.flow_id != flow_id {
+            return true;
+        }
+        for job in jobs.drain(..) {
+            job.cancellation.cancel();
+            cancelled += 1;
+        }
+        false
+    });
+    cancelled
 }
 
 // Skips the occurrences that have already passed. Returns None when the schedule has ended or stopped advancing.
@@ -640,5 +662,61 @@ mod tests {
 
         assert_eq!(generations(&sleeping, &other), vec![1]);
         assert!(!other_cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn cancel_sleeping_jobs_cancels_and_removes_the_sleeps_of_every_sleep_node() {
+        let first = sleep_key("sleepNode");
+        let second = sleep_key("otherSleepNode");
+        let jobs = vec![sleeping_job(1), sleeping_job(2)];
+        let other_jobs = vec![sleeping_job(3)];
+        let cancellations: Vec<_> = jobs.iter().chain(&other_jobs).map(|job| job.cancellation.clone()).collect();
+        let mut sleeping = HashMap::from([(first, jobs), (second, other_jobs)]);
+
+        assert_eq!(cancel_sleeping_jobs("flow", &mut sleeping), 3);
+
+        assert!(sleeping.is_empty());
+        assert!(cancellations.iter().all(CancellationToken::is_cancelled));
+    }
+
+    #[test]
+    fn cancel_sleeping_jobs_leaves_other_flows_alone() {
+        // Another flow can use the same sleep node id
+        let key = sleep_key("sleepNode");
+        let other_flow = SleepKey { flow_id: "otherFlow".to_string(), sleep_node_id: "sleepNode".to_string() };
+        let other_job = sleeping_job(2);
+        let other_cancellation = other_job.cancellation.clone();
+        let mut sleeping = HashMap::from([(key, vec![sleeping_job(1)]), (other_flow.clone(), vec![other_job])]);
+
+        assert_eq!(cancel_sleeping_jobs("flow", &mut sleeping), 1);
+
+        assert_eq!(sleeping.len(), 1);
+        assert_eq!(generations(&sleeping, &other_flow), vec![2]);
+        assert!(!other_cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn cancel_sleeping_jobs_does_nothing_for_an_unknown_flow() {
+        let key = sleep_key("sleepNode");
+        let job = sleeping_job(1);
+        let cancellation = job.cancellation.clone();
+        let mut sleeping = HashMap::from([(key.clone(), vec![job])]);
+
+        assert_eq!(cancel_sleeping_jobs("unknown", &mut sleeping), 0);
+
+        assert_eq!(generations(&sleeping, &key), vec![1]);
+        assert!(!cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn remove_sleeping_job_ignores_a_sleep_cancelled_with_its_flow() {
+        // A cancelled run still reports back after its flow was removed, which must not fail or resurrect the key
+        let key = sleep_key("sleepNode");
+        let mut sleeping = HashMap::from([(key.clone(), vec![sleeping_job(1)])]);
+        cancel_sleeping_jobs("flow", &mut sleeping);
+
+        remove_sleeping_job(&mut sleeping, &key, 1);
+
+        assert!(sleeping.is_empty());
     }
 }
