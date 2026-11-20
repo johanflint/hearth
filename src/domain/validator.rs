@@ -27,7 +27,7 @@ pub fn validate(
     for node in flow.walk() {
         let location = || Location::Node { node_id: node.id().to_string() };
         match node.kind() {
-            FlowNodeKind::Start | FlowNodeKind::End | FlowNodeKind::Sleep(_) => {}
+            FlowNodeKind::Start | FlowNodeKind::End | FlowNodeKind::Sleep(..) => {}
             FlowNodeKind::Conditional(expression) => {
                 issues.extend(
                     validate_expression(snapshot, expression, preset_registry).into_iter().map(|p| p.at(location())),
@@ -220,7 +220,7 @@ mod tests {
     use crate::domain::{Color, Number, Owner, Preset, Value, VersionedPreset};
     use crate::flow_engine::Expression::*;
     use crate::flow_engine::action::{ControlDeviceAction, LogAction};
-    use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind};
+    use crate::flow_engine::flow::{ActionFlowNode, FlowLink, FlowNode, FlowNodeKind, SleepMode};
     use crate::flow_engine::property_command::PropertyCommand;
     use crate::store::DeviceMap;
     use crate::test_support::{DeviceBuilder, property_command};
@@ -643,7 +643,7 @@ mod tests {
     #[case::conditional(FlowNodeKind::Conditional(property_value(KNOWN_DEVICE_ID)))]
     #[case::control_device(control_device(KNOWN_DEVICE_ID, "on"))]
     #[case::action_without_validation(log())]
-    #[case::sleep(FlowNodeKind::Sleep(Duration::from_secs(1)))]
+    #[case::sleep(FlowNodeKind::Sleep(Duration::from_secs(1), SleepMode::Parallel))]
     fn validate_accepts_a_node_that_only_references_known_devices_and_properties(#[case] kind: FlowNodeKind) {
         assert_eq!(validate(&flow_with_node(kind), &snapshot(), &preset_registry()), Ok(()));
     }

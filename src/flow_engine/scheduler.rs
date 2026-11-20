@@ -1,6 +1,6 @@
 use crate::execute_flows::{FlowRunEnvironment, execute_flow, execute_flows};
 use crate::flow_engine::VersionedFlow;
-use crate::flow_engine::flow::Flow;
+use crate::flow_engine::flow::{Flow, SleepMode};
 use crate::flow_registry::FlowRegistry;
 use crate::preset_registry::PresetRegistry;
 use crate::store::StoreSnapshot;
@@ -23,7 +23,7 @@ pub enum SchedulerCommand {
     Reconcile { flow_id: String, revision: u64 },
     // An `Arc<Flow>` is passed instead of a flow_id to ensure it resumes with
     // the same flow instance, even if a newer version is available
-    ScheduleOnce { flow: Arc<Flow>, node_id: String, delay: Duration },
+    ScheduleOnce { flow: Arc<Flow>, sleep_node_id: String, node_id: String, delay: Duration, mode: SleepMode },
 }
 
 // Internal way for a job's supervisor to report back on its own private channel
@@ -43,6 +43,17 @@ struct ScheduledJob {
 // A healthy schedule only moves forward, an occurrence that isn't later than the latest one means it's looping
 const MAX_STALLED_OCCURRENCES: u32 = 100;
 
+#[derive(Eq, PartialEq, Hash, Debug, Clone)]
+struct SleepKey {
+    flow_id: String,
+    sleep_node_id: String,
+}
+// Sent by a sleeping run once its wait ends (woken or cancelled), so it longer counts as sleeping
+struct SleepFinished {
+    key: SleepKey,
+    generation: u64,
+}
+
 #[instrument(skip_all)]
 pub async fn scheduler(
     tx: Sender<SchedulerCommand>,
@@ -53,11 +64,13 @@ pub async fn scheduler(
     environment: FlowRunEnvironment,
 ) {
     let mut scheduled_flows: HashMap<String, ScheduledJob> = HashMap::new();
+    let mut sleeping: HashMap<SleepKey, Vec<ScheduledJob>> = HashMap::new();
     let mut next_generation: u64 = 0;
     // Unbounded: messages are tiny (flow id + generation) and always eventually
     // drained by the same loop, so there's no backpressure benefit to a bound
     // channel, only a risk of asupervisor blocking on `send()` under high reschedule churn.
     let (job_finished_tx, mut job_finished_rx) = mpsc::unbounded_channel::<JobFinished>();
+    let (sleep_finished_tx, mut sleep_finished_rx) = mpsc::unbounded_channel::<SleepFinished>();
 
     loop {
         let cmd = tokio::select! {
@@ -67,6 +80,10 @@ pub async fn scheduler(
             },
             Some(finished) = job_finished_rx.recv() => {
                 evict_if_current_generation(&mut scheduled_flows, &finished.flow_id, finished.generation);
+                continue;
+            }
+            Some(finished) = sleep_finished_rx.recv() => {
+                remove_sleeping_job(&mut sleeping, &finished.key, finished.generation);
                 continue;
             }
         };
@@ -84,8 +101,13 @@ pub async fn scheduler(
                         continue;
                     }
                     ReconcileAction::CancelBecauseFlowRemoved => {
-                        if cancel_existing_job(&flow_id, &mut scheduled_flows) {
-                            info!("🕗 Reconciling flow '{}'... cancelled, flow no longer exists", flow_id);
+                        let cancelled_job = cancel_existing_job(&flow_id, &mut scheduled_flows);
+                        let cancelled_sleeps = cancel_sleeping_jobs(&flow_id, &mut sleeping);
+                        if cancelled_job || cancelled_sleeps > 0 {
+                            info!(
+                                "🕗 Reconciling flow '{}'... cancelled, flow no longer exists ({} sleeping run(s))",
+                                flow_id, cancelled_sleeps
+                            );
                         }
                         continue;
                     }
@@ -177,15 +199,35 @@ pub async fn scheduler(
                 scheduled_flows.insert(flow_id.clone(), ScheduledJob { generation, cancellation: cancellation_clone });
                 info!(schedule = schedule_str, "🕗 Scheduling flow '{}'... OK", flow_id);
             }
-            SchedulerCommand::ScheduleOnce { flow, node_id, delay } => {
+            SchedulerCommand::ScheduleOnce { flow, sleep_node_id, node_id, delay, mode } => {
+                let key = SleepKey { flow_id: flow.id().to_string(), sleep_node_id };
+                if !admit_sleep(&mut sleeping, &key, mode) {
+                    info!("🕗 Scheduling flow '{}'... ignored, already sleeping", flow.id());
+                    continue;
+                }
+
+                let generation = next_generation;
+                next_generation = next_generation.wrapping_add(1);
+
+                let cancellation = CancellationToken::new();
+                let cancellation_clone = cancellation.clone();
+
                 debug!("🕗 Scheduling flow '{}' to run node '{}' after {:?}... OK", flow.id(), node_id, delay);
                 let notifier_rx_clone = notifier_rx.clone();
                 let tx_clone = tx.clone();
                 let preset_registry_clone = preset_registry.clone();
                 let environment_clone = environment.clone();
+                let sleep_finished_tx = sleep_finished_tx.clone();
+                let key_clone = key.clone();
                 tokio::spawn(async move {
                     let scheduled_instant = Instant::now() + Duration::from_millis(delay.as_millis() as u64);
-                    sleep_until(scheduled_instant).await;
+                    let woken = scheduled_deadline_won(&cancellation, scheduled_instant).await;
+                    // Report before executing, so `ignore` doesn't skip triggers while this run finishes
+                    let _ = sleep_finished_tx.send(SleepFinished { key: key_clone, generation });
+                    if !woken {
+                        debug!("🕗 Scheduling flow '{}'... cancelled", flow.id());
+                        return;
+                    }
 
                     debug!("🕗 Waking up flow '{}'...", flow.name());
                     let snapshot = notifier_rx_clone.borrow().clone();
@@ -199,6 +241,7 @@ pub async fn scheduler(
                     )
                     .await;
                 });
+                sleeping.entry(key).or_default().push(ScheduledJob { generation, cancellation: cancellation_clone });
             }
         }
     }
@@ -213,6 +256,23 @@ fn cancel_existing_job(flow_id: &str, jobs: &mut HashMap<String, ScheduledJob>) 
     };
     previous_job.cancellation.cancel();
     true
+}
+
+// Cancels and removes the sleeping runs of every Sleep node of `flow_id`. Returns how many were cancelled.
+// Like `cancel_existing_job`, this only interrupts the wait, a run that has already woken finishes.
+fn cancel_sleeping_jobs(flow_id: &str, sleeping: &mut HashMap<SleepKey, Vec<ScheduledJob>>) -> usize {
+    let mut cancelled = 0;
+    sleeping.retain(|key, jobs| {
+        if key.flow_id != flow_id {
+            return true;
+        }
+        for job in jobs.drain(..) {
+            job.cancellation.cancel();
+            cancelled += 1;
+        }
+        false
+    });
+    cancelled
 }
 
 // Skips the occurrences that have already passed. Returns None when the schedule has ended or stopped advancing.
@@ -256,6 +316,30 @@ async fn scheduled_deadline_won(cancellation: &CancellationToken, scheduled_inst
 fn evict_if_current_generation(scheduled_jobs: &mut HashMap<String, ScheduledJob>, flow_id: &str, generation: u64) {
     if scheduled_jobs.get(flow_id).is_some_and(|job| job.generation == generation) {
         scheduled_jobs.remove(flow_id);
+    }
+}
+
+fn remove_sleeping_job(sleeping: &mut HashMap<SleepKey, Vec<ScheduledJob>>, key: &SleepKey, generation: u64) {
+    let Some(jobs) = sleeping.get_mut(key) else {
+        return;
+    };
+    jobs.retain(|job| job.generation != generation);
+    if jobs.is_empty() {
+        sleeping.remove(key);
+    }
+}
+
+// Applies `mode` to the sleeps already pending for `key`. Returns `false` if the new sleep must be dropped.
+fn admit_sleep(sleeping: &mut HashMap<SleepKey, Vec<ScheduledJob>>, key: &SleepKey, mode: SleepMode) -> bool {
+    match mode {
+        SleepMode::Parallel => true,
+        SleepMode::Ignore => !sleeping.contains_key(key),
+        SleepMode::Restart => {
+            for job in sleeping.remove(key).unwrap_or_default() {
+                job.cancellation.cancel();
+            }
+            true
+        }
     }
 }
 
@@ -442,5 +526,197 @@ mod tests {
         evict_if_current_generation(&mut scheduled_jobs, "flow", 1);
 
         assert!(scheduled_jobs.contains_key("flow"));
+    }
+
+    fn sleep_key(sleep_node_id: &str) -> SleepKey {
+        SleepKey { flow_id: "flow".to_string(), sleep_node_id: sleep_node_id.to_string() }
+    }
+
+    fn sleeping_job(generation: u64) -> ScheduledJob {
+        ScheduledJob { generation, cancellation: CancellationToken::new() }
+    }
+
+    fn generations(sleeping: &HashMap<SleepKey, Vec<ScheduledJob>>, key: &SleepKey) -> Vec<u64> {
+        sleeping.get(key).map(|jobs| jobs.iter().map(|job| job.generation).collect()).unwrap_or_default()
+    }
+
+    #[test]
+    fn remove_sleeping_job_removes_only_the_matching_generation() {
+        let key = sleep_key("sleepNode");
+        let mut sleeping = HashMap::from([(key.clone(), vec![sleeping_job(1), sleeping_job(2), sleeping_job(3)])]);
+
+        remove_sleeping_job(&mut sleeping, &key, 2);
+
+        assert_eq!(generations(&sleeping, &key), vec![1, 3]);
+    }
+
+    #[test]
+    fn remove_sleeping_job_removes_the_key_once_nothing_sleeps() {
+        // `ignore` checks for the key, so an empty list must not linger
+        let key = sleep_key("sleepNode");
+        let mut sleeping = HashMap::from([(key.clone(), vec![sleeping_job(1)])]);
+
+        remove_sleeping_job(&mut sleeping, &key, 1);
+
+        assert!(!sleeping.contains_key(&key));
+    }
+
+    #[test]
+    fn remove_sleeping_job_ignores_a_stale_generation() {
+        // A cancelled sleep (generation 1) reporting late must not remove the sleep that replaced it (generation 2)
+        let key = sleep_key("sleepNode");
+        let mut sleeping = HashMap::from([(key.clone(), vec![sleeping_job(2)])]);
+
+        remove_sleeping_job(&mut sleeping, &key, 1);
+
+        assert_eq!(generations(&sleeping, &key), vec![2]);
+    }
+
+    #[test]
+    fn remove_sleeping_job_only_affects_its_own_sleep_node() {
+        let key = sleep_key("sleepNode");
+        let other = sleep_key("otherSleepNode");
+        let mut sleeping =
+            HashMap::from([(key.clone(), vec![sleeping_job(1)]), (other.clone(), vec![sleeping_job(1)])]);
+
+        remove_sleeping_job(&mut sleeping, &key, 1);
+
+        assert!(!sleeping.contains_key(&key));
+        assert_eq!(generations(&sleeping, &other), vec![1]);
+    }
+
+    #[test]
+    fn remove_sleeping_job_does_nothing_for_an_unknown_key() {
+        let mut sleeping = HashMap::from([(sleep_key("sleepNode"), vec![sleeping_job(1)])]);
+
+        remove_sleeping_job(&mut sleeping, &sleep_key("unknown"), 1);
+
+        assert_eq!(generations(&sleeping, &sleep_key("sleepNode")), vec![1]);
+    }
+
+    #[rstest]
+    #[case::parallel(SleepMode::Parallel)]
+    #[case::ignore(SleepMode::Ignore)]
+    #[case::restart(SleepMode::Restart)]
+    fn admit_sleep_admits_when_nothing_sleeps(#[case] mode: SleepMode) {
+        let mut sleeping = HashMap::new();
+
+        assert!(admit_sleep(&mut sleeping, &sleep_key("sleepNode"), mode));
+    }
+
+    #[test]
+    fn admit_sleep_parallel_keeps_existing_sleeps() {
+        let key = sleep_key("sleepNode");
+        let existing = sleeping_job(1);
+        let cancellation = existing.cancellation.clone();
+        let mut sleeping = HashMap::from([(key.clone(), vec![existing])]);
+
+        assert!(admit_sleep(&mut sleeping, &key, SleepMode::Parallel));
+
+        assert_eq!(generations(&sleeping, &key), vec![1]);
+        assert!(!cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn admit_sleep_ignore_rejects_while_sleeping() {
+        let key = sleep_key("sleepNode");
+        let existing = sleeping_job(1);
+        let cancellation = existing.cancellation.clone();
+        let mut sleeping = HashMap::from([(key.clone(), vec![existing])]);
+
+        assert!(!admit_sleep(&mut sleeping, &key, SleepMode::Ignore));
+
+        assert_eq!(generations(&sleeping, &key), vec![1]);
+        assert!(!cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn admit_sleep_ignore_admits_when_another_sleep_node_sleeps() {
+        let mut sleeping = HashMap::from([(sleep_key("otherSleepNode"), vec![sleeping_job(1)])]);
+
+        assert!(admit_sleep(&mut sleeping, &sleep_key("sleepNode"), SleepMode::Ignore));
+    }
+
+    #[test]
+    fn admit_sleep_restart_cancels_and_removes_all_existing_sleeps() {
+        let key = sleep_key("sleepNode");
+        let jobs = vec![sleeping_job(1), sleeping_job(2)];
+        let cancellations: Vec<_> = jobs.iter().map(|job| job.cancellation.clone()).collect();
+        let mut sleeping = HashMap::from([(key.clone(), jobs)]);
+
+        assert!(admit_sleep(&mut sleeping, &key, SleepMode::Restart));
+
+        assert!(!sleeping.contains_key(&key));
+        assert!(cancellations.iter().all(CancellationToken::is_cancelled));
+    }
+
+    #[test]
+    fn admit_sleep_restart_leaves_other_sleep_nodes_alone() {
+        let key = sleep_key("sleepNode");
+        let other = sleep_key("otherSleepNode");
+        let other_job = sleeping_job(1);
+        let other_cancellation = other_job.cancellation.clone();
+        let mut sleeping = HashMap::from([(key.clone(), vec![sleeping_job(2)]), (other.clone(), vec![other_job])]);
+
+        assert!(admit_sleep(&mut sleeping, &key, SleepMode::Restart));
+
+        assert_eq!(generations(&sleeping, &other), vec![1]);
+        assert!(!other_cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn cancel_sleeping_jobs_cancels_and_removes_the_sleeps_of_every_sleep_node() {
+        let first = sleep_key("sleepNode");
+        let second = sleep_key("otherSleepNode");
+        let jobs = vec![sleeping_job(1), sleeping_job(2)];
+        let other_jobs = vec![sleeping_job(3)];
+        let cancellations: Vec<_> = jobs.iter().chain(&other_jobs).map(|job| job.cancellation.clone()).collect();
+        let mut sleeping = HashMap::from([(first, jobs), (second, other_jobs)]);
+
+        assert_eq!(cancel_sleeping_jobs("flow", &mut sleeping), 3);
+
+        assert!(sleeping.is_empty());
+        assert!(cancellations.iter().all(CancellationToken::is_cancelled));
+    }
+
+    #[test]
+    fn cancel_sleeping_jobs_leaves_other_flows_alone() {
+        // Another flow can use the same sleep node id
+        let key = sleep_key("sleepNode");
+        let other_flow = SleepKey { flow_id: "otherFlow".to_string(), sleep_node_id: "sleepNode".to_string() };
+        let other_job = sleeping_job(2);
+        let other_cancellation = other_job.cancellation.clone();
+        let mut sleeping = HashMap::from([(key, vec![sleeping_job(1)]), (other_flow.clone(), vec![other_job])]);
+
+        assert_eq!(cancel_sleeping_jobs("flow", &mut sleeping), 1);
+
+        assert_eq!(sleeping.len(), 1);
+        assert_eq!(generations(&sleeping, &other_flow), vec![2]);
+        assert!(!other_cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn cancel_sleeping_jobs_does_nothing_for_an_unknown_flow() {
+        let key = sleep_key("sleepNode");
+        let job = sleeping_job(1);
+        let cancellation = job.cancellation.clone();
+        let mut sleeping = HashMap::from([(key.clone(), vec![job])]);
+
+        assert_eq!(cancel_sleeping_jobs("unknown", &mut sleeping), 0);
+
+        assert_eq!(generations(&sleeping, &key), vec![1]);
+        assert!(!cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn remove_sleeping_job_ignores_a_sleep_cancelled_with_its_flow() {
+        // A cancelled run still reports back after its flow was removed, which must not fail or resurrect the key
+        let key = sleep_key("sleepNode");
+        let mut sleeping = HashMap::from([(key.clone(), vec![sleeping_job(1)])]);
+        cancel_sleeping_jobs("flow", &mut sleeping);
+
+        remove_sleeping_job(&mut sleeping, &key, 1);
+
+        assert!(sleeping.is_empty());
     }
 }

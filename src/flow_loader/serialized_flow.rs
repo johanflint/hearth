@@ -1,5 +1,6 @@
 use crate::domain::Value;
 use crate::flow_engine::action::Action;
+use crate::flow_engine::flow::SleepMode;
 use crate::flow_engine::{Expression, Schedule};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
@@ -108,6 +109,27 @@ pub struct SerializedSleepFlowNode {
     pub(crate) outgoing_node: SerializedFlowLink,
     #[serde(with = "humantime_serde")]
     pub(crate) duration: Duration,
+    #[serde(default)]
+    pub(crate) mode: SerializedSleepMode,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SerializedSleepMode {
+    #[default]
+    Parallel,
+    Ignore,
+    Restart,
+}
+
+impl From<SerializedSleepMode> for SleepMode {
+    fn from(mode: SerializedSleepMode) -> Self {
+        match mode {
+            SerializedSleepMode::Parallel => SleepMode::Parallel,
+            SerializedSleepMode::Ignore => SleepMode::Ignore,
+            SerializedSleepMode::Restart => SleepMode::Restart,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -116,6 +138,7 @@ mod tests {
     use crate::domain::Number;
     use crate::flow_engine::Expression::{EqualTo, Literal};
     use crate::flow_engine::action::LogAction;
+    use rstest::rstest;
     use serde_json::json;
 
     #[tokio::test]
@@ -179,6 +202,7 @@ mod tests {
                     id: "sleepNode".to_string(),
                     outgoing_node: SerializedFlowLink { node_id: "endNode".to_string(), value: Value::None },
                     duration: Duration::from_secs(3907),
+                    mode: SerializedSleepMode::Parallel,
                 }),
                 SerializedFlowNode::EndNode(SerializedEndFlowNode { id: "endNode".to_string() }),
             ],
@@ -187,6 +211,48 @@ mod tests {
         // As ActionFlowNode's action cannot implement PartialEq, use debug print for comparison
         assert_eq!(format!("{:#?}", flow), format!("{:#?}", expected));
         println!("{:?}", flow);
+    }
+
+    fn sleep_node_json(mode: Option<&str>) -> serde_json::Value {
+        let mut node = json!({ "type": "sleepNode", "id": "sleepNode", "outgoingNode": "endNode", "duration": "2m" });
+        if let Some(mode) = mode {
+            node["mode"] = json!(mode);
+        }
+        node
+    }
+
+    #[rstest]
+    #[case::parallel("parallel", SerializedSleepMode::Parallel)]
+    #[case::ignore("ignore", SerializedSleepMode::Ignore)]
+    #[case::restart("restart", SerializedSleepMode::Restart)]
+    fn deserializes_the_sleep_mode(#[case] mode: &str, #[case] expected: SerializedSleepMode) {
+        let node = SerializedSleepFlowNode::deserialize(&sleep_node_json(Some(mode))).unwrap();
+
+        assert_eq!(format!("{:?}", node.mode), format!("{:?}", expected));
+    }
+
+    #[test]
+    fn sleep_mode_defaults_to_parallel() {
+        let node = SerializedSleepFlowNode::deserialize(&sleep_node_json(None)).unwrap();
+
+        assert!(matches!(node.mode, SerializedSleepMode::Parallel), "got {:?}", node.mode);
+    }
+
+    #[rstest]
+    #[case::pascal_case("Restart")]
+    #[case::unknown("queued")]
+    fn rejects_an_invalid_sleep_mode(#[case] mode: &str) {
+        let error = SerializedSleepFlowNode::deserialize(&sleep_node_json(Some(mode))).unwrap_err();
+
+        assert!(error.to_string().starts_with("unknown variant"), "got {error}");
+    }
+
+    #[rstest]
+    #[case::parallel(SerializedSleepMode::Parallel, SleepMode::Parallel)]
+    #[case::ignore(SerializedSleepMode::Ignore, SleepMode::Ignore)]
+    #[case::restart(SerializedSleepMode::Restart, SleepMode::Restart)]
+    fn converts_the_serialized_sleep_mode(#[case] mode: SerializedSleepMode, #[case] expected: SleepMode) {
+        assert_eq!(SleepMode::from(mode), expected);
     }
 
     #[test]

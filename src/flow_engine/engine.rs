@@ -2,7 +2,7 @@ use crate::domain::Value;
 use crate::flow_engine::SchedulerCommand;
 use crate::flow_engine::context::Context;
 use crate::flow_engine::expression::{ExpressionError, evaluate};
-use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind};
+use crate::flow_engine::flow::{Flow, FlowNode, FlowNodeKind, SleepMode};
 use crate::flow_engine::scope::Scope;
 use crate::metrics::{Metric, MetricReason};
 use ExecuteNodeResult::*;
@@ -63,11 +63,13 @@ pub async fn execute(
         next_node = match execute_node(node, context, &mut scope).await? {
             Next(node) => Some(node),
             End => None,
-            Sleep { duration, next } => {
+            Sleep { duration, mode, sleep_node_id, next } => {
                 tx.send(SchedulerCommand::ScheduleOnce {
                     flow: flow.clone(),
+                    sleep_node_id: sleep_node_id.to_string(),
                     node_id: next.id().to_string(),
                     delay: duration,
+                    mode,
                 })
                 .await?;
                 None
@@ -128,8 +130,8 @@ async fn execute_node<'a>(
 
     debug!("Next node: {}", next_node.id());
 
-    if let FlowNodeKind::Sleep(duration) = node.kind() {
-        return Ok(Sleep { duration: *duration, next: next_node });
+    if let FlowNodeKind::Sleep(duration, mode) = node.kind() {
+        return Ok(Sleep { duration: *duration, mode: *mode, sleep_node_id: node.id(), next: next_node });
     }
 
     match next_node.kind() {
@@ -141,7 +143,7 @@ async fn execute_node<'a>(
 enum ExecuteNodeResult<'a> {
     Next(&'a FlowNode),
     End,
-    Sleep { duration: Duration, next: &'a FlowNode },
+    Sleep { duration: Duration, mode: SleepMode, sleep_node_id: &'a str, next: &'a FlowNode },
 }
 
 #[derive(Error, Debug)]
@@ -276,7 +278,7 @@ mod tests {
         let witness_sleep_node = Arc::new(FlowNode::new(
             "witnessSleepNode".to_string(),
             vec![FlowLink::new(end_node.clone(), Value::None)],
-            FlowNodeKind::Sleep(Duration::from_secs(1)),
+            FlowNodeKind::Sleep(Duration::from_secs(1), SleepMode::Parallel),
         ));
         let mid_node = Arc::new(FlowNode::new(
             "midNode".to_string(),
@@ -286,7 +288,7 @@ mod tests {
         let sleep_node = Arc::new(FlowNode::new(
             "sleepNode".to_string(),
             vec![FlowLink::new(mid_node.clone(), Value::None)],
-            FlowNodeKind::Sleep(Duration::from_secs(1)),
+            FlowNodeKind::Sleep(Duration::from_secs(1), SleepMode::Parallel),
         ));
         let start_node = Arc::new(FlowNode::new(
             "startNode".to_string(),
@@ -361,7 +363,7 @@ mod tests {
         let sleep_node = FlowNode::new(
             "sleep_node".to_string(),
             vec![FlowLink::new(Arc::new(end_node), Value::None)],
-            FlowNodeKind::Sleep(Duration::from_secs(42)),
+            FlowNodeKind::Sleep(Duration::from_secs(42), SleepMode::Restart),
         );
 
         let start_node = FlowNode::new(
@@ -377,12 +379,17 @@ mod tests {
 
         execute(original_flow.clone(), None, &Context::default(), scheduler_tx).await.unwrap();
         let received_command = scheduler_rx.recv().await;
-        if let Some(SchedulerCommand::ScheduleOnce { flow: scheduled_flow, node_id, delay }) = received_command {
+        if let Some(SchedulerCommand::ScheduleOnce { flow: scheduled_flow, sleep_node_id, node_id, delay, mode }) =
+            received_command
+        {
             // The id should not just match, the exact `Arc<Flow>` that started the sleep must match, so a later
             // reload can't swap it out
             assert!(Arc::ptr_eq(&original_flow, &scheduled_flow));
+            // The sleep node identifies the sleep for its mode, the next node is where the run resumes
+            assert_eq!(sleep_node_id, "sleep_node");
             assert_eq!(node_id, "end_node");
             assert_eq!(delay, Duration::from_secs(42));
+            assert_eq!(mode, SleepMode::Restart);
         } else {
             panic!("Expected ScheduleOnce command");
         }
@@ -395,7 +402,7 @@ mod tests {
         let sleep_node = Arc::new(FlowNode::new(
             "sleepNode".to_string(),
             vec![FlowLink::new(end_node.clone(), Value::None)],
-            FlowNodeKind::Sleep(Duration::from_secs(42)),
+            FlowNodeKind::Sleep(Duration::from_secs(42), SleepMode::Parallel),
         ));
 
         let start_node = Arc::new(FlowNode::new(
