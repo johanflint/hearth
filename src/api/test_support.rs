@@ -2,19 +2,14 @@ use crate::api::ApiState;
 use crate::attention::AttentionList;
 use crate::core_tasks::CoreTasks;
 use crate::database::{Database, DatabaseError};
-use crate::domain::Event;
+use crate::domain::{Event, Permission, Token};
 use crate::flow_engine::SchedulerCommand;
 use crate::flow_registry::FlowRegistry;
 use crate::preset_registry::PresetRegistry;
-use crate::repositories::FlowRepository;
-use crate::repositories::GroupRepository;
-use crate::repositories::PresetRepository;
-use crate::repositories::ZoneRepository;
-use crate::services::AttentionService;
-use crate::services::GroupService;
-use crate::services::PresetService;
-use crate::services::ZoneService;
-use crate::services::{DeviceService, FlowService};
+use crate::repositories::{
+    FlowRepository, GroupRepository, PresetRepository, TokenRepository, UserRepository, ZoneRepository,
+};
+use crate::services::{AttentionService, DeviceService, FlowService, GroupService, PresetService, ZoneService};
 use crate::store::StoreSnapshot;
 use axum::response::Response;
 use chrono::Utc;
@@ -155,6 +150,7 @@ fn build_state(
     let state = ApiState::new(
         handle,
         database.clone(),
+        Arc::new(UserRepository::new(database.clone())),
         Arc::new(core_tasks),
         vec![],
         device_service,
@@ -165,6 +161,17 @@ fn build_state(
         attention_service,
     );
     (Fixture { state, flow_repository, flow_registry, scheduler_rx }, database)
+}
+
+/// Seeds a user with the given permissions and one token, and returns the `Authorization` header value for it
+pub(super) async fn insert_user_with_token(database: &Database, permissions: &[Permission]) -> String {
+    UserRepository::new(database.clone())
+        .insert("user-1", "johan", permissions.iter().copied().collect())
+        .await
+        .expect("insert user");
+    let token = Token::generate();
+    TokenRepository::new(database.clone()).insert("token-1", "user-1", "test", &token).await.expect("insert token");
+    format!("Bearer {}", token.as_str())
 }
 
 pub(super) async fn body_json(response: Response) -> serde_json::Value {

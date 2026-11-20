@@ -1,6 +1,7 @@
 use crate::api::ApiState;
 use crate::app_config::AppConfig;
 use crate::attention_tracker::AttentionTracker;
+use crate::cli::Cli;
 use crate::core_tasks::CoreTasks;
 use crate::database::Database;
 use crate::domain::{Event, Group, Zone, controller_registry};
@@ -13,10 +14,11 @@ use crate::mdns_browser::MdnsBrowser;
 use crate::metrics_layer::MetricsLayer;
 use crate::mqtt::MqttService;
 use crate::preset_registry::PresetRegistry;
-use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
+use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, UserRepository, ZoneRepository};
 use crate::services::{AttentionService, DeviceService, FlowService, GroupService, PresetService, ZoneService};
 use crate::store::Store;
 use crate::store_listener::store_listener;
+use clap::Parser;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::path::Path;
 use std::sync::Arc;
@@ -32,6 +34,7 @@ mod app_config;
 mod attention;
 mod attention_tracker;
 mod claim_registry;
+mod cli;
 mod core_tasks;
 mod database;
 mod domain;
@@ -65,10 +68,20 @@ mod test_support;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let cli = Cli::parse();
+
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,hearth::flow_engine=warn"))
         .add_directive("hearth::flow_log=info".parse()?);
     tracing_subscriber::registry().with(env_filter).with(tracing_subscriber::fmt::layer()).with(MetricsLayer).init();
+
+    if let Some(command) = cli.command {
+        if let Err(err) = cli::run(command, &AppConfig::load()).await {
+            eprintln!("❌ {err}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
 
     let prometheus_handle = PrometheusBuilder::new().install_recorder()?;
     metrics::describe();
@@ -186,6 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     info!("✅  Initialized store");
 
+    let user_repository = Arc::new(UserRepository::new(database.clone()));
     let device_service = Arc::new(DeviceService::new(devices_rx_clone, device_updates_rx));
     let flow_service = Arc::new(FlowService::new(
         flow_repository,
@@ -204,6 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let api_state = ApiState::new(
         prometheus_handle,
         database,
+        user_repository,
         core_tasks,
         integrations.clone(),
         device_service,

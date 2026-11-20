@@ -37,6 +37,11 @@ sunrise = "3.0"
 # Webserver
 axum = "0.8"
 
+# Tokens
+sha2 = "0.11"
+rand = "0.10"
+hex = "0.4"
+
 # MQTT
 rumqttc = "0.25.1"
 bytes = "1.12.1"
@@ -45,6 +50,7 @@ bytes = "1.12.1"
 action_macros = { path = "action_macros" }
 ctor = "1.0"
 serde_path_to_error = "0.1.20"
+clap = { version = "4.6.8", features = ["derive"] }
 
 [dev-dependencies]
 cargo-llvm-cov = "0.9"

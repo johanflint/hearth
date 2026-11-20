@@ -1,3 +1,4 @@
+mod api_token;
 mod battery_state;
 mod claim_mode;
 mod color;
@@ -15,6 +16,7 @@ mod owner;
 mod preset;
 pub mod property;
 mod time;
+mod user;
 mod validator;
 mod value;
 mod versioned_preset;
@@ -22,6 +24,7 @@ mod weekday;
 mod weekday_condition;
 mod zone;
 
+pub use api_token::Token;
 pub use battery_state::BatteryState;
 pub use claim_mode::ClaimMode;
 pub use color::Color;
@@ -37,6 +40,7 @@ pub use number::Number;
 pub use owner::Owner;
 pub use preset::Preset;
 pub use time::Time;
+pub use user::{Permission, User};
 pub use validator::{
     FlowValidationError, Location, Problem, ValidationIssue, find_device, find_group, find_property, find_zone,
     validate, validate_property_command,
