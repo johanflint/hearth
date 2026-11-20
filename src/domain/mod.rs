@@ -40,7 +40,7 @@ pub use number::Number;
 pub use owner::Owner;
 pub use preset::Preset;
 pub use time::Time;
-pub use user::Permission;
+pub use user::{Permission, User};
 pub use validator::{
     FlowValidationError, Location, Problem, ValidationIssue, find_device, find_group, find_property, find_zone,
     validate, validate_property_command,

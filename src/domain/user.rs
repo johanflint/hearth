@@ -2,7 +2,8 @@ use chrono::{DateTime, Utc};
 use std::collections::BTreeSet;
 use strum::{Display, EnumIter, EnumString};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct User {
     pub id: String,
     pub name: String,
@@ -16,7 +17,7 @@ impl User {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, EnumString, EnumIter)]
 #[strum(serialize_all = "camelCase")]
 pub enum Permission {
     ReadDevices,

@@ -14,7 +14,7 @@ use crate::mdns_browser::MdnsBrowser;
 use crate::metrics_layer::MetricsLayer;
 use crate::mqtt::MqttService;
 use crate::preset_registry::PresetRegistry;
-use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, ZoneRepository};
+use crate::repositories::{FlowRepository, GroupRepository, PresetRepository, UserRepository, ZoneRepository};
 use crate::services::{AttentionService, DeviceService, FlowService, GroupService, PresetService, ZoneService};
 use crate::store::Store;
 use crate::store_listener::store_listener;
@@ -199,6 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     info!("✅  Initialized store");
 
+    let user_repository = Arc::new(UserRepository::new(database.clone()));
     let device_service = Arc::new(DeviceService::new(devices_rx_clone, device_updates_rx));
     let flow_service = Arc::new(FlowService::new(
         flow_repository,
@@ -217,6 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let api_state = ApiState::new(
         prometheus_handle,
         database,
+        user_repository,
         core_tasks,
         integrations.clone(),
         device_service,
