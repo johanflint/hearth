@@ -117,7 +117,7 @@ impl FlowNode {
 
     pub fn expressions(&self) -> Vec<&Expression> {
         match self.kind() {
-            FlowNodeKind::Start | FlowNodeKind::End | FlowNodeKind::Sleep(_) => vec![],
+            FlowNodeKind::Start | FlowNodeKind::End | FlowNodeKind::Sleep(_, _) => vec![],
             FlowNodeKind::Conditional(expression) => vec![expression],
             FlowNodeKind::Action(action) => action.action().expressions(),
         }
@@ -150,7 +150,17 @@ pub enum FlowNodeKind {
     End,
     Conditional(Expression),
     Action(ActionFlowNode),
-    Sleep(Duration),
+    Sleep(Duration, SleepMode),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SleepMode {
+    // Keep any existing sleeps
+    Parallel,
+    // Ignore the new run if any existing sleep exists
+    Ignore,
+    // Cancel any previous sleeps and sleep again
+    Restart,
 }
 
 #[derive(Debug)]
@@ -219,7 +229,9 @@ mod tests {
 
     #[test]
     fn flow_node_expressions_is_empty_for_nodes_without_expressions() {
-        for kind in [FlowNodeKind::Start, FlowNodeKind::End, FlowNodeKind::Sleep(Duration::from_secs(1))] {
+        for kind in
+            [FlowNodeKind::Start, FlowNodeKind::End, FlowNodeKind::Sleep(Duration::from_secs(1), SleepMode::Parallel)]
+        {
             let node = FlowNode::new("node".to_string(), vec![], kind);
             assert!(node.expressions().is_empty(), "got {:?}", node.expressions());
         }

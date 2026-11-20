@@ -1,5 +1,5 @@
 use crate::domain::Value;
-use crate::flow_engine::flow::{ActionFlowNode, Flow, FlowLink, FlowNode, FlowNodeKind};
+use crate::flow_engine::flow::{ActionFlowNode, Flow, FlowLink, FlowNode, FlowNodeKind, SleepMode};
 use crate::flow_loader::serialized_flow::{SerializedFlow, SerializedFlowNode};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -160,7 +160,7 @@ fn to_flow_node(serialized_node: SerializedFlowNode, outgoing_nodes: Vec<FlowLin
             FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Action(ActionFlowNode::new(node.action)))
         }
         SerializedFlowNode::SleepNode(node) => {
-            FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Sleep(node.duration))
+            FlowNode::new(node.id, outgoing_nodes, FlowNodeKind::Sleep(node.duration, SleepMode::from(node.mode)))
         }
     }
 }
@@ -440,7 +440,7 @@ mod tests {
         let sleep_node = FlowNode::new(
             "sleepNode".to_string(),
             vec![FlowLink::new(Arc::new(end_node), Value::None)],
-            FlowNodeKind::Sleep(Duration::from_secs(3907)),
+            FlowNodeKind::Sleep(Duration::from_secs(3907), SleepMode::Parallel),
         );
 
         let start_node = FlowNode::new(
