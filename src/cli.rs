@@ -49,6 +49,13 @@ pub enum TokenCommand {
     },
     /// List the tokens of a user
     List { user: String },
+    /// Revoke a token. It stops working immediately
+    Revoke {
+        /// The user the token belongs to
+        user: String,
+        /// A label for the device using the token, e.g. "Kitchen tablet"
+        name: String,
+    },
 }
 
 pub async fn run(command: Command, config: &AppConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -67,6 +74,7 @@ pub async fn run(command: Command, config: &AppConfig) -> Result<(), Box<dyn Err
                     create_token(&users, &tokens, &user, validated_name(&name)?).await
                 }
                 TokenCommand::List { user } => list_tokens(&users, &tokens, &user).await,
+                TokenCommand::Revoke { user, name } => revoke_token(&users, &tokens, &user, &name).await,
             }
         }
     }
@@ -136,6 +144,20 @@ async fn list_tokens(
         println!("{}\tcreated {}\tlast used {}", token.name, token.created_at.to_rfc3339(), last_used);
     }
 
+    Ok(())
+}
+
+async fn revoke_token(
+    users: &UserRepository,
+    tokens: &TokenRepository,
+    user: &str,
+    name: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let user = find_user(users, user).await?;
+    if !tokens.delete(&user.id, name.trim()).await? {
+        return Err(format!("User '{}' has no token named '{name}'", user.name).into());
+    }
+    println!("Revoked token '{name}' of '{}'", user.name);
     Ok(())
 }
 
@@ -283,5 +305,68 @@ mod tests {
         let err = list_tokens(&fixture.users, &fixture.tokens, "nobody").await.unwrap_err();
 
         assert_eq!(err.to_string(), "No user named 'nobody'");
+    }
+
+    #[tokio::test]
+    async fn revoke_token_removes_the_token_of_the_user() {
+        let fixture = fixture();
+        create_user(&fixture.users, "johan", false).await.unwrap();
+        create_token(&fixture.users, &fixture.tokens, "johan", "Phone").await.unwrap();
+        create_token(&fixture.users, &fixture.tokens, "johan", "Tablet").await.unwrap();
+
+        revoke_token(&fixture.users, &fixture.tokens, "johan", "Phone").await.unwrap();
+
+        assert_eq!(count_tokens(&fixture.database).await, 1);
+        let user = fixture.users.by_name("johan").await.unwrap().unwrap();
+        let remaining = fixture.tokens.list_by_user(&user.id).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].name, "Tablet");
+    }
+
+    #[tokio::test]
+    async fn revoke_token_ignores_the_case_and_padding_of_the_names() {
+        let fixture = fixture();
+        create_user(&fixture.users, "johan", false).await.unwrap();
+        create_token(&fixture.users, &fixture.tokens, "johan", "Phone").await.unwrap();
+
+        revoke_token(&fixture.users, &fixture.tokens, "  JOHAN ", "  phone\t").await.unwrap();
+
+        assert_eq!(count_tokens(&fixture.database).await, 0);
+    }
+
+    #[tokio::test]
+    async fn revoke_token_keeps_the_token_of_another_user_with_the_same_name() {
+        let fixture = fixture();
+        create_user(&fixture.users, "johan", false).await.unwrap();
+        create_user(&fixture.users, "anna", false).await.unwrap();
+        create_token(&fixture.users, &fixture.tokens, "johan", "Phone").await.unwrap();
+        create_token(&fixture.users, &fixture.tokens, "anna", "Phone").await.unwrap();
+
+        revoke_token(&fixture.users, &fixture.tokens, "johan", "Phone").await.unwrap();
+
+        assert_eq!(count_tokens(&fixture.database).await, 1);
+        let anna = fixture.users.by_name("anna").await.unwrap().unwrap();
+        assert_eq!(fixture.tokens.list_by_user(&anna.id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn revoke_token_fails_for_an_unknown_user() {
+        let fixture = fixture();
+
+        let err = revoke_token(&fixture.users, &fixture.tokens, "nobody", "Phone").await.unwrap_err();
+
+        assert_eq!(err.to_string(), "No user named 'nobody'");
+    }
+
+    #[tokio::test]
+    async fn revoke_token_fails_for_an_unknown_token_and_keeps_the_others() {
+        let fixture = fixture();
+        create_user(&fixture.users, "johan", false).await.unwrap();
+        create_token(&fixture.users, &fixture.tokens, "johan", "Phone").await.unwrap();
+
+        let err = revoke_token(&fixture.users, &fixture.tokens, "johan", "Tablet").await.unwrap_err();
+
+        assert_eq!(err.to_string(), "User 'johan' has no token named 'Tablet'");
+        assert_eq!(count_tokens(&fixture.database).await, 1);
     }
 }

@@ -51,6 +51,18 @@ impl TokenRepository {
             })
             .await
     }
+
+    pub async fn delete(&self, user_id: &str, name: &str) -> Result<bool, TokenRepositoryError> {
+        let user_id = user_id.to_string();
+        let name = name.to_string();
+        self.database
+            .call(move |conn| {
+                let deleted =
+                    conn.execute("DELETE FROM api_tokens WHERE user_id = ?1 AND name = ?2", params![user_id, name])?;
+                Ok::<_, TokenRepositoryError>(deleted > 0)
+            })
+            .await
+    }
 }
 
 fn is_name_conflict(err: &rusqlite::Error) -> bool {
@@ -277,5 +289,73 @@ mod tests {
         let result = repository.list_by_user("johan-id").await;
 
         assert!(matches!(result, Err(TokenRepositoryError::Sqlite(_))), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_the_token_and_returns_true() {
+        let (database, repository) = open_with_users(&["johan"]).await;
+        repository.insert("token-1", "johan-id", "Phone", &Token::generate()).await.unwrap();
+
+        let deleted = repository.delete("johan-id", "Phone").await.unwrap();
+
+        assert!(deleted);
+        assert!(stored_hashes(&database).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_matches_the_name_case_insensitively() {
+        let (database, repository) = open_with_users(&["johan"]).await;
+        repository.insert("token-1", "johan-id", "Phone", &Token::generate()).await.unwrap();
+
+        assert!(repository.delete("johan-id", "PHONE").await.unwrap());
+        assert!(stored_hashes(&database).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_returns_false_for_an_unknown_name() {
+        let (database, repository) = open_with_users(&["johan"]).await;
+        repository.insert("token-1", "johan-id", "Phone", &Token::generate()).await.unwrap();
+
+        let deleted = repository.delete("johan-id", "Tablet").await.unwrap();
+
+        assert!(!deleted);
+        assert_eq!(stored_hashes(&database).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn delete_only_removes_the_token_of_that_user() {
+        let (database, repository) = open_with_users(&["johan", "anna"]).await;
+        let annas = Token::generate();
+        repository.insert("token-1", "johan-id", "Phone", &Token::generate()).await.unwrap();
+        repository.insert("token-2", "anna-id", "Phone", &annas).await.unwrap();
+
+        repository.delete("johan-id", "Phone").await.unwrap();
+
+        assert_eq!(stored_hashes(&database).await, vec![annas.hash()]);
+    }
+
+    #[tokio::test]
+    async fn delete_keeps_the_other_tokens_of_the_user() {
+        let (_, repository) = open_with_users(&["johan"]).await;
+        repository.insert("token-1", "johan-id", "Phone", &Token::generate()).await.unwrap();
+        repository.insert("token-2", "johan-id", "Tablet", &Token::generate()).await.unwrap();
+
+        repository.delete("johan-id", "Phone").await.unwrap();
+
+        let names: Vec<_> = repository.list_by_user("johan-id").await.unwrap().into_iter().map(|t| t.name).collect();
+        assert_eq!(names, vec!["Tablet"]);
+    }
+
+    #[tokio::test]
+    async fn a_deleted_token_no_longer_authenticates() {
+        let (database, repository) = open_with_users(&["johan"]).await;
+        let token = Token::generate();
+        repository.insert("token-1", "johan-id", "Phone", &token).await.unwrap();
+        let users = UserRepository::new(database);
+        assert!(users.authenticate(&token).await.unwrap().is_some());
+
+        repository.delete("johan-id", "Phone").await.unwrap();
+
+        assert!(users.authenticate(&token).await.unwrap().is_none());
     }
 }
