@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.0 (2026-11-20)
+
+### Features
+
+- Add sleep modes to control overlapping sleeping runs ([#99](https://github.com/johanflint/hearth/pull/99))
+- Secure API with tokens ([#98](https://github.com/johanflint/hearth/pull/98))
+- Add attention tracking and API ([#96](https://github.com/johanflint/hearth/pull/96))
+
 ## v0.4.0 (2026-11-16)
 
 ### Features
