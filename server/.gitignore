@@ -1,0 +1,7 @@
+/target
+config.local.json5
+
+# Database
+hearth.db
+hearth.db-shm
+hearth.db-wal
