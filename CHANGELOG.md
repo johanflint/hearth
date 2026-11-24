@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6.0 (2026-11-24)
+
+### Features
+
+- Add tamper state to contact sensors ([#102](https://github.com/johanflint/hearth/pull/102))
+
+### Build System
+
+- Upgrade release-svp to 0.2.0 ([#100](https://github.com/johanflint/hearth/pull/100))
+
 ## v0.5.0 (2026-11-20)
 
 ### Features
