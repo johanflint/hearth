@@ -22,6 +22,8 @@ pub(super) enum PropertyTypeView {
     MotionSensitivity,
     On,
     Presence,
+    Tampered,
+    TamperedLastChanged,
     Temperature,
     TemperatureLastChanged,
 }
@@ -47,6 +49,8 @@ impl From<&PropertyType> for PropertyTypeView {
             PropertyType::MotionSensitivity => Self::MotionSensitivity,
             PropertyType::On => Self::On,
             PropertyType::Presence => Self::Presence,
+            PropertyType::Tampered => Self::Tampered,
+            PropertyType::TamperedLastChanged => Self::TamperedLastChanged,
             PropertyType::Temperature => Self::Temperature,
             PropertyType::TemperatureLastChanged => Self::TemperatureLastChanged,
         }

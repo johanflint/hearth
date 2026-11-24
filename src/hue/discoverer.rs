@@ -1,7 +1,7 @@
 use crate::app_config::AppConfig;
 use crate::hue::domain::{
     ButtonGet, ContactGet, DeviceGet, DevicePowerGet, HueResponse, LightGet, LightLevelGet, MotionGet, RoomGet,
-    TemperatureGet, ZigbeeConnectivityGet, ZoneGet,
+    TamperGet, TemperatureGet, ZigbeeConnectivityGet, ZoneGet,
 };
 use crate::hue::enrich_devices::enrich_devices;
 use crate::hue::map_contact_sensors::{MapContactSensorsError, map_contact_sensors};
@@ -45,6 +45,9 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Discovery, 
     let contact_response = fetch_resources::<ContactGet>(client, hue_url, "contact").await?;
     info!("Retrieving contact sensors... OK, {} found", contact_response.data.len());
 
+    let tamper_response = fetch_resources::<TamperGet>(client, hue_url, "tamper").await?;
+    debug!("Retrieving tamper states... OK, {} found", tamper_response.data.len());
+
     let zigbee_connectivity_response =
         fetch_resources::<ZigbeeConnectivityGet>(client, hue_url, "zigbee_connectivity").await?;
     debug!("Retrieving zigbee connectivity... OK, {} found", zigbee_connectivity_response.data.len());
@@ -73,7 +76,7 @@ pub async fn discover(client: &Client, config: &AppConfig) -> Result<Discovery, 
         &mut device_map,
     )?;
     let buttons = map_remotes(button_response.data, &mut device_map)?;
-    let contact_sensors = map_contact_sensors(contact_response.data, &mut device_map)?;
+    let contact_sensors = map_contact_sensors(contact_response.data, tamper_response.data, &mut device_map)?;
 
     devices.extend(lights);
     devices.extend(motion_sensors);
@@ -257,6 +260,14 @@ mod tests {
             .await;
 
         server
+            .mock("GET", "/clip/v2/resource/tamper")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(include_str!("../../tests/resources/hue_tamper_simplified_response.json"))
+            .create_async()
+            .await;
+
+        server
             .mock("GET", "/clip/v2/resource/zigbee_connectivity")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -409,6 +420,22 @@ mod tests {
             Some("2026-09-23T15:37:22.004Z".parse().unwrap()),
         ));
 
+        let tampered_property: Box<dyn Property> = Box::new(BooleanProperty::new(
+            "tampered".to_string(),
+            PropertyType::Tampered,
+            true,
+            Some("3b7e1c94-2f6a-4d8e-9c15-7a0d4e8b6f32".to_string()),
+            false,
+        ));
+
+        let tampered_last_changed_property: Box<dyn Property> = Box::new(DateTimeProperty::new(
+            "tamperedLastChanged".to_string(),
+            PropertyType::TamperedLastChanged,
+            true,
+            None,
+            Some("2026-09-23T15:41:08.512Z".parse().unwrap()),
+        ));
+
         mock.assert();
         assert_eq!(response.devices.len(), 4);
         assert_eq!(
@@ -495,6 +522,8 @@ mod tests {
                 properties: HashMap::from([
                     (contact_property.name().to_string(), contact_property),
                     (contact_last_changed_property.name().to_string(), contact_last_changed_property),
+                    (tampered_property.name().to_string(), tampered_property),
+                    (tampered_last_changed_property.name().to_string(), tampered_last_changed_property),
                     ("connectivity".to_string(), connectivity_property("unknown")),
                 ]),
                 external_id: None,
