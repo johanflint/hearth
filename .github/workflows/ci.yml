@@ -13,6 +13,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+defaults:
+  run:
+    working-directory: server
+
 jobs:
   format:
     name: Hearth - format

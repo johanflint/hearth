@@ -11,6 +11,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,6 +41,9 @@ jobs:
             archive_os: macos-aarch64
 
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: server
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,11 +56,12 @@ jobs:
       - name: Build
         run: cargo build --verbose --release --locked --target ${{ matrix.target }}
       - name: Package
+        working-directory: .
         run: |
           name="hearth-${{ github.event.release.tag_name }}-${{ matrix.archive_os }}"
           mkdir "$name"
-          cp "target/${{ matrix.target }}/release/hearth" "$name/"
-          cp scripts/hearth.service "$name/"
+          cp "server/target/${{ matrix.target }}/release/hearth" "$name/"
+          cp server/scripts/hearth.service "$name/"
           cp README.md "$name/" 2>/dev/null || true
           tar czf "$name.tar.gz" "$name"
           shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
