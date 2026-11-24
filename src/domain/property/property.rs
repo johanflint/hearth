@@ -78,6 +78,8 @@ pub enum PropertyType {
     MotionSensitivity,
     On,
     Presence,
+    Tampered,
+    TamperedLastChanged,
     Temperature,
     TemperatureLastChanged,
 }

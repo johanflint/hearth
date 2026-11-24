@@ -435,6 +435,14 @@ pub fn evaluate(expression: &Expression, context: &Context) -> Result<Value, Exp
                         property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
                     Ok(illuminance_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
                 }
+                PropertyType::Tampered => {
+                    let tampered_property = property.as_any().downcast_ref::<BooleanProperty>().unwrap();
+                    Ok(Value::Boolean(tampered_property.value()))
+                }
+                PropertyType::TamperedLastChanged => {
+                    let tampered_last_changed_property = property.as_any().downcast_ref::<DateTimeProperty>().unwrap();
+                    Ok(tampered_last_changed_property.value().map(Value::DateTime).unwrap_or(Value::None))
+                }
                 PropertyType::Temperature => {
                     let temperature_property = property.as_any().downcast_ref::<NumberProperty>().unwrap();
                     Ok(temperature_property.value().map(Value::Number).unwrap_or(Value::None))

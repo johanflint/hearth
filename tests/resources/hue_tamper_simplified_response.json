@@ -1,0 +1,21 @@
+{
+  "errors": [],
+  "data": [
+    {
+      "id": "3b7e1c94-2f6a-4d8e-9c15-7a0d4e8b6f32",
+      "id_v1": "/sensors/131",
+      "owner": {
+        "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77",
+        "rtype": "device"
+      },
+      "tamper_reports": [
+        {
+          "changed": "2026-09-23T15:41:08.512Z",
+          "source": "battery_door",
+          "state": "not_tampered"
+        }
+      ],
+      "type": "tamper"
+    }
+  ]
+}
