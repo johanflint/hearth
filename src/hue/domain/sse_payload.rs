@@ -1,6 +1,6 @@
 use crate::hue::domain::{
     ButtonChanged, ContactChanged, DevicePowerChanged, LightChanged, LightLevelChanged, MotionChanged, RoomChanged,
-    TemperatureChanged, ZigbeeConnectivityChanged, ZoneChanged,
+    TamperChanged, TemperatureChanged, ZigbeeConnectivityChanged, ZoneChanged,
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, to_string_pretty};
@@ -35,6 +35,7 @@ pub enum ChangedProperty {
     DevicePower(DevicePowerChanged),
     Temperature(TemperatureChanged),
     Contact(ContactChanged),
+    Tamper(TamperChanged),
     Room(RoomChanged),
     Zone(ZoneChanged),
     #[serde(untagged)]
@@ -70,7 +71,7 @@ impl<'de> Deserialize<'de> for UnknownProperty {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hue::domain::ContactState;
+    use crate::hue::domain::{ContactState, TamperState};
 
     #[test]
     fn deserialize_a_known_property_type() -> Result<(), serde_json::Error> {
@@ -357,6 +358,48 @@ mod tests {
         assert_eq!(id, "6d8f3b41-5b3c-4a52-8d1a-9f1b6a0c7e21");
         assert_eq!(owner.rid, "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77");
         assert_eq!(contact_report.as_ref().expect("contact_report should be present").state, ContactState::NoContact);
+
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_a_tamper_property() -> Result<(), serde_json::Error> {
+        let json = r#"
+        [
+          {
+            "creationtime": "2026-09-23T15:41:08Z",
+            "data": [
+              {
+                "id": "3b7e1c94-2f6a-4d8e-9c15-7a0d4e8b6f32",
+                "owner": {
+                  "rid": "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77",
+                  "rtype": "device"
+                },
+                "tamper_reports": [
+                  {
+                    "changed": "2026-09-23T15:41:08.512Z",
+                    "source": "battery_door",
+                    "state": "tampered"
+                  }
+                ],
+                "type": "tamper"
+              }
+            ],
+            "id": "5a0c93d2-6f71-4c0b-8e2a-1d4f7b9c2e10",
+            "type": "update"
+          }
+        ]
+        "#;
+
+        let result = serde_json::from_str::<Vec<ServerSentEventPayload>>(json)?;
+        let ChangedProperty::Tamper(TamperChanged { id, owner, tamper_reports }) = &result[0].data[0] else {
+            panic!("expected a Tamper variant");
+        };
+        assert_eq!(id, "3b7e1c94-2f6a-4d8e-9c15-7a0d4e8b6f32");
+        assert_eq!(owner.rid, "c0a5a9b4-1b0a-4d6f-8d3a-2f4d6c1e9b77");
+        let reports = tamper_reports.as_ref().expect("tamper_reports should be present");
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].state, TamperState::Tampered);
 
         Ok(())
     }

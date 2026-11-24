@@ -10,6 +10,7 @@ use crate::hue::map_light_level_changed::map_light_level_changed;
 use crate::hue::map_motion_sensors_changed::map_motion_sensors_changed;
 use crate::hue::map_remotes_changed::map_remote_changed;
 use crate::hue::map_rooms_changed::map_rooms_changed;
+use crate::hue::map_tamper_changed::map_tamper_changed;
 use crate::hue::map_temperature_changed::map_temperature_changed;
 use crate::hue::map_zones_changed::map_zones_changed;
 use crate::hue::pending_writes::PendingWrites;
@@ -192,6 +193,13 @@ async fn handle_changed_property(
             for event in map_contact_sensors_changed(property) {
                 tx.send(event).await.unwrap_or_else(|e| {
                     warn!("⚠️ Unable to send change contact sensor event: {}", e);
+                });
+            }
+        }
+        ChangedProperty::Tamper(property) => {
+            for event in map_tamper_changed(property) {
+                tx.send(event).await.unwrap_or_else(|e| {
+                    warn!("⚠️ Unable to send changed tamper event: {}", e);
                 });
             }
         }

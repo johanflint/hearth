@@ -31,6 +31,14 @@ pub enum TamperState {
     NotTampered,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TamperChanged {
+    #[allow(dead_code)]
+    pub id: String,
+    pub owner: HueOwner,
+    pub tamper_reports: Option<Vec<TamperReport>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
