@@ -6,6 +6,10 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+  pull-requests: read # dorny/paths-filter reads a PR's changed files through the API
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true # superseded pushes to the same PR/branch cancel the stale run
@@ -13,14 +17,34 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
-defaults:
-  run:
-    working-directory: server
-
 jobs:
-  format:
-    name: Hearth - format
+  changes:
+    name: Detect changes
     runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            server:
+              - 'server/**'
+              - '.github/workflows/ci.yml'
+            app:
+              - 'app/**'
+              - '.github/workflows/ci.yml'
+
+  format:
+    name: Server - format
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
     steps:
       - uses: actions/checkout@v7
       - name: Rustup
@@ -29,8 +53,13 @@ jobs:
         run: cargo fmt --check
 
   build_and_test:
-    name: Hearth - ${{ matrix.toolchain }} (${{ matrix.runner }})
+    name: Server - ${{ matrix.toolchain }} (${{ matrix.runner }})
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
     runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: server
     strategy:
       matrix:
         include:
@@ -57,3 +86,35 @@ jobs:
         run: cargo build --verbose --locked
       - name: Tests
         run: cargo test --locked
+
+  app:
+    name: App - analyze and test
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version-file: app/pubspec.yaml
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+      - run: flutter analyze
+      - run: flutter test
+
+  # The only required check: jobs skipped by `if:` count as passed, so path-filtered PRs aren't blocked.
+  ci:
+    name: CI
+    needs: [changes, format, build_and_test, app]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
