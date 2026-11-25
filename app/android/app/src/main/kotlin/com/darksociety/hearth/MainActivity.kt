@@ -1,4 +1,4 @@
-package com.darksociety.hearth_app
+package com.darksociety.hearth
 
 import io.flutter.embedding.android.FlutterActivity
 
