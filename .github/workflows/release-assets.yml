@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   test:
+    # App releases (app-v*) have no assets yet. Skipping this job also skips build and publish, which depend on it.
+    if: startsWith(github.event.release.tag_name, 'server-v')
     runs-on: ubuntu-latest
     defaults:
       run:
