@@ -5,11 +5,19 @@
       "component": "server",
       "path": "server",
       "releaseType": "rust"
+    },
+    {
+      "component": "app",
+      "path": "app",
+      "releaseType": "dart"
     }
   ],
   "migration": {
     "cutoverCommit": "8a19b29cb9a7c4afabc0a645852a647840c7d355",
     "legacyRootSuccessor": "server",
-    "legacyAnchorTag": "v0.6.0"
+    "legacyAnchorTag": "v0.6.0",
+    "bootstrapVersions": {
+      "app": "0.0.0"
+    }
   }
 }
