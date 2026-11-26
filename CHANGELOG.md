@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.1 (2026-11-26)
+
+### Build System
+
+- Upgrade release-svp to 0.3.0 ([#103](https://github.com/johanflint/hearth/pull/103))
+
 ## v0.6.0 (2026-11-24)
 
 ### Features
