@@ -1,11 +1,4 @@
 .idea/
-/target
-config.local.json5
 
 # MacOS
 .DS_Store
-
-# Database
-hearth.db
-hearth.db-shm
-hearth.db-wal

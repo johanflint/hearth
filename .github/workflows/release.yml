@@ -19,7 +19,7 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
       - name: Tag and publish release
-        run: npx --yes release-svp@0.3.0 release --repo-url ${{ github.repository }} --token ${{ steps.app-token.outputs.token }} --release-type rust
+        run: npx --yes release-svp@0.3.0 release --repo-url ${{ github.repository }} --token ${{ steps.app-token.outputs.token }}
       # Opens/updates the PR for the *next* release
       - name: Prepare next release
-        run: npx --yes release-svp@0.3.0 prepare --repo-url ${{ github.repository }} --token ${{ steps.app-token.outputs.token }} --release-type rust
+        run: npx --yes release-svp@0.3.0 prepare --repo-url ${{ github.repository }} --token ${{ steps.app-token.outputs.token }}
