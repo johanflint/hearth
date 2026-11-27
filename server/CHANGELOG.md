@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.1 (2026-11-27)
+
+### Build System
+
+- Move the server into server/ and release it as a monorepo component ([#105](https://github.com/johanflint/hearth/pull/105))
+
 ## v0.6.0 (2026-11-24)
 
 ### Features
